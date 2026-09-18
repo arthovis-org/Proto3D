@@ -27,7 +27,7 @@ export function createWorkspace(container) {
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.minDistance = 3;
-  controls.maxDistance = 140;
+  controls.maxDistance = 240;
   controls.maxPolarAngle = Math.PI * 0.495; // never go under the floor
   controls.target.copy(HOME.target);
   controls.update();
@@ -121,5 +121,67 @@ export function createWorkspace(container) {
     controls.update();
   }
 
-  return { renderer, scene, camera, controls, resize, resetCamera, applyTheme, setGridVisible, isGridVisible, HOME };
+  /* Camera flights: F focuses the selection, Home frames everything, double-click focuses a block. */
+  let flight = null;
+  function flyTo(position, target, duration = 0.55) {
+    if (duration <= 0) { camera.position.copy(position); controls.target.copy(target); controls.update(); flight = null; return; }
+    flight = { p0: camera.position.clone(), t0: controls.target.clone(), p1: position.clone(), t1: target.clone(), k: 0, duration, start: performance.now() };
+  }
+  function cancelFlight() { flight = null; }
+  controls.addEventListener('start', cancelFlight); // a hand on the camera always wins
+  function updateFlight() {
+    if (!flight) return;
+    flight.k = Math.min(1, (performance.now() - flight.start) / 1000 / flight.duration);
+    const e = 1 - Math.pow(1 - flight.k, 3);
+    camera.position.lerpVectors(flight.p0, flight.p1, e);
+    controls.target.lerpVectors(flight.t0, flight.t1, e);
+    if (flight.k >= 1) flight = null;
+  }
+  /**
+   * Frame a set of blocks: keep the current view direction and find the nearest distance at which
+   * every corner of their bounding box projects inside the viewport (minus `insetLeft` px, e.g.
+   * an open flyout), then centre the box on screen.
+   */
+  function frameBlocks(blocks, { pad = 0.86, minRadius = 3, instant = false, insetLeft = 0 } = {}) {
+    const list = (blocks || []).filter(Boolean);
+    const dur = instant ? 0 : 0.55;
+    if (!list.length) { flyTo(HOME.position, HOME.target, dur); return; }
+    const box = new THREE.Box3();
+    const tmp = new THREE.Box3();
+    for (const b of list) { if (b.getAABB) box.union(b.getAABB(tmp)); else if (b.center) box.expandByPoint(b.center); }
+    box.expandByScalar(minRadius * 0.3);
+    const center = box.getCenter(new THREE.Vector3());
+    const dir = camera.position.clone().sub(controls.target).normalize();
+    if (dir.y < 0.35) { dir.y = 0.35; dir.normalize(); }
+    const corners = [];
+    for (let i = 0; i < 8; i++) corners.push(new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z));
+    const cam = camera.clone();
+    const w = container.clientWidth || 1, insetNdc = insetLeft / w; // the usable NDC range is [-1 + 2·inset, 1]
+    const ndc = new THREE.Vector3();
+    const fits = (dist) => {
+      cam.position.copy(center).addScaledVector(dir, dist); cam.lookAt(center); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+      let minX = 1, maxX = -1, minY = 1, maxY = -1;
+      for (const c of corners) { ndc.copy(c).project(cam); minX = Math.min(minX, ndc.x); maxX = Math.max(maxX, ndc.x); minY = Math.min(minY, ndc.y); maxY = Math.max(maxY, ndc.y); }
+      return { ok: maxX - minX <= 2 * pad * (1 - insetNdc) && maxY - minY <= 2 * pad, minX, maxX, minY, maxY };
+    };
+    let lo = 4, hi = controls.maxDistance;
+    for (let i = 0; i < 18; i++) { const mid = (lo + hi) / 2; if (fits(mid).ok) hi = mid; else lo = mid; }
+    const dist = Math.min(hi, controls.maxDistance);
+    // centre: shift the target sideways / up so the box sits in the middle of the usable area
+    const f = fits(dist);
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
+    const up = new THREE.Vector3().crossVectors(dir, right).normalize();
+    const halfH = dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), halfW = halfH * camera.aspect;
+    const cx = (f.minX + f.maxX) / 2 - insetNdc, cy = (f.minY + f.maxY) / 2;
+    const target = center.clone().addScaledVector(right, cx * halfW).addScaledVector(up, cy * halfH);
+    flyTo(target.clone().addScaledVector(dir, dist), target, dur);
+  }
+  /** Fog thins as the camera pulls back so a far overview stays readable instead of fading out. */
+  function updateFog() {
+    const d = camera.position.distanceTo(controls.target);
+    scene.fog.density = 0.011 * THREE.MathUtils.clamp(45 / Math.max(d, 1), 0.28, 1);
+    floorMat.uniforms.fadeRadius.value = Math.max(40, d * 0.5); // the lit pool grows with the overview
+  }
+
+  return { renderer, scene, camera, controls, resize, resetCamera, applyTheme, setGridVisible, isGridVisible, HOME, flyTo, cancelFlight, updateFlight, frameBlocks, updateFog };
 }

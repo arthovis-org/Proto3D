@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Proto3D — 3D visual programming workspace</title>
+  <title>Proto3D — 3D component platform</title>
   <link rel="stylesheet" href="./styles.css" />
   <script>
     // Apply the persisted theme before the first paint so the overlay never flashes.
@@ -22,20 +22,26 @@
 <body>
   <div id="viewport"></div>
 
+  <nav id="left-bar" aria-label="Add components"></nav>
+
   <div id="title" class="overlay">
-    <h1>Proto3D workspace</h1>
-    <p>Functional prototype · live dataflow</p>
+    <h1>Proto3D</h1>
+    <p>3D component platform · live dataflow</p>
   </div>
 
   <div id="toolbar" class="overlay">
+    <span class="menu-anchor">
+      <button id="btn-file" type="button" title="File">File</button>
+      <div id="file-menu" class="menu" hidden></div>
+    </span>
     <span class="group">
-      <select id="add-type" title="Block type to add"></select>
-      <button id="btn-add" type="button">Add</button>
+      <button id="btn-undo" type="button" title="Undo (Ctrl+Z)">↶</button>
+      <button id="btn-redo" type="button" title="Redo (Ctrl+Shift+Z)">↷</button>
     </span>
     <button id="btn-flow" type="button" title="Toggle flow animation">Flow</button>
     <button id="btn-gizmo" type="button" title="Gizmo (G)">Gizmo</button>
     <button id="btn-theme" type="button" title="Theme (T)">Light theme</button>
-    <button id="btn-reset" type="button">Reset camera</button>
+    <button id="btn-frame" type="button" title="Frame all (Home) · F frames the selection">Frame all</button>
     <button id="btn-help" type="button" title="Help (H)">?</button>
     <button id="btn-panel" type="button" title="Properties panel (N)">Properties</button>
   </div>
@@ -48,19 +54,22 @@
         <h2>Navigate</h2>
         <dl>
           <dt>Orbit</dt><dd>left-drag on empty space</dd>
-          <dt>Pan</dt><dd>right-drag · <kbd>Shift</kbd>+drag</dd>
+          <dt>Pan</dt><dd>right-drag</dd>
           <dt>Zoom</dt><dd>wheel / pinch</dd>
+          <dt>Focus</dt><dd><kbd>F</kbd> selection · double-click a block · <kbd>Home</kbd> frame all</dd>
         </dl>
       </section>
       <section>
-        <h2>Edit</h2>
+        <h2>Build</h2>
         <dl>
-          <dt>Move</dt><dd>drag a node or device (<kbd>Shift</kbd> for height)</dd>
-          <dt>Gizmo</dt><dd><kbd>G</kbd> toggle · <kbd>W</kbd> move · <kbd>E</kbd> rotate · <kbd>R</kbd> scale</dd>
+          <dt>Add</dt><dd>left toolbar: click a category, click a component (or drag it into the scene) · <kbd>Shift</kbd>+<kbd>A</kbd> search</dd>
+          <dt>Move</dt><dd>drag a block (<kbd>Shift</kbd> for height) · gizmo <kbd>G</kbd>, <kbd>W</kbd>/<kbd>E</kbd>/<kbd>R</kbd></dd>
           <dt>Connect</dt><dd>drag from an output port to an input port</dd>
-          <dt>Select</dt><dd>click a node, device or connection</dd>
-          <dt>Delete</dt><dd><kbd>Del</kbd> · cancel <kbd>Esc</kbd></dd>
-          <dt>View</dt><dd><kbd>T</kbd> theme · <kbd>N</kbd> panel · <kbd>H</kbd> help</dd>
+          <dt>Select</dt><dd>click · <kbd>Shift</kbd>+click adds · <kbd>Shift</kbd>+drag on the floor: marquee · <kbd>Ctrl</kbd>+<kbd>A</kbd> all</dd>
+          <dt>Edit</dt><dd><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate · <kbd>Del</kbd> delete · <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> undo / redo</dd>
+          <dt>Group</dt><dd><kbd>Ctrl</kbd>+<kbd>G</kbd> group · <kbd>C</kbd> collapse / expand · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> ungroup</dd>
+          <dt>Interact</dt><dd>click a device screen or an Input face to fire events</dd>
+          <dt>View</dt><dd><kbd>T</kbd> theme · <kbd>N</kbd> panel · <kbd>H</kbd> help · <kbd>Esc</kbd> cancel</dd>
         </dl>
       </section>
       <section>
@@ -75,6 +84,8 @@
   </aside>
 
   <div id="selection" class="overlay">Nothing selected</div>
+  <div id="conn-label" hidden></div>
+  <div id="marquee" hidden></div>
 
   <script type="module" src="./src/main.js"></script>
 </body>
