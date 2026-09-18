@@ -1,0 +1,53 @@
+:root {
+  --bg: #0a0e15;
+  --panel: rgba(16, 22, 34, 0.82);
+  --border: rgba(159, 179, 209, 0.14);
+  --text: #e8eef8;
+  --dim: #93a0b6;
+  --accent: #5aa9ff;
+  font-family: "Inter", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden; }
+#viewport { position: fixed; inset: 0; }
+#viewport canvas { display: block; }
+
+.overlay { position: fixed; z-index: 2; pointer-events: none; }
+.overlay > * { pointer-events: auto; }
+
+#title { top: 18px; left: 22px; }
+#title h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+#title p { margin: 4px 0 0; font-size: 12px; color: var(--dim); }
+
+#toolbar { top: 16px; right: 20px; display: flex; gap: 8px; }
+button {
+  font: inherit; font-size: 12px; font-weight: 500; color: var(--text);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 12px; cursor: pointer; backdrop-filter: blur(8px);
+}
+button:hover { border-color: rgba(90, 169, 255, 0.5); }
+button.off { color: var(--dim); text-decoration: line-through; }
+
+#help {
+  bottom: 18px; left: 22px; width: 300px; padding: 14px 16px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  backdrop-filter: blur(10px); font-size: 12px; line-height: 1.5;
+}
+#help h2 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim); }
+#help section + section { margin-top: 10px; }
+#help ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+#help li { display: flex; align-items: center; gap: 6px; color: var(--dim); }
+#help li i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+#help kbd {
+  font: inherit; font-size: 11px; color: var(--text); background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border); border-radius: 4px; padding: 0 5px;
+}
+#help dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+#help dt { color: var(--text); white-space: nowrap; }
+#help dd { margin: 0; color: var(--dim); }
+body.help-hidden #help { display: none; }
+
+#selection {
+  bottom: 18px; right: 20px; font-size: 12px; color: var(--dim);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px;
+}

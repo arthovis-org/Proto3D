@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Proto3D — 3D visual programming workspace</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <!-- Import map: works from GitHub Pages, any static server, or file:// -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="viewport"></div>
+
+  <div id="title" class="overlay">
+    <h1>Proto3D workspace</h1>
+    <p>Concept prototype · visual language only</p>
+  </div>
+
+  <div id="toolbar" class="overlay">
+    <button id="btn-add" type="button">Add node</button>
+    <button id="btn-flow" type="button">Toggle flow animation</button>
+    <button id="btn-reset" type="button">Reset camera</button>
+    <button id="btn-help" type="button" title="H">Help</button>
+  </div>
+
+  <aside id="help" class="overlay">
+    <section>
+      <h2>Navigate</h2>
+      <dl>
+        <dt>Orbit</dt><dd>left-drag on empty space</dd>
+        <dt>Pan</dt><dd>right-drag · <kbd>Shift</kbd>+drag</dd>
+        <dt>Zoom</dt><dd>wheel / pinch</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Edit</h2>
+      <dl>
+        <dt>Move</dt><dd>drag a node or device (<kbd>Shift</kbd> for height)</dd>
+        <dt>Connect</dt><dd>drag from an output port to an input port</dd>
+        <dt>Select</dt><dd>click a node, device or connection</dd>
+        <dt>Delete</dt><dd><kbd>Del</kbd> · cancel <kbd>Esc</kbd> · help <kbd>H</kbd></dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Port &amp; connection types</h2>
+      <ul id="legend-types"></ul>
+    </section>
+    <section>
+      <h2>States</h2>
+      <ul id="legend-states"></ul>
+    </section>
+  </aside>
+
+  <div id="selection" class="overlay">Nothing selected</div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
