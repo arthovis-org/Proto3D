@@ -1,10 +1,14 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Proto3D — 3D visual programming workspace</title>
   <link rel="stylesheet" href="./styles.css" />
+  <script>
+    // Apply the persisted theme before the first paint so the overlay never flashes.
+    try { var t = localStorage.getItem('proto3d.theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
   <!-- Import map: works from GitHub Pages, any static server, or file:// -->
   <script type="importmap">
   {
@@ -20,42 +24,54 @@
 
   <div id="title" class="overlay">
     <h1>Proto3D workspace</h1>
-    <p>Concept prototype · visual language only</p>
+    <p>Functional prototype · live dataflow</p>
   </div>
 
   <div id="toolbar" class="overlay">
-    <button id="btn-add" type="button">Add node</button>
-    <button id="btn-flow" type="button">Toggle flow animation</button>
+    <span class="group">
+      <select id="add-type" title="Block type to add"></select>
+      <button id="btn-add" type="button">Add</button>
+    </span>
+    <button id="btn-flow" type="button" title="Toggle flow animation">Flow</button>
+    <button id="btn-gizmo" type="button" title="Gizmo (G)">Gizmo</button>
+    <button id="btn-theme" type="button" title="Theme (T)">Light theme</button>
     <button id="btn-reset" type="button">Reset camera</button>
-    <button id="btn-help" type="button" title="H">Help</button>
+    <button id="btn-help" type="button" title="Help (H)">?</button>
+    <button id="btn-panel" type="button" title="Properties panel (N)">Properties</button>
   </div>
 
-  <aside id="help" class="overlay">
-    <section>
-      <h2>Navigate</h2>
-      <dl>
-        <dt>Orbit</dt><dd>left-drag on empty space</dd>
-        <dt>Pan</dt><dd>right-drag · <kbd>Shift</kbd>+drag</dd>
-        <dt>Zoom</dt><dd>wheel / pinch</dd>
-      </dl>
-    </section>
-    <section>
-      <h2>Edit</h2>
-      <dl>
-        <dt>Move</dt><dd>drag a node or device (<kbd>Shift</kbd> for height)</dd>
-        <dt>Connect</dt><dd>drag from an output port to an input port</dd>
-        <dt>Select</dt><dd>click a node, device or connection</dd>
-        <dt>Delete</dt><dd><kbd>Del</kbd> · cancel <kbd>Esc</kbd> · help <kbd>H</kbd></dd>
-      </dl>
-    </section>
-    <section>
-      <h2>Port &amp; connection types</h2>
-      <ul id="legend-types"></ul>
-    </section>
-    <section>
-      <h2>States</h2>
-      <ul id="legend-states"></ul>
-    </section>
+  <aside id="panel">
+    <div id="panel-body"></div>
+    <details id="help">
+      <summary>Help &amp; legend</summary>
+      <section>
+        <h2>Navigate</h2>
+        <dl>
+          <dt>Orbit</dt><dd>left-drag on empty space</dd>
+          <dt>Pan</dt><dd>right-drag · <kbd>Shift</kbd>+drag</dd>
+          <dt>Zoom</dt><dd>wheel / pinch</dd>
+        </dl>
+      </section>
+      <section>
+        <h2>Edit</h2>
+        <dl>
+          <dt>Move</dt><dd>drag a node or device (<kbd>Shift</kbd> for height)</dd>
+          <dt>Gizmo</dt><dd><kbd>G</kbd> toggle · <kbd>W</kbd> move · <kbd>E</kbd> rotate · <kbd>R</kbd> scale</dd>
+          <dt>Connect</dt><dd>drag from an output port to an input port</dd>
+          <dt>Select</dt><dd>click a node, device or connection</dd>
+          <dt>Delete</dt><dd><kbd>Del</kbd> · cancel <kbd>Esc</kbd></dd>
+          <dt>View</dt><dd><kbd>T</kbd> theme · <kbd>N</kbd> panel · <kbd>H</kbd> help</dd>
+        </dl>
+      </section>
+      <section>
+        <h2>Port &amp; connection types</h2>
+        <ul id="legend-types"></ul>
+      </section>
+      <section>
+        <h2>States</h2>
+        <ul id="legend-states"></ul>
+      </section>
+    </details>
   </aside>
 
   <div id="selection" class="overlay">Nothing selected</div>

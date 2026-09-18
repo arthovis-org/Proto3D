@@ -1,12 +1,19 @@
 // interaction.js — raycast picking: hover, select, drag blocks, drag-to-connect, keyboard.
-// `world` is the demo model: { blocks, connections, addConnection(from,to), removeConnection(c), removeBlock(b) }
+// `world` is the model: { scene, blocks, connections, addConnection(from,to), removeConnection(c), removeBlock(b) }
+// An optional gizmo (TransformControls wrapper) takes priority over picking while its handles are hot.
 import * as THREE from 'three';
 import { Connection3D } from './connection3d.js';
 
+/** True when the key event comes from a text field (panel) — ignore shortcuts then. */
+export const isTyping = (e) => {
+  const t = e.target;
+  return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+};
+
 export class Interaction {
-  constructor({ camera, renderer, controls, world, onSelect = () => {} }) {
+  constructor({ camera, renderer, controls, world, gizmo = null, onSelect = () => {} }) {
     this.camera = camera; this.renderer = renderer; this.controls = controls;
-    this.world = world; this.onSelect = onSelect;
+    this.world = world; this.onSelect = onSelect; this.gizmo = gizmo;
     this.ray = new THREE.Raycaster();
     this.ray.params.Line = { threshold: 0.2 };
     this.pointer = new THREE.Vector2();
@@ -24,6 +31,9 @@ export class Interaction {
     window.addEventListener('keydown', (e) => this.onKey(e));
     window.addEventListener('keyup', (e) => { if (e.key === 'Shift') this.shift = false; });
   }
+
+  setGizmo(gizmo) { this.gizmo = gizmo; }
+  get gizmoBusy() { return !!(this.gizmo && (this.gizmo.dragging || this.gizmo.hot)); }
 
   /* ---------- picking ---------- */
   _setPointer(e) {
@@ -55,23 +65,26 @@ export class Interaction {
   }
 
   select(item) {
-    if (this.selected && this.selected !== item && this.selected.state === 'selected') this.selected.setState('idle');
+    if (this.selected && this.selected !== item && this.selected.state === 'selected') this.selected.setState(this.selected._prevState || 'idle');
     this.selected = item;
     if (item) {
-      item._prevState = item.state === 'selected' ? item._prevState : item.state;
+      item._prevState = item.state === 'selected' ? item._prevState : (item.derivedState || item.state);
       item.setState('selected');
     }
+    this.gizmo?.setTarget(item);
     this.onSelect(item);
   }
   deselect() {
     if (this.selected) this.selected.setState(this.selected._prevState || 'idle');
     this.selected = null;
+    this.gizmo?.setTarget(null);
     this.onSelect(null);
   }
 
   /* ---------- pointer ---------- */
   onMove(e) {
     this._setPointer(e);
+    if (this.gizmo && this.gizmo.dragging) return;
     if (this.drag) {
       const hit = new THREE.Vector3();
       if (this.ray.ray.intersectPlane(this.drag.plane, hit)) {
@@ -96,12 +109,14 @@ export class Interaction {
       }
       return;
     }
+    if (this.gizmo && this.gizmo.hot) { this._setHover(null); return; }
     const hit = this.pick();
     this._setHover(hit ? hit.target : null);
   }
 
   onDown(e) {
     if (e.button !== 0) return;
+    if (this.gizmoBusy) return; // the gizmo handles this press
     this.shift = e.shiftKey;
     this._setPointer(e);
     this.downPos.set(e.clientX, e.clientY);
@@ -139,6 +154,7 @@ export class Interaction {
   }
 
   onUp(e) {
+    if (this.gizmo && this.gizmo.dragging) return;
     this.controls.enabled = true;
     if (this.connect) {
       const { from, preview } = this.connect;
@@ -154,12 +170,13 @@ export class Interaction {
     if (this.drag) { this.drag = null; return; }
     // Click on empty space (no orbit movement) clears the selection
     const moved = Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4;
-    if (!moved) { this._setPointer(e); if (!this.pick()) this.deselect(); }
+    if (!moved && !this.gizmoBusy) { this._setPointer(e); if (!this.pick()) this.deselect(); }
   }
 
   /* ---------- keyboard ---------- */
   onKey(e) {
     if (e.key === 'Shift') this.shift = true;
+    if (isTyping(e)) return;
     if (e.key === 'Escape') {
       if (this.connect) { this.world.scene.remove(this.connect.preview); this.connect.preview.dispose(); this.connect = null; this.controls.enabled = true; }
       if (this.drag) { this.drag = null; this.controls.enabled = true; }
@@ -167,7 +184,7 @@ export class Interaction {
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && this.selected) {
       const s = this.selected;
-      this.selected = null; this.onSelect(null);
+      this.selected = null; this.gizmo?.setTarget(null); this.onSelect(null);
       if (this.hovered === s) this.hovered = null;
       if (s.kind === 'connection') this.world.removeConnection(s); else this.world.removeBlock(s);
     }
