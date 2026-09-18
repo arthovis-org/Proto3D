@@ -138,43 +138,55 @@ export function createWorkspace(container) {
     if (flight.k >= 1) flight = null;
   }
   /**
-   * Frame a set of blocks: keep the current view direction and find the nearest distance at which
-   * every corner of their bounding box projects inside the viewport (minus `insetLeft` px, e.g.
-   * an open flyout), then centre the box on screen.
+   * Frame a set of blocks. The visible area is the canvas (already excludes the left rail and the
+   * right panel) minus `insetLeft` px (an open flyout). Keeping the current azimuth at a fixed
+   * ~35° elevation, find the distance at which the blocks' bounding box fills `fill` (75 %) of the
+   * visible width or height, whichever binds, then centre the box in that area.
    */
-  function frameBlocks(blocks, { pad = 0.86, minRadius = 3, instant = false, insetLeft = 0 } = {}) {
+  const ELEVATION = THREE.MathUtils.degToRad(35);
+  function frameBlocks(blocks, { fill = 0.75, minRadius = 3, instant = false, insetLeft = 0 } = {}) {
     const list = (blocks || []).filter(Boolean);
     const dur = instant ? 0 : 0.55;
-    if (!list.length) { flyTo(HOME.position, HOME.target, dur); return; }
+    if (!list.length) { flyTo(HOME.position, HOME.target, dur); return null; }
     const box = new THREE.Box3();
     const tmp = new THREE.Box3();
     for (const b of list) { if (b.getAABB) box.union(b.getAABB(tmp)); else if (b.center) box.expandByPoint(b.center); }
-    box.expandByScalar(minRadius * 0.3);
+    box.expandByScalar(minRadius * 0.2);
     const center = box.getCenter(new THREE.Vector3());
-    const dir = camera.position.clone().sub(controls.target).normalize();
-    if (dir.y < 0.35) { dir.y = 0.35; dir.normalize(); }
+    // view direction: current azimuth, fixed elevation
+    const cur = camera.position.clone().sub(controls.target);
+    const az = Math.atan2(cur.x, cur.z || 1e-6);
+    const dir = new THREE.Vector3(Math.sin(az) * Math.cos(ELEVATION), Math.sin(ELEVATION), Math.cos(az) * Math.cos(ELEVATION));
     const corners = [];
     for (let i = 0; i < 8; i++) corners.push(new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z));
-    const cam = camera.clone();
-    const w = container.clientWidth || 1, insetNdc = insetLeft / w; // the usable NDC range is [-1 + 2·inset, 1]
+    const W = container.clientWidth || 1, H = container.clientHeight || 1;
+    const visW = Math.max(100, W - insetLeft);               // visible pixels
+    const cam = new THREE.PerspectiveCamera(camera.fov, W / H, camera.near, camera.far);
     const ndc = new THREE.Vector3();
-    const fits = (dist) => {
+    // projected extents of the box (in pixels) at a given distance
+    const extents = (dist) => {
       cam.position.copy(center).addScaledVector(dir, dist); cam.lookAt(center); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
       let minX = 1, maxX = -1, minY = 1, maxY = -1;
       for (const c of corners) { ndc.copy(c).project(cam); minX = Math.min(minX, ndc.x); maxX = Math.max(maxX, ndc.x); minY = Math.min(minY, ndc.y); maxY = Math.max(maxY, ndc.y); }
-      return { ok: maxX - minX <= 2 * pad * (1 - insetNdc) && maxY - minY <= 2 * pad, minX, maxX, minY, maxY };
+      return { pxW: (maxX - minX) / 2 * W, pxH: (maxY - minY) / 2 * H, minX, maxX, minY, maxY };
     };
-    let lo = 4, hi = controls.maxDistance;
-    for (let i = 0; i < 18; i++) { const mid = (lo + hi) / 2; if (fits(mid).ok) hi = mid; else lo = mid; }
-    const dist = Math.min(hi, controls.maxDistance);
-    // centre: shift the target sideways / up so the box sits in the middle of the usable area
-    const f = fits(dist);
+    // the projected size is ~inversely proportional to distance: two passes converge closely
+    let dist = Math.max(8, box.getSize(new THREE.Vector3()).length());
+    for (let i = 0; i < 4; i++) {
+      const e = extents(dist);
+      const k = Math.max(e.pxW / (visW * fill), e.pxH / (H * fill)); // >1 → too close
+      dist = THREE.MathUtils.clamp(dist * k, 6, controls.maxDistance);
+    }
+    // centre the box in the visible area (shift target sideways / up in view space)
+    const e = extents(dist);
     const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
     const up = new THREE.Vector3().crossVectors(dir, right).normalize();
-    const halfH = dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), halfW = halfH * camera.aspect;
-    const cx = (f.minX + f.maxX) / 2 - insetNdc, cy = (f.minY + f.maxY) / 2;
+    const halfH = dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), halfW = halfH * (W / H);
+    const visCentreNdc = insetLeft / W;                       // centre of the visible area in NDC x
+    const cx = (e.minX + e.maxX) / 2 - visCentreNdc, cy = (e.minY + e.maxY) / 2;
     const target = center.clone().addScaledVector(right, cx * halfW).addScaledVector(up, cy * halfH);
     flyTo(target.clone().addScaledVector(dir, dist), target, dur);
+    return dist;
   }
   /** Fog thins as the camera pulls back so a far overview stays readable instead of fading out. */
   function updateFog() {

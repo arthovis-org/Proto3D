@@ -6,17 +6,17 @@
 export default {
   id: 'phone-to-laptop', label: 'Phone → Logic → Laptop',
   description: 'Tap the phone 4 times to unlock the laptop; tilt drives a display',
-  camera: { position: [2, 26, 44], target: [2, 1, 1] },
+  camera: { position: [1, 24, 34], target: [1, 1, 1] },
   build({ add, connect, group }) {
-    const phone = add('phone', [-24, 0, 1]);
-    const count = add('action', [-13, null, 3], { title: 'Count taps', params: { mode: 'count' } });
-    const compare = add('compare', [-3, null, 3], { title: 'More than 3?', params: { op: '>', b: '3' } });
-    const branch = add('branch', [7, null, 3], { title: 'Unlocked?' });
-    const unlock = add('action', [17, null, -1], { title: 'Say Unlocked', params: { mode: 'pass', payload: 'Unlocked' } });
-    const lock = add('action', [17, null, 7], { title: 'Say Locked', params: { mode: 'pass', payload: 'Locked' } });
-    const laptop = add('laptop', [29, 0, 3]);
-    const map = add('transform', [-13, null, -6], { title: 'Tilt → %', params: { mode: 'map range', inMin: -45, inMax: 45, outMin: 0, outMax: 100 } });
-    const show = add('display', [-1, null, -8], { title: 'Tilt %', params: { caption: 'phone tilt as percent' } });
+    const phone = add('phone', [-14, 0, 2]);
+    const count = add('action', [-7.5, null, 2], { title: 'Count taps', params: { mode: 'count' } });
+    const compare = add('compare', [-1.5, null, 2], { title: 'More than 3?', params: { op: '>', b: '3' } });
+    const branch = add('branch', [4.5, null, 2], { title: 'Unlocked?' });
+    const unlock = add('action', [10.5, null, -1], { title: 'Say Unlocked', params: { mode: 'pass', payload: 'Unlocked' } });
+    const lock = add('action', [10.5, null, 5], { title: 'Say Locked', params: { mode: 'pass', payload: 'Locked' } });
+    const laptop = add('laptop', [16.5, 0, 2]);
+    const map = add('transform', [-7.5, null, -4.5], { title: 'Tilt → %', params: { mode: 'map range', inMin: -45, inMax: 45, outMin: 0, outMax: 100 } });
+    const show = add('display', [-1.5, null, -6], { title: 'Tilt %', params: { caption: 'phone tilt as percent' } });
 
     connect(phone, 'tap', count, 'trigger');
     connect(count, 'result', compare, 'a');
