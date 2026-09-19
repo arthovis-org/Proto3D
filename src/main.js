@@ -1,6 +1,7 @@
 // main.js — boots the platform: theme, workspace, registry (all core components), world model,
 // engine, history, selection, gizmo, interaction, guidance overlays, properties panel, Add
-// toolbar, File / help menus, first-run tour, LOD, autosave, the example and the render loop. Exposes window.__proto for debugging / tests.
+// toolbar, File / help menus, the wiring switch, navigation presets, first-run tour, LOD,
+// autosave, the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
 import { createWorkspace } from './workspace.js';
 import { registry } from './components/index.js';
@@ -21,10 +22,14 @@ import { updateLOD } from './lod.js';
 import { serializeWorld, loadWorld, downloadJSON, pickJSONFile, AutoSave } from './serialize.js';
 import { examples, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
-import { portTypes, subtypes, states, hex, getTheme, toggleTheme, onThemeChange } from './theme.js';
+import { portTypes, subtypes, states, hex, getTheme, toggleTheme, onThemeChange, refreshLabel } from './theme.js';
 import { formatValue, typeInfo, subtypeInfo, kindOf, portTypeName, mismatchReason } from './core/types.js';
 import { describeLink } from './pm/relations.js';
 import { onBitmapReady } from './faces.js';
+import { isWiringOn, setWiring, toggleWiring, onWiringChange } from './wiring.js';
+import { nav } from './controls/navigation.js';
+import { PRESET_IDS } from './controls/presets.js';
+import { icons } from './icons.js';
 
 const $ = (id) => document.getElementById(id);
 const container = $('viewport');
@@ -47,13 +52,19 @@ const interaction = new Interaction({
   onHoverConnection: (c) => { hoveredConnection = c; connLabel.hidden = !c; },
   onFocus: (blocks) => ws.frameBlocks(blocks, { insetLeft: leftBar?.isOpen ? 300 : 0 }),
   onFrameAll: () => frameAll(),
+  onGizmoMode: (mode) => { if (!gizmo.enabled) setGizmo(true); gizmo.setMode(mode); syncToolbar(); },
+  onTogglePanel: () => togglePanel(),
+  onOpenPanel: () => togglePanel(true),
 });
+// the Navigator may swap the camera (orthographic view): everyone who holds a camera follows
+ws.onCameraSwap((cam) => { interaction.camera = cam; overlays.camera = cam; gizmo.control.camera = cam; });
 function frameAll(opts = {}) { return ws.frameBlocks([...world.nodes.filter((n) => n.visible), ...world.groups.filter((g) => g.collapsed)], { insetLeft: leftBar?.isOpen ? 300 : 0, ...opts }); }
 
 /* ---- Properties panel ---- */
 const panel = new Panel({
   el: $('panel'), world, engine, ws, gizmo, history, selection, interaction,
   flow: { isEnabled: isFlowEnabled, setEnabled: (v) => { setFlowEnabled(v); syncToolbar(); }, getSpeed: getFlowSpeed, setSpeed: setFlowSpeed },
+  wiring: { isOn: isWiringOn, set: (v) => setWiring(v) },
   onGizmoToggle: () => syncToolbar(),
 });
 
@@ -131,21 +142,51 @@ function buildLegend() {
     li.innerHTML = `<i style="background:${hex(c)}"></i>${name}`;
     legendStates.appendChild(li);
   }
+  buildControlsSheet();
+}
+/** The active navigation preset's cheat sheet (generated from the preset object). */
+function buildControlsSheet() {
+  const dl = $('legend-controls'); if (!dl) return;
+  dl.innerHTML = '';
+  const p = nav.preset;
+  $('legend-controls-title').textContent = `Controls · ${p.label}`;
+  for (const row of nav.sheet()) {
+    const dt = document.createElement('dt'); dt.textContent = row.label; dt.dataset.action = row.action;
+    const dd = document.createElement('dd'); dd.textContent = row.binding;
+    dl.appendChild(dt); dl.appendChild(dd);
+  }
+  const sel = $('help-preset'); if (sel) { sel.innerHTML = ''; for (const id of PRESET_IDS) { const o = document.createElement('option'); o.value = id; o.textContent = nav.presets[id].label; sel.appendChild(o); } sel.value = nav.presetId; }
+  document.querySelectorAll('#help-menu [data-preset]').forEach((b) => b.classList.toggle('on', b.dataset.preset === nav.presetId));
 }
 buildLegend();
 onThemeChange(() => { buildLegend(); panel.refresh(); syncToolbar(); });
 onBitmapReady(() => world.nodes.forEach((n) => { n.faceDirty = true; }));
+nav.onChange(() => { buildControlsSheet(); panel.refresh(); tour.refreshText?.(); });
+$('help-preset')?.addEventListener('change', (e) => nav.setPreset(e.target.value));
+
+/* ---- Fonts: Inter arrives from Google Fonts when online; redraw every canvas label and face once it is ready ---- */
+function refreshAllText() {
+  world.nodes.forEach((n) => { n.labels.forEach((l) => refreshLabel(l)); n.faceDirty = true; });
+  world.groups.forEach((g) => g.refreshTheme());
+}
+if (document.fonts?.ready) document.fonts.ready.then(() => { if (document.fonts.check('600 16px Inter')) refreshAllText(); }).catch(() => {});
 
 /* ---- Top bar ---- */
+document.querySelectorAll('[data-icon]').forEach((el) => { el.innerHTML = icons[el.dataset.icon] || ''; });
 function syncToolbar() {
   $('btn-flow').classList.toggle('off', !isFlowEnabled());
+  $('btn-wiring').classList.toggle('on', isWiringOn());
+  $('btn-wiring').setAttribute('aria-pressed', String(isWiringOn()));
   $('btn-gizmo').classList.toggle('on', gizmo.enabled);
-  $('btn-theme').textContent = getTheme() === 'dark' ? 'Light theme' : 'Dark theme';
+  $('btn-theme').querySelector('span').textContent = getTheme() === 'dark' ? 'Light' : 'Dark';
+  $('btn-theme').querySelector('i').innerHTML = getTheme() === 'dark' ? icons.sun : icons.moon;
   $('btn-panel').classList.toggle('on', !document.body.classList.contains('panel-hidden'));
   $('btn-undo').disabled = !history.canUndo; $('btn-redo').disabled = !history.canRedo;
 }
 history.onChange(syncToolbar);
+onWiringChange(() => { syncToolbar(); panel.refresh(); });
 $('btn-flow').addEventListener('click', () => { setFlowEnabled(!isFlowEnabled()); syncToolbar(); panel.refresh(); });
+$('btn-wiring').addEventListener('click', () => { toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on · ports and cables shown' : 'Wiring off · drop a component onto another to link them', 1800); });
 $('btn-theme').addEventListener('click', () => toggleTheme());
 $('btn-gizmo').addEventListener('click', () => setGizmo(!gizmo.enabled));
 $('btn-panel').addEventListener('click', () => togglePanel());
@@ -155,6 +196,7 @@ const closeHelpMenu = () => { helpMenu.hidden = true; $('btn-help').classList.re
 $('btn-help').addEventListener('click', (e) => { e.stopPropagation(); helpMenu.hidden = !helpMenu.hidden; $('btn-help').classList.toggle('on', !helpMenu.hidden); });
 helpMenu.querySelector('[data-action="help"]').addEventListener('click', () => { closeHelpMenu(); toggleHelp(); });
 helpMenu.querySelector('[data-action="tour"]').addEventListener('click', () => { closeHelpMenu(); tour.start(); });
+helpMenu.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => { nav.setPreset(b.dataset.preset); closeHelpMenu(); overlays.toast(`${nav.preset.label} controls · ${nav.binding('orbit')} orbits`, 2000); }));
 window.addEventListener('pointerdown', (e) => { if (!helpMenu.contains(e.target) && e.target !== $('btn-help')) closeHelpMenu(); });
 $('btn-undo').addEventListener('click', () => { history.undo(); selection.prune(world); });
 $('btn-redo').addEventListener('click', () => { history.redo(); selection.prune(world); });
@@ -177,11 +219,13 @@ function toggleHelp() {
 }
 window.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
+  if (nav.keyAction(e)) return;   // the navigation preset owns this key (interaction.js handles it)
   if (e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); leftBar.open('search'); return; }
   if (e.shiftKey) return;
   switch (e.key.toLowerCase()) {
     case 'h': toggleHelp(); break;
     case 't': toggleTheme(); break;
+    case 'p': toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on' : 'Wiring off', 1000); break;
     case 'g': setGizmo(!gizmo.enabled); break;
     case 'n': togglePanel(); break;
     case 'w': if (gizmo.enabled) gizmo.setMode('translate'); break;
@@ -192,7 +236,7 @@ window.addEventListener('keydown', (e) => {
 });
 syncToolbar();
 
-/* ---- First scene: the autosave if there is one, otherwise the project-management scene ---- */
+/* ---- First scene: the autosave if there is one, otherwise the Showcase ---- */
 const saved = autosave.load();
 let restored = false;
 if (saved && saved.nodes && saved.nodes.length) {
@@ -250,8 +294,9 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, fileMenu, registry, autosave, examples, THREE, overlays, tour,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, fileMenu, registry, autosave, examples, THREE, overlays, tour, nav, icons,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd,
+  wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },
   serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls }),
   load: (doc) => loadWorld(world, doc, { camera: ws.camera, controls: ws.controls }),
 };

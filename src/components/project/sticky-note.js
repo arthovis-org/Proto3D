@@ -28,7 +28,7 @@ export default registry.register({
     ports: () => ({ in: [[-(S + 0.4) / 2, 0, 0]], out: [[(S + 0.4) / 2, 0, 0]] }),
     build(node, h) {
       node.paper = new THREE.Group(); node.add(node.paper);
-      node.slab = h.part(new h.RoundedBoxGeometry(S, S, D, 2, 0.04), new THREE.MeshStandardMaterial({ color: paper(node), roughness: 0.9, metalness: 0 }), { parent: node.paper });
+      node.slab = h.part(h.panelGeometry(S, S, D, { radius: 0.12, bevel: 0.012 }), new THREE.MeshPhysicalMaterial({ color: paper(node), roughness: 0.85, metalness: 0, clearcoat: 0.15, clearcoatRoughness: 0.6, envMapIntensity: 0.3 }), { parent: node.paper });
       node.slab.userData.dimWhenDisabled = false;
       // the top edge curls a little: a thin strip slightly lifted
       const curl = h.part(new THREE.BoxGeometry(S * 0.96, 0.08, D * 1.6), new THREE.MeshStandardMaterial({ color: paper(node).clone().multiplyScalar(0.92), roughness: 0.9 }), { parent: node.paper });
@@ -36,7 +36,7 @@ export default registry.register({
       const face = h.face(S - 0.3, S - 0.3, [0, -0.02, D / 2 + 0.006], { emissive: 0.0 });
       node.paper.add(face); face.material.color.set(0xffffff); face.material.emissiveIntensity = 0.35;
       node.paper.rotation.z = tiltOf(node);
-      node.rim = h.rim(new h.RoundedBoxGeometry(S + 0.12, S + 0.12, D + 0.12, 2, 0.06));
+      node.rim = h.rim(h.outlineGeometry(S, S, D, h.sizes.outline.grow, { radius: 0.12 }));
       node.rim.rotation.z = tiltOf(node);
     },
     refresh(node) {
@@ -47,11 +47,11 @@ export default registry.register({
   evaluate({ inputs, params }) { return { text: inputs.text !== undefined ? asText(inputs.text) : String(params.text ?? '') }; },
   face: {
     render(g, w, h, { params, outputs }) {
-      clear(g, w, h, params.colour || '#f5d76e');
+      clear(g, w, h, params.colour || '#f5d76e', 6);
       // faint ruled lines like paper
-      g.strokeStyle = 'rgba(0,0,0,0.07)'; g.lineWidth = 2;
-      for (let y = 60; y < h; y += 44) { g.beginPath(); g.moveTo(16, y); g.lineTo(w - 16, y); g.stroke(); }
-      drawText(g, outputs.text ?? params.text ?? '', 20, 18, w - 40, h - 36, { size: 44, min: 16, weight: 600, color: ink(params.colour), align: 'left', valign: 'top', lineHeight: 1.3 });
+      g.strokeStyle = 'rgba(0,0,0,0.06)'; g.lineWidth = 1.5;
+      for (let y = 64; y < h; y += 44) { g.beginPath(); g.moveTo(24, y); g.lineTo(w - 24, y); g.stroke(); }
+      drawText(g, outputs.text ?? params.text ?? '', 26, 22, w - 52, h - 44, { size: 40, min: 16, weight: 600, color: ink(params.colour), align: 'left', valign: 'top', lineHeight: 1.3 });
     },
   },
 });

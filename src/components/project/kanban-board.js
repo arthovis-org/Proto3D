@@ -15,8 +15,9 @@
 import * as THREE from 'three';
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
-import { palette, states, sizes, hex, setLabelText } from '../../theme.js';
-import { roundRect, font } from '../../faces.js';
+import { palette, states, sizes, hex, setLabelText, materials } from '../../theme.js';
+import { roundRect, font, drawChip, fitLine, tabular } from '../../faces.js';
+import { panelGeometry, slabGeometry, outlineGeometry } from '../../geometry.js';
 import {
   normalizeBoard, boardStats, flatCards, pushBurndown, addCard, moveCard, updateCard, findCard, findColumn, isBlocked, isOverdue,
   initials, checklistRatio, PRIORITY_COLOURS, fmtDate, lastColumn, daysUntil,
@@ -27,8 +28,8 @@ import { connectedPeople, personFor, sameName } from '../../pm/relations.js';
 import { makeCanvasPlane } from '../../shape3d.js';
 
 /* ---------------- geometry constants (scene units, 1 = 10 cm) ---------------- */
-const COL_W = 3.4, COL_GAP = 0.3, MARGIN = 1.5, TOP = 1.0, COL_H = 6.6, PLINTH = 0.36, DEPTH = 0.6;
-const CARD_W = COL_W - 0.4, CARD_H = 1.15, CARD_D = 0.12, CARD_GAP = 0.14, ADD_H = 0.42, CARD_Z = 0.16;
+const COL_W = 3.4, COL_GAP = 0.3, MARGIN = 1.5, TOP = 1.0, COL_H = 6.6, PLINTH = 0.3, DEPTH = 0.6, BACK_D = 0.24;
+const CARD_W = COL_W - 0.4, CARD_H = 1.15, CARD_D = 0.1, CARD_GAP = 0.14, ADD_H = 0.42, CARD_Z = 0.14, CARD_R = 0.12;
 const LANE_MIN = 2.0;                                   // a swimlane fits one card and its label
 const H0 = TOP + 0.25 + COL_H + PLINTH + 0.25;         // base height: the body grows upward from here for lanes
 const UNASSIGNED = '__unassigned__';
@@ -79,71 +80,72 @@ function assigneeColour(node, name) {
 
 /* ---------------- card face (2D canvas on the slab) ---------------- */
 export function drawCard(g, w, h, card, { blocked = false, overdue = false, selected = false, hovered = false, colour = null, done = false, tag = null, flag = false } = {}) {
+  // the card body is the extruded slab itself: paint edge to edge, the geometry rounds the corners
   g.clearRect(0, 0, w, h);
-  g.fillStyle = hex(palette.pmCard);
-  roundRect(g, 1, 1, w - 2, h - 2, 14); g.fill();
-  if (selected || hovered) { g.strokeStyle = hex(selected ? states.selected : states.hover); g.lineWidth = selected ? 6 : 3; roundRect(g, 3, 3, w - 6, h - 6, 12); g.stroke(); }
-  // priority stripe (left) and, when the assignee is a connected person, their colour tag along the top
-  g.fillStyle = PRIORITY_COLOURS[card.priority] || PRIORITY_COLOURS.medium;
-  g.save(); roundRect(g, 1, 1, w - 2, h - 2, 14); g.clip(); g.fillRect(0, 0, 12, h);
-  if (tag) { g.fillStyle = tag; g.fillRect(12, 0, w - 12, 7); }
-  g.restore();
+  g.fillStyle = hex(palette.pmCard); g.fillRect(0, 0, w, h);
+  // priority as a 3-px stripe down the left edge; a connected person's colour as a hairline along the top
+  g.fillStyle = PRIORITY_COLOURS[card.priority] || PRIORITY_COLOURS.medium; g.fillRect(0, 0, 7, h);
+  if (tag) { g.fillStyle = tag; g.fillRect(7, 0, w - 7, 5); }
+  if (selected || hovered) { g.strokeStyle = hex(selected ? states.selected : states.hover); g.lineWidth = selected ? 4 : 2.5; roundRect(g, 2, 2, w - 4, h - 4, 12); g.stroke(); }
   const text = palette.pmCardText, dim = palette.pmCardDim;
+  const P = 22;
   // title (up to 2 lines)
-  g.fillStyle = done ? dim : text; g.font = font(27, 600); g.textBaseline = 'top'; g.textAlign = 'left';
-  const maxW = w - 30 - (blocked ? 40 : 0) - (flag ? 30 : 0);
+  g.fillStyle = done ? dim : text; g.font = font(25, 600); g.textBaseline = 'top'; g.textAlign = 'left';
+  const maxW = w - P - 18 - (blocked ? 34 : 0) - (flag ? 26 : 0);
   const words = card.title.split(' '); const lines = []; let line = '';
   for (const wd of words) { const t = line ? line + ' ' + wd : wd; if (g.measureText(t).width <= maxW || !line) line = t; else { lines.push(line); line = wd; } if (lines.length === 2) break; }
   if (lines.length < 2) lines.push(line);
   if (lines.length > 2) lines.length = 2;
-  if (words.join(' ') !== lines.join(' ')) { let l = lines[1]; while (l.length && g.measureText(l + '…').width > maxW) l = l.slice(0, -1); lines[1] = l + '…'; }
-  lines.forEach((l, i) => g.fillText(l, 24, 12 + i * 32));
-  if (done) { g.strokeStyle = dim; g.lineWidth = 2; g.beginPath(); g.moveTo(24, 26); g.lineTo(24 + Math.min(maxW, g.measureText(lines[0]).width), 26); g.stroke(); }
+  if (words.join(' ') !== lines.join(' ')) lines[1] = fitLine(g, lines[1], maxW);
+  lines.forEach((l, i) => g.fillText(l, P, 16 + i * 30));
+  if (done) { g.strokeStyle = dim; g.lineWidth = 1.5; g.beginPath(); g.moveTo(P, 29); g.lineTo(P + Math.min(maxW, g.measureText(lines[0]).width), 29); g.stroke(); }
   // lock glyph when blocked, small flag when due after the milestone
-  let gx = w - 38;
+  let gx = w - 34;
   if (blocked) {
-    const x = gx, y = 14; g.strokeStyle = PRIORITY_COLOURS.urgent; g.lineWidth = 3; g.fillStyle = PRIORITY_COLOURS.urgent;
-    g.beginPath(); g.arc(x + 11, y + 9, 7, Math.PI, 0); g.stroke(); roundRect(g, x, y + 9, 22, 16, 3); g.fill();
-    gx -= 30;
+    const x = gx, y = 16; g.strokeStyle = PRIORITY_COLOURS.urgent; g.lineWidth = 2.5; g.fillStyle = PRIORITY_COLOURS.urgent;
+    g.beginPath(); g.arc(x + 9, y + 7, 6, Math.PI, 0); g.stroke(); roundRect(g, x, y + 7, 18, 13, 3); g.fill();
+    gx -= 26;
   }
   if (flag) {
-    const x = gx + 4, y = 12; g.fillStyle = '#ffd36b'; g.strokeStyle = '#ffd36b'; g.lineWidth = 3;
-    g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 26); g.stroke();
-    g.beginPath(); g.moveTo(x, y); g.lineTo(x + 18, y + 6); g.lineTo(x, y + 12); g.closePath(); g.fill();
+    const x = gx + 4, y = 14; g.fillStyle = '#ffd36b'; g.strokeStyle = '#ffd36b'; g.lineWidth = 2.5;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 22); g.stroke();
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + 15, y + 5); g.lineTo(x, y + 10); g.closePath(); g.fill();
   }
-  // bottom row: assignee chip · due · checklist · tags
-  const by = h - 34;
-  let x = 24;
+  // bottom row: assignee chip · due · checklist · tags · estimate
+  const by = h - 38, ch = 24;
+  let x = P;
   if (card.assignee) {
-    g.fillStyle = colour || '#6f8bb0'; g.beginPath(); g.arc(x + 14, by + 12, 14, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#fff'; g.font = font(13, 700); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(initials(card.assignee), x + 14, by + 13);
-    x += 36;
+    const c = colour || '#6f8bb0';
+    g.fillStyle = c; g.beginPath(); g.arc(x + ch / 2, by + ch / 2, ch / 2, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#fff'; g.font = font(11, 700); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(initials(card.assignee), x + ch / 2, by + ch / 2 + 0.5);
+    x += ch + 10;
   }
-  g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.textAlign = 'left'; g.textBaseline = 'middle'; tabular(g);
   if (card.due) {
-    g.fillStyle = overdue && !done ? PRIORITY_COLOURS.urgent : dim; g.font = font(17, overdue && !done ? 700 : 500);
-    const s = (overdue && !done ? '! ' : '') + fmtDate(card.due); g.fillText(s, x, by + 12); x += g.measureText(s).width + 14;
+    const late = overdue && !done;
+    g.fillStyle = late ? PRIORITY_COLOURS.urgent : dim; g.font = font(15, late ? 600 : 500);
+    const s2 = (late ? '! ' : '') + fmtDate(card.due); g.fillText(s2, x, by + ch / 2); x += g.measureText(s2).width + 14;
   }
   const ratio = checklistRatio(card);
   if (!Number.isNaN(ratio)) {
     const done2 = card.checklist.filter((i) => i.done).length;
-    g.fillStyle = dim; g.font = font(15, 500, true); const s = `${done2}/${card.checklist.length}`; g.fillText(s, x, by + 12); x += g.measureText(s).width + 6;
-    g.fillStyle = 'rgba(128,140,160,0.35)'; roundRect(g, x, by + 8, 44, 8, 4); g.fill();
-    g.fillStyle = ratio >= 1 ? PRIORITY_COLOURS.medium : hex(palette.pmToday); roundRect(g, x, by + 8, 44 * ratio, 8, 4); g.fill(); x += 54;
+    g.fillStyle = dim; g.font = font(13, 500); const s2 = `${done2}/${card.checklist.length}`; g.fillText(s2, x, by + ch / 2); x += g.measureText(s2).width + 6;
+    g.fillStyle = 'rgba(128,140,160,0.3)'; roundRect(g, x, by + ch / 2 - 3, 40, 6, 3); g.fill();
+    g.fillStyle = ratio >= 1 ? PRIORITY_COLOURS.medium : hex(palette.pmToday); roundRect(g, x, by + ch / 2 - 3, Math.max(6, 40 * ratio), 6, 3); g.fill(); x += 50;
   }
   for (const tag2 of card.tags || []) {
-    g.font = font(13, 600); const tw = g.measureText(tag2).width + 14;
-    if (x + tw > w - 12) break;
-    g.fillStyle = 'rgba(90,169,255,0.18)'; roundRect(g, x, by + 2, tw, 20, 10); g.fill();
-    g.fillStyle = hex(palette.pmToday); g.fillText(tag2, x + 7, by + 12); x += tw + 6;
+    g.font = font(12, 600); const tw = g.measureText(tag2).width + 16;
+    if (x + tw > w - 14 - (card.estimate ? 30 : 0)) break;
+    x += drawChip(g, tag2, x, by + (ch - 20) / 2, { h: 20, size: 12, bg: 'rgba(90,169,255,0.14)', color: hex(palette.pmToday), padX: 8 }) + 6;
   }
-  if (card.estimate && x < w - 60) { g.fillStyle = dim; g.font = font(14, 500, true); g.textAlign = 'right'; g.fillText(`${card.estimate}d`, w - 14, by + 12); }
+  if (card.estimate && x < w - 50) { g.fillStyle = dim; g.font = font(13, 500); g.textAlign = 'right'; g.fillText(`${card.estimate}d`, w - 14, by + ch / 2); }
 }
 
 /* ---------------- the 3D body ---------------- */
 const body3d = {
   dims,
-  titleAt: (node) => [0, layout(node).top - TOP / 2 - 0.08, DEPTH / 2 + 0.05],
+  titleAt: (node) => [-layout(node).W / 2 + 0.6, layout(node).top - TOP / 2 - 0.02, DEPTH / 2 + 0.05],
+  titleAlign: 'left', titleColor: 'text',
   ports(node) {
     const L = layout(node);
     const y0 = L.colTop - 1.2;
@@ -153,15 +155,16 @@ const body3d = {
     node._colH = COL_H;
     node.frame = new THREE.Group(); node.add(node.frame);
     body3d._buildFrame(node, h);
+    node.rim = h.rim(outlineGeometry(node.width, node.height, BACK_D, sizes.outline.grow, { radius: 0.36 }).translate(0, layout(node).centreY, -BACK_D / 2 + 0.01));
     node._cards = new Map();      // card id → { group, plane, slab }
     node._drag = null;
     node._lodFar = false;
     node._lanes = null;
     // milestone readout in the header (right side)
-    node.msLabel = h.label('', { size: 0.24, color: 'textOnHeader', weight: 500, maxWidth: node.width * 0.4 }, [0, 0, DEPTH / 2 + 0.05], { detail: true });
+    node.msLabel = h.label('', { size: 0.22, color: 'textDim', weight: 500, maxWidth: node.width * 0.4 }, [0, 0, DEPTH / 2 + 0.05], { detail: true });
     node.msLabel.visible = false;
     // drop-slot indicator (shown while dragging a card)
-    node.slot = new THREE.Mesh(new h.RoundedBoxGeometry(CARD_W, CARD_H, 0.06, 2, 0.08), new THREE.MeshBasicMaterial({ color: states.selected, transparent: true, opacity: 0.28, depthWrite: false }));
+    node.slot = new THREE.Mesh(panelGeometry(CARD_W, CARD_H, 0.03, { radius: CARD_R, bevel: 0 }), new THREE.MeshBasicMaterial({ color: states.selected, transparent: true, opacity: 0.28, depthWrite: false }));
     node.slot.visible = false; node.add(node.slot);
   },
   _buildFrame(node, h) {
@@ -171,14 +174,14 @@ const body3d = {
     node.meshes = node.meshes.filter((m) => !f.children.includes(m));
     node.themed = node.themed.filter(([m]) => !f.children.includes(m));
     while (f.children.length) { const c = f.children.pop(); c.geometry?.dispose(); c.material?.dispose(); }
-    // backing slab, header band (category tint), plinth
-    const back = h.part(new h.RoundedBoxGeometry(W, H, 0.3, 3, 0.16), h.materials.body(), { parent: f, theme: () => palette.body });
-    back.position.set(0, L.centreY, -0.15);
-    const header = h.part(new h.RoundedBoxGeometry(W - 0.3, TOP - 0.2, 0.34, 3, 0.1), h.materials.header(node.headerColor()), { parent: f, theme: node.headerColor });
-    header.position.set(0, L.top - TOP / 2 - 0.08, 0.02);
-    const plinth = h.part(new h.RoundedBoxGeometry(W, PLINTH, 1.4, 3, 0.08), h.materials.body(), { parent: f, theme: () => palette.body });
-    plinth.position.set(0, L.bottom + PLINTH / 2, 0.2);
-    node.header = header;
+    // backing panel (extruded, bevelled), a slim accent line along its top edge, a flat plinth it stands on
+    const back = h.part(panelGeometry(W, H, BACK_D, { radius: 0.36 }), h.materials.body(), { parent: f, theme: () => palette.body });
+    back.position.set(0, L.centreY, -BACK_D / 2 + 0.01);
+    const accent = h.part(new THREE.BoxGeometry(W - 1.2, 0.045, 0.012), h.materials.accent(node.headerColor()), { parent: f, theme: node.headerColor, pick: false });
+    accent.position.set(0, L.top - 0.1, 0.03);
+    const plinth = h.part(slabGeometry(W + 0.2, 1.5, PLINTH, { radius: 0.24, bevel: 0.02 }), h.materials.body(), { parent: f, theme: () => palette.body });
+    plinth.position.set(0, L.bottom + PLINTH / 2 - 0.02, 0.25);
+    node.header = accent;
   },
   /** Rebuild the data-driven children: columns, lanes, cards, add tiles, dependency arcs, LOD bars. */
   refresh(node) {
@@ -209,28 +212,40 @@ const body3d = {
       const x0 = L.colX(0) - COL_W / 2, x1 = L.colX(L.n - 1) + COL_W / 2;
       node._laneBoxes = lanes.map((ln, i) => ({ ...ln, top: laneAreaTop - i * laneH, bottom: laneAreaTop - (i + 1) * laneH }));
       node._laneBoxes.forEach((ln) => {
-        const rule = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.04, 0.03), new THREE.MeshBasicMaterial({ color: new THREE.Color(ln.colour), transparent: true, opacity: ln.person ? 0.8 : 0.4 }));
-        rule.position.set((x0 + x1) / 2, ln.top - 0.02, 0.13); node.children3d.add(rule);
-        const text = ln.person ? `${initials(ln.name)} · ${ln.name.split(' ')[0]}` : ln.name;
-        const lbl = node.childLabel(text, { size: 0.21, color: ln.person ? ln.colour : 'textDim', weight: 700, maxWidth: COL_W - 0.4 }, [0, ln.top - LANE_HEAD / 2 - 0.01, 0.13]);
-        lbl.position.x = x0 + 0.2 + lbl.userData.worldW / 2;
-        if (ln.person) { const dot = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), new THREE.MeshBasicMaterial({ color: new THREE.Color(ln.colour) })); dot.position.set(x0 + 0.1, ln.top - LANE_HEAD / 2, 0.13); node.children3d.add(dot); }
+        const rule = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.025, 0.02), new THREE.MeshBasicMaterial({ color: new THREE.Color(ln.colour), transparent: true, opacity: ln.person ? 0.7 : 0.35 }));
+        rule.position.set((x0 + x1) / 2, ln.top - 0.02, 0.1); node.children3d.add(rule);
+        // swimlane label as a subtle side tab in the left margin
+        const text = ln.person ? ln.name.split(' ')[0] : ln.name;
+        const tab = new THREE.Mesh(panelGeometry(MARGIN - 0.5, LANE_HEAD - 0.06, 0.04, { radius: 0.08, bevel: 0.006 }), new THREE.MeshBasicMaterial({ color: new THREE.Color(ln.colour), transparent: true, opacity: ln.person ? 0.22 : 0.12 }));
+        tab.position.set(x0 - COL_GAP - (MARGIN - 0.5) / 2 + 0.1, ln.top - LANE_HEAD / 2, 0.1); node.children3d.add(tab);
+        node.childLabel(text, { size: 0.15, color: ln.person ? ln.colour : 'textDim', weight: 600, caps: true, spacing: 0.06, maxWidth: MARGIN - 0.7 }, [tab.position.x, ln.top - LANE_HEAD / 2 - 0.005, 0.13]);
+        if (ln.person) { const dot = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), new THREE.MeshBasicMaterial({ color: new THREE.Color(ln.colour) })); dot.position.set(x0 + 0.12, ln.top - 0.02, 0.12); node.children3d.add(dot); }
       });
     } else node._laneBoxes = null;
     board.columns.forEach((col, ci) => {
       const cx = L.colX(ci);
       // translucent column panel (a sub: click selects the column in the panel)
-      const panel = new THREE.Mesh(new THREE.BoxGeometry(COL_W, L.colH, 0.1), new THREE.MeshStandardMaterial({ color: palette.pmColumn, transparent: true, opacity: palette.pmColumnAlpha, roughness: 0.8, depthWrite: false }));
-      panel.position.set(cx, L.colTop - L.colH / 2, 0.05);
+      // frosted column panel with a thin divider look (a sub: click selects the column in the panel)
+      const panel = new THREE.Mesh(panelGeometry(COL_W, L.colH, 0.06, { radius: 0.18, bevel: 0.008 }), materials.frosted());
+      panel.position.set(cx, L.colTop - L.colH / 2, 0.04);
       panel.renderOrder = 0;
-      if (sel?.kind === 'column' && sel.id === col.id) { panel.material.emissive = new THREE.Color(states.selected); panel.material.emissiveIntensity = 0.25; }
+      if (sel?.kind === 'column' && sel.id === col.id) { panel.material.emissive = new THREE.Color(states.selected); panel.material.emissiveIntensity = 0.2; }
       node.childSub(panel, { kind: 'column', id: col.id });
       const over = col.wipLimit && col.cards.length > col.wipLimit;
       const shown = mode === 'filter' ? col.cards.filter(mine) : col.cards;
-      node.childLabel(col.title, { size: 0.3, color: 'text', weight: 600, maxWidth: COL_W - 1.2 }, [cx - 0.25, L.colTop - 0.42, 0.13]);
+      // column title in small caps + a count pill at the right
+      const title = node.childLabel(col.title, { size: 0.19, color: 'text', weight: 600, caps: true, spacing: 0.08, maxWidth: COL_W - 1.3 }, [0, L.colTop - 0.42, 0.1]);
+      title.position.x = cx - COL_W / 2 + 0.22 + title.userData.worldW / 2;
       const countText = mode === 'filter' ? `${shown.length} of ${col.cards.length}` : `${col.cards.length}${col.wipLimit ? ' / ' + col.wipLimit : ''}`;
-      const count = node.childLabel(countText, { size: 0.24, color: over ? '#ff4d5e' : 'textDim', weight: 600 }, [cx + COL_W / 2 - 0.45, L.colTop - 0.42, 0.13]);
-      count.userData.isCount = true;
+      const count = node.childLabel(countText, { size: 0.18, color: over ? '#ff5c6c' : 'textDim', weight: 600 }, [0, L.colTop - 0.42, 0.11]);
+      const pillW = count.userData.worldW + 0.26;
+      const pill = new THREE.Mesh(panelGeometry(pillW, 0.32, 0.02, { radius: 0.16, bevel: 0, curveSegments: 8 }), new THREE.MeshBasicMaterial({ color: over ? 0xff5c6c : palette.pmCard, transparent: true, opacity: over ? 0.25 : 0.9 }));
+      pill.position.set(cx + COL_W / 2 - 0.22 - pillW / 2, L.colTop - 0.42, 0.08); node.children3d.add(pill);
+      count.position.x = pill.position.x;
+      count.userData.isCount = true; pill.userData.isCount = true;
+      // a hairline under the column header
+      const rule = new THREE.Mesh(new THREE.PlaneGeometry(COL_W - 0.36, 0.012), new THREE.MeshBasicMaterial({ color: palette.textDim, transparent: true, opacity: 0.35, depthWrite: false }));
+      rule.position.set(cx, L.colTop - 0.72, 0.08); node.children3d.add(rule);
       // card positions: one stack per column, or one stack per lane cell
       const place = new Map();   // card id → y
       if (lanes) {
@@ -247,13 +262,14 @@ const body3d = {
         if (!place.has(card.id)) return;   // filtered out
         const group = new THREE.Group();
         group.position.set(cx, place.get(card.id), CARD_Z + CARD_D / 2 - i * 0.008);
-        const slab = new THREE.Mesh(new THREE.BoxGeometry(CARD_W, CARD_H, CARD_D), new THREE.MeshStandardMaterial({ color: palette.pmCard, roughness: 0.55, transparent: true, opacity: 1 }));
-        const plane = makeCanvasPlane(CARD_W - 0.04, CARD_H - 0.04);
-        plane.mesh.position.z = CARD_D / 2 + 0.004;
+        // one extruded card: the canvas is the front cap's texture (UVs map it exactly), the sides are plain
+        const plane = makeCanvasPlane(CARD_W, CARD_H, { emissive: 0.4 });
+        const faceMat = new THREE.MeshPhysicalMaterial({ map: plane.texture, emissive: 0xffffff, emissiveMap: plane.texture, emissiveIntensity: 0.35, roughness: 0.55, clearcoat: 0.25, clearcoatRoughness: 0.4, envMapIntensity: 0.3, transparent: true, opacity: 1 });
+        const sideMat = materials.panel(palette.pmCard, { transparent: true, opacity: 1 });
+        const slab = new THREE.Mesh(panelGeometry(CARD_W, CARD_H, CARD_D, { radius: CARD_R, bevel: 0.012 }), [faceMat, sideMat]);
         const sub = { kind: 'card', id: card.id, column: col.id, index: i };
-        node.childSub(slab, sub); node.childSub(plane.mesh, sub);
-        plane.mesh.userData.sub = slab.userData.sub;
-        group.add(slab, plane.mesh);
+        node.childSub(slab, sub);
+        group.add(slab);
         node.children3d.add(group);
         const person = personFor(node, card.assignee);
         const linked = !!person && people.includes(person);
@@ -264,13 +280,13 @@ const body3d = {
         if (dragging && dragging.id === card.id) group.visible = false;
       });
       // "+" tile
-      const add = new THREE.Mesh(new THREE.BoxGeometry(CARD_W, ADD_H, 0.08), new THREE.MeshStandardMaterial({ color: palette.pmCard, transparent: true, opacity: 0.55, roughness: 0.7 }));
-      add.position.set(cx, L.colBottom + 0.15 + ADD_H / 2, 0.12);
+      const add = new THREE.Mesh(panelGeometry(CARD_W, ADD_H, 0.05, { radius: 0.1, bevel: 0.006 }), materials.frosted(palette.pmCard, 0.45));
+      add.position.set(cx, L.colBottom + 0.15 + ADD_H / 2, 0.1);
       node.childSub(add, { kind: 'add', id: col.id });
-      node.childLabel('+', { size: 0.32, color: 'textDim', weight: 600 }, [cx, L.colBottom + 0.15 + ADD_H / 2, 0.17], true);
+      node.childLabel('+', { size: 0.3, color: 'textDim', weight: 500 }, [cx, L.colBottom + 0.15 + ADD_H / 2, 0.14], true);
       // far-LOD bar: card count as a column of colour
       const bh = Math.min(L.colH - 1.6, 0.35 + col.cards.length * 0.55);
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(COL_W * 0.55, bh, 0.2), new THREE.MeshStandardMaterial({ color: node.headerColor(), emissive: node.headerColor(), emissiveIntensity: 0.35, roughness: 0.6 }));
+      const bar = new THREE.Mesh(panelGeometry(COL_W * 0.55, bh, 0.16, { radius: 0.2 }), materials.panel(node.headerColor(), { emissive: node.headerColor(), emissiveIntensity: 0.3 }));
       bar.position.set(cx, L.colBottom + 0.7 + bh / 2, 0.1);
       bar.visible = false; node.children3d.add(bar); node._colBars.push(bar);
       const big = node.childLabel(String(col.cards.length), { size: 0.9, color: 'text', weight: 700 }, [cx, L.colTop - 1.3, 0.2]);
@@ -312,7 +328,7 @@ const body3d = {
     }));
     // highlight view: cards of people who are not connected fade back
     const o = entry.dim ? 0.3 : 1;
-    entry.slab.material.opacity = o; entry.plane.mesh.material.opacity = o;
+    entry.slab.material.forEach((m) => { m.opacity = o; });
   },
   /** Column count or lane count changed: resize the frame, rim, shadow and move the ports. */
   _resize(node, d) {
@@ -321,14 +337,15 @@ const body3d = {
     body3d._buildFrame(node, node._helpers());
     const L = layout(node);
     node.bodyOffsetY = L.centreY;
-    node.rim.geometry.dispose(); node.rim.geometry = new THREE.BoxGeometry(d.width + 0.1, d.height + 0.1, DEPTH + 0.1).translate(0, L.centreY, 0);
+    node.rim.geometry.dispose(); node.rim.geometry = outlineGeometry(d.width, d.height, BACK_D, sizes.outline.grow, { radius: 0.36 }).translate(0, L.centreY, -BACK_D / 2 + 0.01);
     node.shadow.geometry.dispose(); node.shadow.geometry = new THREE.PlaneGeometry(d.width * 1.4, DEPTH * 3.2);
     const P = body3d.ports(node);
     node.inputs.forEach((p, i) => { p.basePos = P.in[i]; p.labelMesh.position.x = P.in[i][0] + 0.22 + p.labelMesh.userData.worldW / 2; });
     node.outputs.forEach((p, i) => { p.basePos = P.out[i]; p.labelMesh.position.x = P.out[i][0] - 0.22 - p.labelMesh.userData.worldW / 2; });
     node.relayoutPorts();
-    node.titleLabel.position.set(...body3d.titleAt(node));
-    node._titleY = node.titleLabel.position.y;
+    const at = body3d.titleAt(node);
+    node.titleLabel.position.set(at[0] + node.titleLabel.userData.worldW / 2, at[1], at[2]);
+    node._titleY = node.titleLabel.position.y; node._titleX = node.titleLabel.position.x;
     node.world?.bumpLayout();
   },
   applyLOD(node, k, force = false) {
@@ -369,7 +386,7 @@ const body3d = {
     const world = node.world; if (!world) return null;
     const rc = new THREE.Raycaster(ray.origin, ray.direction);
     const meshes = [];
-    for (const n of world.nodes) if (n.typeId === 'person' && n.visible) for (const m of [n.body, n.header, n.face?.mesh]) if (m) { m.userData.__person = n; meshes.push(m); }
+    for (const n of world.nodes) if (n.typeId === 'person' && n.visible) for (const m of [n.body, n.face?.mesh]) if (m) { m.userData.__person = n; meshes.push(m); }
     const hit = rc.intersectObjects(meshes, false)[0];
     return hit ? { person: hit.object.userData.__person, point: hit.point } : null;
   },
@@ -394,7 +411,7 @@ const body3d = {
       if (over) {
         const local = node.worldToLocal(over.point.clone());
         e.group.position.set(local.x, local.y, local.z + 0.3); e.group.rotation.z = -0.08; e.group.visible = true;
-        e.slab.material.opacity = 0.85;
+        e.slab.material.forEach((m) => { m.opacity = 0.85; });
         node.slot.visible = false; D.target = null;
         node.world?.overlays?.dragLabel(`<b>${e.card.title}</b> → assign to ${over.person.params.name}`, ev.x || 0, ev.y || 0);
         return true;
@@ -402,7 +419,7 @@ const body3d = {
       node.world?.overlays?.dragLabel(null);
       const p = body3d._pointOnBoard(node, ev.ray); if (!p) return true;
       e.group.position.set(p.x, p.y, 0.95); e.group.rotation.z = -0.04; e.group.visible = true;
-      e.slab.material.opacity = 0.85;
+      e.slab.material.forEach((m) => { m.opacity = 0.85; });
       // target column (+ lane) + index
       const L = layout(node);
       const ci = Math.max(0, Math.min(board.columns.length - 1, Math.round((p.x - L.firstX) / (COL_W + COL_GAP))));

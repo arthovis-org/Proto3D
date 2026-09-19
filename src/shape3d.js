@@ -23,7 +23,8 @@
 // moves, groups, duplicates and serializes like any other component.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { palette, categories, states, sizes, materials, makeLabel, setLabelText, makeShadowBlob, refreshLabel } from './theme.js';
+import { palette, categories, states, sizes, materials, makeLabel, setLabelText, makeShadowBlob, refreshLabel, alignLabelLeft } from './theme.js';
+import { panelGeometry, slabGeometry, outlineGeometry } from './geometry.js';
 import { Block3D } from './block3d.js';
 import { clear as clearFace } from './faces.js';
 
@@ -35,9 +36,7 @@ export function makeCanvasPlane(w, h, { emissive = 0.55, px = sizes.face.pxPerUn
   texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4;
   const g = canvas.getContext('2d');
   clearFace(g, canvas.width, canvas.height, 'rgba(0,0,0,0)');
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), materials.face(texture, { emissive }));
-  mesh.material.map = texture;          // alpha comes from the canvas: transparent pixels show the body behind
-  mesh.material.transparent = true; mesh.material.needsUpdate = true;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), materials.face(texture, { emissive, transparent: true }));   // alpha from the canvas: transparent pixels show the body behind
   mesh.renderOrder = 1;
   const plane = { mesh, canvas, g, texture, w, h, draw(fn) { fn(g, canvas.width, canvas.height); texture.needsUpdate = true; }, dispose() { texture.dispose(); mesh.geometry.dispose(); mesh.material.dispose(); } };
   return plane;
@@ -65,8 +64,9 @@ export class Shape3D extends Block3D {
 
     // Title: on the body front, near the top unless the body says otherwise
     const at = B.titleAt ? B.titleAt(this) : [0, this.height / 2 - 0.45, this.depth / 2 + 0.04];
-    this.titleLabel = makeLabel(this.title, { size: B.titleSize || sizes.label.title, color: B.titleColor || 'textOnHeader', weight: 600, maxWidth: this.width - 0.8 });
-    this.titleLabel.position.set(...at);
+    this.titleLabel = makeLabel(this.title, { size: B.titleSize || sizes.label.title, color: B.titleColor || 'text', weight: 600, maxWidth: this.width - 0.8 });
+    if (B.titleAlign === 'left') alignLabelLeft(this.titleLabel, at[0], at[1], at[2]); else this.titleLabel.position.set(...at);
+    this._titleX = this.titleLabel.position.x;
     this.add(this.titleLabel); this.labels.push(this.titleLabel);
     this._titleY = at[1]; this._titleZ = at[2];
 
@@ -77,12 +77,14 @@ export class Shape3D extends Block3D {
     def.outputs.forEach((p, i) => this._addLabelledPort(p, ...(P?.out?.[i] || [this.width / 2, y0 - i * sizes.port.gap, 0])));
 
     if (!this.rim) {
-      this.rim = new THREE.Mesh(new RoundedBoxGeometry(this.width + 0.1, this.height + 0.1, this.depth + 0.1, 3, 0.2), materials.rim());
+      this.rim = new THREE.Mesh(outlineGeometry(this.width, this.height, this.depth, sizes.outline.grow, { radius: 0.3 }), materials.rim());
       this.rim.visible = false;
       this.add(this.rim);
     }
     this.shadow = makeShadowBlob(this.width, this.depth);
     this.add(this.shadow);
+    this._wiringOn = this.portsVisible;
+    this.applyWiring();
     this.applyVisual();
     if (B.refresh) { B.refresh(this); this.faceDirty = false; }
     def.onCreate?.(this);
@@ -93,6 +95,8 @@ export class Shape3D extends Block3D {
     const node = this;
     return {
       THREE, RoundedBoxGeometry, materials, palette, states, sizes,
+      /** The platform body shape: an extruded rounded rectangle with a tiny bevel (geometry.js). */
+      panelGeometry, slabGeometry, outlineGeometry, alignLabelLeft,
       /** A pickable body part; `theme` is a () => hex recoloured on theme change. */
       part(geo, mat, { pick = true, theme = null, parent = node } = {}) {
         const m = new THREE.Mesh(geo, mat);
@@ -171,8 +175,9 @@ export class Shape3D extends Block3D {
     const k = this.lodBlend;
     const far = this._farTitleScale();
     this.titleLabel.scale.setScalar(1 + (far - 1) * k);
-    const farY = this.height / 2 + 0.3 + this.titleLabel.userData.worldH * far * 0.5;
+    const farY = this.height / 2 + (this.bodyOffsetY || 0) + 0.3 + this.titleLabel.userData.worldH * far * 0.5;
     this.titleLabel.position.y = this._titleY + (farY - this._titleY) * k;
+    this.titleLabel.position.x = (this._titleX || 0) * (1 - k);
     this.titleLabel.position.z = this._titleZ + 0.03 * k;
     this.def.body3d.applyLOD?.(this, k);
   }

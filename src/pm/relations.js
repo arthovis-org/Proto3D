@@ -98,6 +98,15 @@ const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const verbFor = (to) => ({ start: 'starts', trigger: 'fires', in: 'runs' }[to.key] || `gets ${to.label}`);
 const TABLE = {
   'person.person>kanban-board.people': (n) => `${n.fromPoss} tasks appear on ${n.to}`,
+  'checklist.progress>project-dashboard.checklists': (n) => `${n.from} shows as a checklist bar on ${n.to}`,
+  'media.media>media-grid.items': (n) => `${n.from} joins the ${n.to} gallery`,
+  'media.media>*': (n) => `${n.from} shows on ${n.to}`,
+  'media-grid.layout>*': (n) => `The ${n.from} gallery shows on ${n.to}`,
+  'input.trigger>kanban-board.addTask': (n) => `Pressing ${n.from} adds a task to ${n.to}`,
+  '*.tap>flow-terminal.in': (n) => `Tapping ${n.from} starts the flow at ${n.to}`,
+  'text.text>*': (n) => `${n.fromPoss} text shows on ${n.to}`,
+  'action.result>*': (n) => `${n.fromPoss} result goes to ${n.to}`,
+  'action.done>*': (n) => `When ${n.from} is done, ${n.to} runs`,
   'person.person>project-dashboard.people': (n) => `${n.fromPoss} load shows on ${n.to}`,
   'person.person>*': (n, f, t) => `${n.fromPoss} details go to ${n.to}`,
   'person.summary>*': (n) => `${n.fromPoss} task list shows on ${n.to}`,
@@ -128,3 +137,57 @@ const TABLE = {
   'flow-decision.no>*': (n) => `If ${n.from} says no, ${n.to} runs`,
   'sticky-note.text>*': (n) => `${n.fromPoss} note text goes to ${n.to}`,
 };
+
+/* ---------------- drop-to-link: relationships without cables ---------------- */
+/**
+ * Port pairs a drop creates (`dragged` dropped on `target` → dragged.output → target.input).
+ * Rows are `fromType.port>toType.port`; `*` stands for any type; a `to` of `*.screen` covers the
+ * four devices. Beyond the table, a flow-ish event output (`out`, `next`, `yes`, `no`, `done`,
+ * `tap`, `trigger`, `reached`) dropped on a block with a flow-ish event input (`in`, `start`,
+ * `trigger`) pairs up as well, so flows can be assembled by dropping shapes on each other.
+ */
+export const DROP_LINKS = [
+  'person.person>kanban-board.people', 'person.person>project-dashboard.people', 'person.summary>*.screen', 'person.summary>display.in',
+  'milestone.milestone>kanban-board.milestone', 'milestone.milestone>timeline.milestones', 'milestone.milestone>project-dashboard.milestone',
+  'kanban-board.tasks>timeline.tasks', 'kanban-board.progress>project-dashboard.progress', 'kanban-board.tasks>project-dashboard.tasks', 'kanban-board.tasks>person.tasks', 'kanban-board.done>flow-terminal.in',
+  'checklist.progress>project-dashboard.checklists',
+  'media.media>media-grid.items', 'media.media>*.screen', 'media.media>display.in', 'media-grid.layout>*.screen', 'media-grid.layout>display.in',
+  'input.trigger>kanban-board.addTask', '*.tap>flow-terminal.in',
+  'text.text>*.screen', 'text.text>display.in', 'action.result>*.screen', 'action.result>display.in', 'action.result>text.in',
+  'project-dashboard.progress>display.in', 'sticky-note.text>display.in', 'sticky-note.text>*.screen',
+];
+const FLOW_OUT = new Set(['out', 'next', 'yes', 'no', 'done', 'tap', 'trigger', 'reached']);
+const FLOW_IN = new Set(['in', 'start', 'trigger']);
+const DEVICE_TYPES = new Set(['phone', 'tablet', 'laptop', 'monitor']);
+function matchesRow(row, from, to) {
+  const [f, t] = row.split('>');
+  const [ft, fk] = f.split('.'), [tt, tk] = t.split('.');
+  const A = from.owner, B = to.owner;
+  const typeOk = (want, owner) => want === '*' || want === owner.typeId;
+  if (!typeOk(ft, A) || fk !== from.key) return false;
+  if (tt === '*' && tk === 'screen') return DEVICE_TYPES.has(B.typeId) && to.key === 'screen';
+  return typeOk(tt, B) && tk === to.key;
+}
+/**
+ * Candidate links for dropping `dragged` onto `target`: `[{ from, to, sentence }]`, most specific
+ * first, excluding pairs that already exist, occupied single inputs and incompatible ports.
+ */
+export function dropLinkCandidates(dragged, target, world) {
+  if (!dragged || !target || dragged === target || dragged.kind === 'group' || target.kind === 'group') return [];
+  const out = [];
+  const seen = new Set();
+  const consider = (from, to, generic) => {
+    if (seen.has(to) || !world.canConnect(from, to)) return;
+    if (world.connections.some((c) => c.from === from && c.to === to)) return;
+    if (!to.multi && world.connections.some((c) => c.to === to)) return;   // an occupied single input keeps its cable
+    seen.add(to);
+    out.push({ from, to, generic, sentence: describePorts(from, to) || `${dragged.title}.${from.label} → ${target.title}.${to.label}` });
+  };
+  for (const from of dragged.outputs) for (const to of target.inputs) {
+    if (DROP_LINKS.some((row) => matchesRow(row, from, to))) consider(from, to, false);
+  }
+  for (const from of dragged.outputs) for (const to of target.inputs) {
+    if (from.type === 'event' && to.type === 'event' && FLOW_OUT.has(from.key) && FLOW_IN.has(to.key)) consider(from, to, true);
+  }
+  return out;
+}

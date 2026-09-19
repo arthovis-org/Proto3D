@@ -4,6 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Proto3D — 3D project management platform</title>
+  <!-- Inter from Google Fonts when online; the type stack falls back to the system sans offline -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
   <link rel="stylesheet" href="./styles.css" />
   <script>
     // Apply the persisted theme before the first paint so the overlay never flashes.
@@ -29,33 +33,57 @@
     <p>3D project management · live dataflow</p>
   </div>
 
-  <div id="toolbar" class="overlay">
-    <span class="menu-anchor">
-      <button id="btn-file" type="button" title="File — New, Save JSON, Load JSON, Examples">File</button>
-      <div id="file-menu" class="menu" hidden></div>
+  <div id="toolbar" class="overlay" role="toolbar" aria-label="Workspace">
+    <span class="tb-group">
+      <span class="menu-anchor">
+        <button id="btn-file" type="button" class="tb" title="File — New, Save JSON, Load JSON, Examples"><i data-icon="file"></i><span>File</span></button>
+        <div id="file-menu" class="menu" hidden></div>
+      </span>
+      <button id="btn-undo" type="button" class="tb icon-only" title="Undo (Ctrl+Z)" aria-label="Undo"><i data-icon="undo"></i></button>
+      <button id="btn-redo" type="button" class="tb icon-only" title="Redo (Ctrl+Shift+Z or Ctrl+Y)" aria-label="Redo"><i data-icon="redo"></i></button>
     </span>
-    <span class="group">
-      <button id="btn-undo" type="button" title="Undo (Ctrl+Z)">↶</button>
-      <button id="btn-redo" type="button" title="Redo (Ctrl+Shift+Z or Ctrl+Y)">↷</button>
+    <span class="tb-sep"></span>
+    <span class="tb-group">
+      <button id="btn-wiring" type="button" class="tb" title="Wiring — show or hide ports and cables (P). Cables are optional: drop a component onto another to link them" aria-pressed="false"><i data-icon="plug"></i><span>Wiring</span></button>
+      <button id="btn-flow" type="button" class="tb" title="Flow animation on cables"><i data-icon="flow"></i><span>Flow</span></button>
+      <button id="btn-gizmo" type="button" class="tb" title="Move / rotate / scale gizmo (G) · W move, E rotate, R scale"><i data-icon="gizmo"></i><span>Gizmo</span></button>
     </span>
-    <button id="btn-flow" type="button" title="Toggle the flow animation on cables">Flow</button>
-    <button id="btn-gizmo" type="button" title="Move / rotate / scale gizmo (G) · W move, E rotate, R scale">Gizmo</button>
-    <button id="btn-theme" type="button" title="Switch light / dark theme (T)">Light theme</button>
-    <button id="btn-frame" type="button" title="Frame everything (Home) · F frames the selection">Frame all</button>
-    <span class="menu-anchor">
-      <button id="btn-help" type="button" title="Help, legend and the guided tour (H)">?</button>
-      <div id="help-menu" class="menu" hidden>
-        <button type="button" data-action="help">Help &amp; legend <kbd>H</kbd></button>
-        <button type="button" data-action="tour">Show tour</button>
-      </div>
+    <span class="tb-sep"></span>
+    <span class="tb-group">
+      <button id="btn-theme" type="button" class="tb" title="Switch light / dark theme (T)"><i data-icon="sun"></i><span>Light</span></button>
+      <button id="btn-frame" type="button" class="tb" title="Frame everything (Home) · F frames the selection"><i data-icon="frame"></i><span>Frame all</span></button>
     </span>
-    <button id="btn-panel" type="button" title="Show / hide the properties panel (N)">Properties</button>
+    <span class="tb-sep"></span>
+    <span class="tb-group">
+      <span class="menu-anchor">
+        <button id="btn-help" type="button" class="tb icon-only" title="Help, legend, controls and the guided tour (H)" aria-label="Help"><i data-icon="help"></i></button>
+        <div id="help-menu" class="menu" hidden>
+          <button type="button" data-action="help">Help &amp; legend <kbd>H</kbd></button>
+          <button type="button" data-action="tour">Show tour</button>
+          <div class="menu-sep">Controls</div>
+          <button type="button" data-preset="blender">Blender <small>middle-drag orbits</small></button>
+          <button type="button" data-preset="unreal">Unreal <small>right-drag looks, WASD flies</small></button>
+          <button type="button" data-preset="maya">Maya <small>Alt+drag</small></button>
+          <button type="button" data-preset="simple">Simple <small>left-drag orbits</small></button>
+        </div>
+      </span>
+      <button id="btn-panel" type="button" class="tb" title="Show / hide the properties panel (N or Tab)"><i data-icon="sidebar"></i><span>Properties</span></button>
+    </span>
   </div>
 
   <aside id="panel">
     <div id="panel-body"></div>
     <details id="help">
       <summary>Help &amp; legend</summary>
+      <section>
+        <h2 id="legend-controls-title">Controls</h2>
+        <div class="row"><label for="help-preset">preset</label><select id="help-preset"></select></div>
+        <dl id="legend-controls" class="controls-sheet"></dl>
+      </section>
+      <section>
+        <h2>Wiring is optional</h2>
+        <p class="help-p">Ports and cables are hidden until you turn <b>Wiring</b> on (<kbd>P</kbd>). Without them, <b>drop a component onto another</b> to link them — a Person onto a board, a Board onto a Timeline, a Media onto a Media Grid or a screen — and the workspace tells you what the link means. A block can show its own ports with the eye icon in its panel header.</p>
+      </section>
       <section>
         <h2>Ports</h2>
         <ul id="legend-shapes"></ul>
@@ -72,26 +100,16 @@
         </ol>
       </section>
       <section>
-        <h2>Navigate</h2>
-        <dl>
-          <dt>Orbit</dt><dd>left-drag on empty space</dd>
-          <dt>Pan</dt><dd>right-drag</dd>
-          <dt>Zoom</dt><dd>wheel / pinch</dd>
-          <dt>Focus</dt><dd><kbd>F</kbd> selection · double-click a block · <kbd>Home</kbd> frame all</dd>
-        </dl>
-      </section>
-      <section>
         <h2>Build</h2>
         <dl>
           <dt>Add</dt><dd>left toolbar: click a category, click a component (or drag it into the scene) · <kbd>Shift</kbd>+<kbd>A</kbd> search</dd>
           <dt>Move</dt><dd>drag a block (<kbd>Shift</kbd> for height) · gizmo <kbd>G</kbd>, <kbd>W</kbd>/<kbd>E</kbd>/<kbd>R</kbd></dd>
-          <dt>Connect</dt><dd>drag from a pin to a lit pin on another node · hover a pin to see what fits</dd>
+          <dt>Link</dt><dd>drop a component onto another · or, with wiring on, drag from a pin to a lit pin</dd>
           <dt>Re-route</dt><dd>grab a cable end and drop it on another pin · empty space disconnects · <kbd>Esc</kbd> puts it back</dd>
-          <dt>Select</dt><dd>click · <kbd>Shift</kbd>+click adds · <kbd>Shift</kbd>+drag on the floor: marquee · <kbd>Ctrl</kbd>+<kbd>A</kbd> all</dd>
           <dt>Edit</dt><dd><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate · <kbd>Del</kbd> delete · <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> undo / redo</dd>
           <dt>Group</dt><dd><kbd>Ctrl</kbd>+<kbd>G</kbd> group · <kbd>C</kbd> collapse / expand · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> ungroup</dd>
           <dt>Interact</dt><dd>click / drag cards on a Kanban board · drop a card on a Person (or a Person on a card) to assign it · press Run on a Flow Terminal · click a checklist row · click a device screen or an Input face to fire events</dd>
-          <dt>View</dt><dd><kbd>T</kbd> theme · <kbd>N</kbd> panel · <kbd>H</kbd> help · <kbd>Esc</kbd> cancel</dd>
+          <dt>View</dt><dd><kbd>P</kbd> wiring · <kbd>T</kbd> theme · <kbd>N</kbd> panel · <kbd>H</kbd> help · <kbd>Esc</kbd> cancel</dd>
         </dl>
       </section>
       <section>

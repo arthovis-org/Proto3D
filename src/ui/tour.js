@@ -6,17 +6,21 @@
 // events, so the person can try things while reading.
 import * as THREE from 'three';
 import { Connection3D } from '../connection3d.js';
+import { isWiringOn, setWiring } from '../wiring.js';
+import { nav } from '../controls/navigation.js';
 
 export const TOUR_KEY = 'proto3d.tour.v1';
 export function tourSeen(key = TOUR_KEY) { try { return localStorage.getItem(key) === 'done'; } catch (_) { return true; } }
 export function markTourSeen(key = TOUR_KEY) { try { localStorage.setItem(key, 'done'); } catch (_) { /* private mode */ } }
 
+/** Step 1 reads the active navigation preset so the hint matches the mouse bindings. */
+const navHint = () => `${nav.binding('orbit') || 'Drag'} orbits, ${nav.binding('pan') || 'right-drag'} pans, the wheel zooms (${nav.preset.label} controls; change them under ? → Controls).`;
 const STEPS = [
-  { id: 'toolbar', title: 'Add components', text: 'Add components from the left toolbar: pick a category, then click a component or drag it into the room.' },
-  { id: 'connect', title: 'Connect ports', text: 'Connect an output on the right of a node to an input on the left of another. Matching colours fit; chevrons are events, circles carry data.' },
-  { id: 'people', title: 'Plug people into the board', text: 'Plug a person into the board\'s people slot to see their tasks: the rectangle grows one slot per person, the board draws a lane per person and each Person card lists their tasks.' },
+  { id: 'toolbar', title: 'Add and move around', text: () => `Add components from the left toolbar: pick a category, then click a component or drag it into the room. ${navHint()} You can build without cables: drop a component onto another to link them.` },
+  { id: 'connect', title: 'Connect ports (optional)', text: 'With Wiring on (P) every block shows its pins. Connect an output on the right of a node to an input on the left of another. Matching colours fit; chevrons are events, circles carry data.', wiring: true },
+  { id: 'people', title: 'Plug people into the board', text: 'Plug a person into the board\'s people slot to see their tasks: the rectangle grows one slot per person, the board draws a lane per person and each Person card lists their tasks. Without wiring: drop the Person onto the board.', wiring: true },
   { id: 'card', title: 'Edit on the right', text: 'Click a card on the board to edit it in the properties panel on the right. Drag a card to move it between columns, or drop it on a Person to assign it.' },
-  { id: 'reroute', title: 'Move or remove a cable', text: 'Grab a cable end to move it to another port; drop it on empty space to disconnect. Undo anything with Ctrl+Z.' },
+  { id: 'reroute', title: 'Move or remove a cable', text: 'Grab a cable end to move it to another port; drop it on empty space to disconnect. Undo anything with Ctrl+Z.', wiring: true },
 ];
 
 export class Tour {
@@ -40,7 +44,9 @@ export class Tour {
   get active() { return this.index >= 0; }
   get steps() { return STEPS; }
 
-  start() { this.index = -1; this.el.hidden = false; this.next(); }
+  start() { this.index = -1; this.el.hidden = false; this._wiringBefore = isWiringOn(); this.next(); }
+  /** Re-render the current step's text (the navigation preset changed). */
+  refreshText() { if (this.active) { const t = STEPS[this.index].text; this.textEl.textContent = typeof t === 'function' ? t() : t; } }
   next() {
     this.index += 1;
     if (this.index >= STEPS.length) { this.finish(); return; }
@@ -52,6 +58,7 @@ export class Tour {
     this.index = -1;
     this._clearGhost();
     this.el.hidden = true;
+    if (this._wiringBefore !== undefined) { setWiring(this._wiringBefore); this._wiringBefore = undefined; }   // restore the wiring switch the tour turned on
     markTourSeen();
     this.onDone();
   }
@@ -61,7 +68,9 @@ export class Tour {
     this.anchor = null;
     this.stepEl.textContent = `${this.index + 1} / ${STEPS.length}`;
     this.titleEl.textContent = step.title;
-    this.textEl.textContent = step.text;
+    this.textEl.textContent = typeof step.text === 'function' ? step.text() : step.text;
+    // the wiring steps need visible pins and cables; the switch goes back to what it was when the tour ends
+    setWiring(step.wiring ? true : this._wiringBefore);
     this.nextBtn.textContent = this.index === STEPS.length - 1 ? 'Done' : 'Next';
     this.spot.classList.toggle('round', step.id !== 'toolbar');
     const nodes = this.world.nodes.filter((n) => n.visible);

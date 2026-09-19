@@ -4,7 +4,7 @@
 // drops where the ray hits the floor, with a ghost footprint while dragging. Categories and
 // components come from the registry so new definitions appear automatically.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { slabGeometry } from '../geometry.js';
 import { registry } from '../core/registry.js';
 import { icons } from '../icons.js';
 import { nodeDimensions } from '../node3d.js';
@@ -120,7 +120,7 @@ export class LeftToolbar {
   _beginGhost(def) {
     const { w, d } = this._footprint(def);
     const g = new THREE.Group();
-    const plate = new THREE.Mesh(new RoundedBoxGeometry(w + 0.6, 0.06, d + 0.6, 2, 0.3), new THREE.MeshBasicMaterial({ color: states.selected, transparent: true, opacity: 0.35, depthWrite: false }));
+    const plate = new THREE.Mesh(slabGeometry(w + 0.6, d + 0.6, 0.06, { radius: 0.4, bevel: 0.01 }), new THREE.MeshBasicMaterial({ color: states.selected, transparent: true, opacity: 0.35, depthWrite: false }));
     plate.position.y = 0.03;
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.2, 8), new THREE.MeshBasicMaterial({ color: states.selected, transparent: true, opacity: 0.6 }));
     post.position.y = 1.1;

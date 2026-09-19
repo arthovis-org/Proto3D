@@ -4,7 +4,9 @@ import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { palette } from '../../theme.js';
 import { clear, drawText, roundRect } from '../../faces.js';
-import { num } from '../util.js';
+import { num, parseLiteral } from '../util.js';
+/** What a button / key press sends: the configured payload (text or JSON), else the press count. */
+const pressPayload = (instance) => (instance.params.payload ? parseLiteral(instance.params.payload) : instance.state.count || 0);
 
 const keyListeners = new WeakMap();
 const isTyping = (e) => { const t = e.target; return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable); };
@@ -17,6 +19,7 @@ export default registry.register({
   params: [
     { key: 'mode', label: 'mode', type: 'select', options: ['button', 'toggle', 'key', 'timer', 'slider'], default: 'button' },
     { key: 'label', label: 'label', type: 'text', default: 'Tap' },
+    { key: 'payload', label: 'payload (button / key; empty = count)', type: 'text', default: '' },
     { key: 'key', label: 'key name', type: 'text', default: 'Space' },
     { key: 'interval', label: 'interval (s)', type: 'number', default: 1, min: 0.1, max: 60, step: 0.1 },
     { key: 'value', label: 'slider value', type: 'number', default: 0.5, step: 0.01 },
@@ -26,7 +29,7 @@ export default registry.register({
   onCreate(instance) {
     const fn = (e) => {
       if (instance.params.mode !== 'key' || isTyping(e) || e.repeat || !instance.world) return;
-      if (keyMatches(e, instance.params.key)) { instance.state.count = (instance.state.count || 0) + 1; instance.state.pressedAt = performance.now(); instance.emit('trigger', instance.state.count); instance.faceDirty = true; }
+      if (keyMatches(e, instance.params.key)) { instance.state.count = (instance.state.count || 0) + 1; instance.state.pressedAt = performance.now(); instance.emit('trigger', pressPayload(instance)); instance.faceDirty = true; }
     };
     window.addEventListener('keydown', fn);
     keyListeners.set(instance, fn);
@@ -85,10 +88,10 @@ export default registry.register({
           break;
         }
         default: {
-          const bw = Math.min(w * 0.7, 300), bh = Math.min(h * 0.55, 120);
-          g.fillStyle = pressed ? '#fff' : acc; roundRect(g, (w - bw) / 2, (h - bh) / 2 - 8, bw, bh, 22); g.fill();
-          drawText(g, params.label || 'Tap', (w - bw) / 2, (h - bh) / 2 - 8, bw, bh, { size: 40, weight: 700, color: pressed ? acc : '#fff' });
-          drawText(g, `${state.count || 0} presses`, 0, h - 36, w, 30, { size: 18, color: palette.faceDim });
+          const bw = Math.min(w * 0.72, 320), bh = Math.min(h * 0.46, 96);
+          g.fillStyle = pressed ? '#fff' : acc; roundRect(g, (w - bw) / 2, (h - bh) / 2 - 10, bw, bh, bh / 2); g.fill();
+          drawText(g, params.label || 'Tap', (w - bw) / 2, (h - bh) / 2 - 10, bw, bh, { size: 30, weight: 600, color: pressed ? acc : '#fff' });
+          drawText(g, `${state.count || 0} press${state.count === 1 ? '' : 'es'}`, 0, h - 40, w, 30, { size: 15, color: palette.faceDim });
         }
       }
     },
@@ -96,7 +99,7 @@ export default registry.register({
       switch (params.mode) {
         case 'button':
           if (ev.type !== 'click') return false;
-          state.count = (state.count || 0) + 1; state.pressedAt = performance.now(); instance.emit('trigger', state.count); return true;
+          state.count = (state.count || 0) + 1; state.pressedAt = performance.now(); instance.emit('trigger', pressPayload(instance)); return true;
         case 'toggle':
           if (ev.type !== 'click') return false;
           state.on = !state.on; instance.emit('trigger', state.on); return true;

@@ -5,6 +5,7 @@ import { registry } from './core/registry.js';
 import { createInstance } from './instance.js';
 import { Group3D } from './groups.js';
 import { bumpUidCounter } from './block3d.js';
+import { isWiringOn, setWiring } from './wiring.js';
 
 export const FORMAT_VERSION = 2;
 export const AUTOSAVE_KEY = 'proto3d.world.v2';
@@ -22,6 +23,7 @@ export function serializeWorld(world, { camera, controls, name = 'untitled' } = 
     nodes: world.nodes.map((n) => n.serialize()),
     connections: world.connections.filter((c) => c.to).map((c) => c.serialize()),
     groups: world.groups.map((g) => g.serialize()),
+    wiring: isWiringOn(),
     camera: camera && controls ? { position: camera.position.toArray().map((v) => +v.toFixed(2)), target: controls.target.toArray().map((v) => +v.toFixed(2)) } : undefined,
   };
 }
@@ -36,7 +38,7 @@ export function loadWorld(world, doc, { camera, controls } = {}) {
   for (const n of doc.nodes) {
     const def = registry.get(n.type);
     if (!def) { skipped.push(n.type); continue; }
-    const inst = createInstance(def, { uid: n.uid, title: n.title, params: n.params, state: n.state, enabled: n.enabled });
+    const inst = createInstance(def, { uid: n.uid, title: n.title, params: n.params, state: n.state, enabled: n.enabled, showPorts: n.showPorts });
     inst.rotation.y = n.rotationY || 0;
     inst.scale.setScalar(n.scale || 1);
     world.addNode(inst, n.position || [0, 1.6, 0]);
@@ -60,6 +62,7 @@ export function loadWorld(world, doc, { camera, controls } = {}) {
   if (doc.camera && camera && controls) {
     camera.position.fromArray(doc.camera.position); controls.target.fromArray(doc.camera.target); controls.update();
   }
+  if (typeof doc.wiring === 'boolean') setWiring(doc.wiring);   // a saved world keeps its wiring setting
   world.changed('load');
   return { skipped, nodes: world.nodes.length, connections: world.connections.length, groups: world.groups.length };
 }

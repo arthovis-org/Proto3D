@@ -23,7 +23,8 @@ import { Group3D } from './groups.js';
 import * as cmd from './core/commands.js';
 import { formatValue, compatiblePorts, portTypeText, portTypeName, mismatchReason } from './core/types.js';
 import { hex, sizes } from './theme.js';
-import { describeLink } from './pm/relations.js';
+import { describeLink, dropLinkCandidates } from './pm/relations.js';
+import { nav } from './controls/navigation.js';
 
 /** True when the key event comes from a text field (panel) — ignore shortcuts then. */
 export const isTyping = (e) => {
@@ -36,8 +37,8 @@ const portName = (p) => `${p.owner.title}.${p.label}`;
 const FADE = 0.28;
 
 export class Interaction {
-  constructor({ camera, renderer, controls, world, selection, history, gizmo = null, createInstance, overlays = null, onHoverConnection = () => {}, onFocus = () => {}, onFrameAll = () => {} }) {
-    Object.assign(this, { camera, renderer, controls, world, selection, history, gizmo, createInstance, overlays, onHoverConnection, onFocus, onFrameAll });
+  constructor({ camera, renderer, controls, world, selection, history, gizmo = null, createInstance, overlays = null, onHoverConnection = () => {}, onFocus = () => {}, onFrameAll = () => {}, onGizmoMode = () => {}, onTogglePanel = () => {}, onOpenPanel = () => {} }) {
+    Object.assign(this, { camera, renderer, controls, world, selection, history, gizmo, createInstance, overlays, onHoverConnection, onFocus, onFrameAll, onGizmoMode, onTogglePanel, onOpenPanel });
     this.ray = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.hovered = null;
@@ -81,16 +82,17 @@ export class Interaction {
     this.ray.setFromCamera(this.pointer, this.camera);
   }
   _visibleNodes() { return this.world.nodes.filter((n) => n.visible); }
+  /** Ports that can be picked: only on blocks that show them (wiring switch or per-block override). */
   _allPorts() {
     const out = [];
-    for (const n of this._visibleNodes()) for (const p of n.ports) out.push(p);
+    for (const n of this._visibleNodes()) if (n.portsVisible) for (const p of n.ports) out.push(p);
     for (const g of this.world.groups) if (g.collapsed) for (const p of g.ports) out.push(p);
     return out;
   }
   _portMeshes() { return this._allPorts().flatMap((p) => p.pickMeshes || [p.mesh, p.shell]); }
   _faceMeshes() { return this._visibleNodes().filter((n) => n.face?.mesh).map((n) => n.face.mesh); }
   _subMeshes() { return this._visibleNodes().flatMap((n) => (n.subMeshes ? n.subMeshes() : [])); }
-  _bodyMeshes() { return this._visibleNodes().flatMap((n) => (n.meshes ? n.meshes.filter((m) => m !== n.face?.mesh) : [n.body, n.header])); }
+  _bodyMeshes() { return this._visibleNodes().flatMap((n) => (n.meshes ? n.meshes.filter((m) => m !== n.face?.mesh) : [n.body, n.header].filter(Boolean))); }
   _tubeMeshes() { return this.world.connections.filter((c) => c.visible).flatMap((c) => [c.pickTube, ...c.rings]); }
   _groupMeshes() { return this.world.groups.flatMap((g) => (g.collapsed && g.slab ? [g.slab.body, g.slab.header] : [g.fill, g.edge])); }
 
@@ -276,16 +278,29 @@ export class Interaction {
   }
 
   onDown(e) {
-    if (e.button !== 0) return;
     if (this.gizmoBusy) return;
+    const action = nav.resolveMouse(e);
+    if (e.button !== 0) {
+      // right-click under a preset that uses it for selection: select the block and open its properties
+      if (action === 'contextSelect') {
+        this._setPointer(e);
+        const hit = this.pick();
+        const target = hit && (hit.kind === 'block' || hit.kind === 'face' || hit.kind === 'sub') ? hit.target : hit?.kind === 'group' || hit?.kind === 'connection' ? hit.target : null;
+        if (target) { this.selection.set([target]); this.onOpenPanel(target); }
+      }
+      return;
+    }
+    if (this.keyDrag) return;   // a Shift+D duplicate follows the pointer until the next release
     this.shift = e.shiftKey;
+    this.add = nav.isAddModifier(e);
     this._setPointer(e);
     this.downPos.set(e.clientX, e.clientY);
     this.pressFace = null; this.pendingDetach = null;
     const hit = this.pick();
 
     if (!hit) {
-      if (e.shiftKey) { this._startMarquee(e); }
+      // empty space: the preset decides between a box select and a camera move
+      if (action === 'marquee' || action === 'marqueeAdd') { this._startMarquee(e, action === 'marqueeAdd'); }
       return;
     }
     if (hit.kind === 'port') {
@@ -313,7 +328,7 @@ export class Interaction {
       if (block.onFacePointer({ type: 'down', ...uv, button: 0 })) {
         this.faceDrag = { block, mesh: hit.mesh };
         this.controls.enabled = false;
-        if (!this.selection.has(block)) this.select(block, { toggle: e.shiftKey });
+        if (!this.selection.has(block)) this.select(block, { toggle: this.add });
         return;
       }
       this._beginBlockDrag(block, hit.point, e);
@@ -322,23 +337,28 @@ export class Interaction {
     if (hit.kind === 'block') { this._beginBlockDrag(hit.target, hit.point, e); return; }
     if (hit.kind === 'group') {
       const g = hit.target;
-      if (e.shiftKey) this.selection.toggle(g); else if (!this.selection.has(g)) this.selection.set([g]);
+      if (this.add) this.selection.toggle(g); else if (!this.selection.has(g)) this.selection.set([g]);
       this._beginMove(this._movableNodes(), hit.point, e);
       return;
     }
     if (hit.kind === 'connection') {
-      this.select(hit.target, { toggle: e.shiftKey });
+      this.select(hit.target, { toggle: this.add });
       if (hit.end && hit.target.complete) { this.pendingDetach = { conn: hit.target, end: hit.end }; this.controls.enabled = false; }
     }
   }
   _beginBlockDrag(block, point, e) {
     if (block.subSelection) { block.subSelection = null; block.faceDirty = true; if (this.selection.has(block)) this.selection.refresh(); }
-    if (e.shiftKey) this.selection.toggle(block);
+    if (this.add) this.selection.toggle(block);
     else if (!this.selection.has(block)) this.selection.set([block]);
     if (!this.selection.has(block)) return;
     this._beginMove(this._movableNodes(), point, e);
   }
-  /** A single dragged block over a child pickable that accepts it (a Person over a card): highlight the target. */
+  /**
+   * A single dragged block over something that accepts it: a child pickable (a Person over a
+   * card → assign) or another block with a compatible relationship (a Person over a board →
+   * its people slot, a Board over a Timeline → tasks; pm/relations.js dropLinkCandidates). The
+   * target lights up and the drag label says what the drop will do; cables stay optional.
+   */
   _updateBlockDrop() {
     const d = this.drag;
     let target = null;
@@ -348,14 +368,37 @@ export class Interaction {
       const sub = hits[0]?.object.userData.sub;
       const B = sub?.block.def.body3d;
       if (sub && B?.acceptsDrop?.(sub.block, sub, dragged)) target = { block: sub.block, sub, dragged };
+      if (!target) {
+        const others = this._visibleNodes().filter((n) => n !== dragged);
+        const meshes = others.flatMap((n) => [...(n.meshes ? n.meshes : [n.body, n.header]), n.face?.mesh].filter(Boolean));
+        const bh = this.ray.intersectObjects(meshes, false)[0];
+        const block = bh?.object.userData.block || bh?.object.userData.face;
+        if (block && block !== dragged) {
+          const links = dropLinkCandidates(dragged, block, this.world);
+          if (links.length) target = { block, sub: null, dragged, links, point: bh.point.clone() };
+        }
+      }
     }
-    if (d.dropTarget?.sub !== target?.sub) {
-      d.dropTarget?.block.setSubHover(null);
+    const same = d.dropTarget && target && d.dropTarget.block === target.block && d.dropTarget.sub === target.sub;
+    if (!same) {
+      if (d.dropTarget) { d.dropTarget.block.setSubHover?.(null); if (!d.dropTarget.sub) d.dropTarget.block.setDropTarget(false); }
       d.dropTarget = target;
-      if (target) target.block.setSubHover(target.sub);
+      if (target) { if (target.sub) target.block.setSubHover?.(target.sub); else target.block.setDropTarget(true); }
     }
-    if (target) this.overlays?.dragLabel(`<b>${esc(target.dragged.title)}</b> → ${esc(target.block.def.body3d.dropLabel?.(target.block, target.sub, target.dragged) || 'drop here')}`, this.lastPointer.x, this.lastPointer.y);
-    else this.overlays?.dragLabel(null);
+    if (target?.sub) this.overlays?.dragLabel(`<b>${esc(target.dragged.title)}</b> → ${esc(target.block.def.body3d.dropLabel?.(target.block, target.sub, target.dragged) || 'drop here')}`, this.lastPointer.x, this.lastPointer.y);
+    else if (target) {
+      const L = target.links;
+      const html = L.length === 1 ? `<b>${esc(L[0].sentence)}</b><span class="d">drop to link · no cable needed</span>` : `<b>${esc(target.dragged.title)}</b> → ${esc(target.block.title)}<span class="d">${L.length} ways to link · choose on drop</span>`;
+      this.overlays?.dragLabel(html, this.lastPointer.x, this.lastPointer.y);
+    } else this.overlays?.dragLabel(null);
+  }
+  /** Create the relationship a drop asked for (undoable) and say what it means. */
+  _linkByDrop(link, dragged) {
+    this.history.execute(cmd.connect(this.world, link.from, link.to));
+    const made = this.world.connections.find((x) => x.from === link.from && x.to === link.to);
+    this.overlays?.toast(link.sentence, 2400);
+    if (dragged) this.selection.set([dragged]);
+    return made;
   }
   _beginMove(nodes, point, e) {
     if (!nodes.length) return;
@@ -487,8 +530,17 @@ export class Interaction {
 
   onUp(e) {
     if (this.gizmo && this.gizmo.dragging) return;
+    if (e.button !== 0 && !this.keyDrag) return;
     this.controls.enabled = true;
     this.pendingDetach = null;
+    if (this.keyDrag && this.drag) {
+      // Shift+D: the copies followed the pointer; this click drops them
+      const d = this.drag; this.drag = null; this.keyDrag = false;
+      d.nodes.forEach((n) => { n.dragging = false; });
+      this.history.execute(cmd.transform(this.world, d.nodes, d.before, d.nodes.map(cmd.snapshot)));
+      this._cursor('');
+      return;
+    }
     const moved = Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4;
     if (this.marquee) { this._endMarquee(e); return; }
     if (this.subDrag) {
@@ -510,19 +562,21 @@ export class Interaction {
       const d = this.drag; this.drag = null;
       d.nodes.forEach((n) => { n.dragging = false; });
       if (d.dropTarget) {
-        // dropped on a card: the block springs back and the board acts (assign the card to this person)
-        const { block, sub, dragged } = d.dropTarget;
-        block.setSubHover(null); this.overlays?.dragLabel(null);
+        // dropped on a card (assign) or on a block (link): the dragged block springs back and the target acts
+        const { block, sub, dragged, links } = d.dropTarget;
+        block.setSubHover?.(null); block.setDropTarget(false); this.overlays?.dragLabel(null);
         d.nodes.forEach((n, i) => { n.position.fromArray(d.before[i].p); }); this.world.bumpLayout();
-        block.def.body3d.onDropBlock?.(block, sub, dragged, { history: this.history, selection: this.selection, overlays: this.overlays });
+        if (sub) block.def.body3d.onDropBlock?.(block, sub, dragged, { history: this.history, selection: this.selection, overlays: this.overlays });
+        else if (links?.length === 1) this._linkByDrop(links[0], dragged);
+        else if (links?.length > 1) this.overlays?.chooser(links.map((l) => ({ label: l.sentence, value: l })), { x: e.clientX, y: e.clientY, title: `Link ${dragged.title} to ${block.title}` }, (l) => { if (l) this._linkByDrop(l, dragged); });
       } else if (d.moved && moved) this.history.execute(cmd.transform(this.world, d.nodes, d.before, d.nodes.map(cmd.snapshot)));
       else if (this.pressFace && !moved) this.pressFace.block.onFacePointer({ type: 'click', u: this.pressFace.u, v: this.pressFace.v, button: 0 });
       this.pressFace = null;
       this._cursor(this._hoverCursor(this.hovered, this.hoveredEnd));
       return;
     }
-    // Click on empty space (no orbit movement) clears the selection
-    if (!moved && !this.gizmoBusy && !e.shiftKey) { this._setPointer(e); if (!this.pick()) this.selection.clear(); }
+    // Click on empty space (no camera movement) clears the selection
+    if (!moved && !this.gizmoBusy && !nav.isAddModifier(e)) { this._setPointer(e); if (!this.pick()) this.selection.clear(); }
   }
 
   onDblClick(e) {
@@ -547,8 +601,8 @@ export class Interaction {
   }
 
   /* ---------- marquee ---------- */
-  _startMarquee(e) {
-    this.marquee = { x0: e.clientX, y0: e.clientY };
+  _startMarquee(e, add = false) {
+    this.marquee = { x0: e.clientX, y0: e.clientY, add };
     this.controls.enabled = false;
     if (this.marqueeEl) { this.marqueeEl.hidden = false; this._updateMarquee(e); }
   }
@@ -569,7 +623,8 @@ export class Interaction {
       const sx = r.left + (_v.x + 1) / 2 * r.width, sy = r.top + (1 - _v.y) / 2 * r.height;
       return _v.z < 1 && sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
     });
-    this.selection.set([...this.selection.items.filter((i) => i.kind !== 'connection'), ...inside]);
+    const kept = m.add ? this.selection.items.filter((i) => i.kind !== 'connection') : [];
+    this.selection.set([...kept, ...inside]);
   }
 
   /* ---------- editing operations (also used by menus) ---------- */
@@ -586,12 +641,30 @@ export class Interaction {
     if (this.hovered) { this._setHover(null); }
     this.history.execute(cmd.composite('Delete', cmds));
   }
-  duplicateSelection() {
+  duplicateSelection({ move = false } = {}) {
     const nodes = this._movableNodes();
     if (!nodes.length) return;
-    const c = cmd.duplicate(this.world, nodes, this.createInstance);
+    const c = cmd.duplicate(this.world, nodes, this.createInstance, move ? new THREE.Vector3(0, 0, 0) : undefined);
     this.history.execute(c);
     this.selection.set(c.copies);
+    if (move) this._beginKeyMove(c.copies);
+  }
+  /** Blender's Shift+D: the copies follow the pointer on the floor plane until the next click. */
+  _beginKeyMove(nodes) {
+    if (!nodes.length) return;
+    const anchor = nodes[nodes.length - 1];
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -anchor.position.y);
+    const r = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.set(((this.lastPointer.x - r.left) / r.width) * 2 - 1, -((this.lastPointer.y - r.top) / r.height) * 2 + 1);
+    this.ray.setFromCamera(this.pointer, this.camera);
+    const hit = new THREE.Vector3();
+    if (!this.ray.ray.intersectPlane(plane, hit)) hit.copy(anchor.position);
+    const offsets = nodes.map((n) => n.position.clone().sub(hit));
+    nodes.forEach((n) => { n.dragging = true; });
+    this.drag = { nodes, plane, offsets, before: nodes.map(cmd.snapshot), moved: true };
+    this.keyDrag = true;
+    this.controls.enabled = false;
+    this._cursor('grabbing');
   }
   groupSelection() {
     const nodes = this._movableNodes().filter((n) => !n.group);
@@ -630,7 +703,7 @@ export class Interaction {
       this.overlays?.dragLabel(null);
       this._recomputeEmphasis();
     }
-    if (this.drag) { this.drag.dropTarget?.block.setSubHover(null); this.overlays?.dragLabel(null); this.drag.nodes.forEach((n, i) => { n.dragging = false; n.position.fromArray(this.drag.before[i].p); }); this.drag = null; }
+    if (this.drag) { this.drag.dropTarget?.block.setSubHover?.(null); this.drag.dropTarget?.block.setDropTarget(false); this.overlays?.dragLabel(null); this.drag.nodes.forEach((n, i) => { n.dragging = false; n.position.fromArray(this.drag.before[i].p); }); this.drag = null; this.keyDrag = false; }
     if (this.marquee) { this.marquee = null; if (this.marqueeEl) this.marqueeEl.hidden = true; }
     if (this.subDrag) { this.subDrag.block.onSubPointer(this._subEvent('cancel')); this.subDrag = null; }
     this.faceDrag = null; this.pressFace = null;
@@ -639,9 +712,43 @@ export class Interaction {
   }
 
   /* ---------- keyboard ---------- */
+  /** Keys bound by the navigation preset (controls/presets.js): views, focus, select all, delete, duplicate + move, gizmo modes, panel. */
+  _presetKey(e) {
+    const a = nav.keyAction(e);
+    if (!a) return false;
+    const C = this.controls;
+    const D = Math.PI / 12;
+    switch (a) {
+      case 'focus': this.focusSelection(); break;
+      case 'frameAll': this.onFrameAll(); break;
+      case 'viewFront': C.viewTo(0, Math.PI / 2 - 0.02); break;
+      case 'viewBack': C.viewTo(Math.PI, Math.PI / 2 - 0.02); break;
+      case 'viewRight': C.viewTo(Math.PI / 2, Math.PI / 2 - 0.02); break;
+      case 'viewLeft': C.viewTo(-Math.PI / 2, Math.PI / 2 - 0.02); break;
+      case 'viewTop': C.viewTo(C.azimuth, 0.02); break;
+      case 'viewBottom': C.viewTo(C.azimuth + Math.PI, 0.02); break;   // the floor is opaque: the mirrored top view stands in for "bottom"
+      case 'ortho': C.setOrtho(!C.isOrtho); this.overlays?.toast(C.isOrtho ? 'Orthographic view' : 'Perspective view', 1200); break;
+      case 'rotLeft': C.rotateBy(D, 0); break;
+      case 'rotRight': C.rotateBy(-D, 0); break;
+      case 'rotUp': C.rotateBy(0, -D); break;
+      case 'rotDown': C.rotateBy(0, D); break;
+      case 'selectAll': this.selection.set(this._visibleNodes()); break;
+      case 'selectNone': this.selection.clear(); break;
+      case 'delete': this.deleteSelection(); break;
+      case 'duplicateMove': this.duplicateSelection({ move: true }); break;
+      case 'gizmoMove': this.onGizmoMode('translate'); break;
+      case 'gizmoRotate': this.onGizmoMode('rotate'); break;
+      case 'gizmoScale': this.onGizmoMode('scale'); break;
+      case 'panel': this.onTogglePanel(); break;
+      default: return false;
+    }
+    e.preventDefault();
+    return true;
+  }
   onKey(e) {
     if (e.key === 'Shift') this.shift = true;
     if (isTyping(e)) return;
+    if (this._presetKey(e)) return;
     const mod = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
     if (mod && k === 'z') { e.preventDefault(); if (e.shiftKey) this.history.redo(); else this.history.undo(); this.selection.prune(this.world); return; }

@@ -135,6 +135,7 @@ export class World {
     return false;
   }
   clear() {
+    this.selection?.clear?.();
     [...this.groups].forEach((g) => this.removeGroup(g));
     [...this.connections].forEach((c) => { this.scene.remove(c); c.dispose(); });
     this.connections = [];

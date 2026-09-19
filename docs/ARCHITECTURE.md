@@ -10,17 +10,19 @@ document describes the layers, the invariants each one keeps and how they fit to
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ UI          ui/toolbar-left.js  panel.js  ui/file-menu.js  interaction.js   │
 │             ui/overlays.js  ui/tour.js  selection.js  gizmo.js  lod.js      │
+│             controls/presets.js + controls/navigation.js (camera + bindings) │
 │             main.js (boot + render loop)                                     │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Scene       block3d.js → node3d.js / device3d.js / shape3d.js   connection3d.js │
 │             routing.js  groups.js  faces.js  workspace.js  theme.js         │
+│             geometry.js (panelGeometry)  wiring.js (the Wiring switch)       │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Core        core/component.js  core/registry.js  core/types.js              │
 │             core/engine.js  core/world.js  core/commands.js  core/history.js │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Components  components/<category>/<name>.js  (17 core + 10 project)        │
 │ PM layer    pm/model.js (data)  pm/relations.js (links → meaning)  pm/board-ops.js  pm/panel-pm.js │
-│ Examples    examples/project.js (the default scene) + examples/index.js      │
+│ Examples    examples/showcase.js (the default scene) + examples/index.js     │
 │ Persistence serialize.js                                                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -182,12 +184,97 @@ the same key (typing in a param field, dragging a transform field). `undo / redo
 `Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y` and the ↶ ↷ buttons. Removing a node keeps the instance alive
 (not disposed) so undo can re-add the very same object with its connections.
 
+## 7b. Body geometry (`geometry.js`)
+
+Every body is one shape, `panelGeometry(w, h, depth, { radius, bevel, bevelSegments, curveSegments })`:
+
+1. the **outer** size `w × h` is what the caller asks for; the 2D `THREE.Shape` is a rounded
+   rectangle (`roundedRectShape`, arcs not quadratics) shrunk by the bevel on each side, with its
+   corner radius reduced by the bevel, so that after extrusion the outset walls land exactly on
+   `w × h` (radius defaults to 18 % of the short side);
+2. `ExtrudeGeometry` with `depth − 2 · bevel`, `bevelEnabled`, `bevelThickness = bevelSize =
+   bevel` (0.02 by default, clamped to 60 % of the radius and 30 % of the depth), two bevel
+   segments and 12 curve segments (6 on port sockets, 8 on pills). In three.js the **caps are the
+   outermost layers** (the original contour at `z = −bevel` and `z = depth − bevel` before
+   centring) and the bevel curves inward from them to the outset walls, so the front face is flat
+   and crisp and only the bevel is curved;
+3. the geometry is translated so it is centred on `z = 0` (front face at `+depth / 2`), normals
+   recomputed, `type = 'PanelGeometry'` and `userData.panel = { w, h, depth, radius, bevel, capW,
+   capH }` recorded for tests and rebuilds;
+4. **UVs**: a custom `UVGenerator`. `generateTopUV` maps a cap vertex to `(x / capW + 0.5,
+   y / capH + 0.5)`, so the front cap spans exactly 0..1 and a canvas texture lands corner to
+   corner; `generateSideWallUV` gives the walls and bevel a single neutral texel `(0.5, 0.02)`.
+   ExtrudeGeometry emits two material groups — 0 = caps, 1 = walls + bevel — so a mesh may take
+   `[faceMaterial, sideMaterial]`; board cards do (their canvas is the front-cap `map` +
+   `emissiveMap`, the sides are a plain satin panel).
+
+`slabGeometry(w, d, thickness)` is the same shape rotated to lie flat (plinths, device bases,
+group frames); `outlineGeometry(w, h, depth, grow)` is a panel `grow` (0.08) larger with a tiny
+bevel, rendered `BackSide` as the thin selection / hover / error outline (`materials.rim`).
+Materials come from `theme.materials`: `panel()` is a `MeshPhysicalMaterial` with roughness 0.45,
+clearcoat 0.4, clearcoat roughness 0.3, no metalness and `envMapIntensity` 0.45; `device()` is a
+touch smoother; `frosted()` is the translucent column panel; `face()` is the canvas material
+(`emissiveMap` + `map`, transparent so `faces.clear()` can round the corners). The environment
+that makes bevels read is built in `workspace.js → buildEnvironment()`: a 128 × 64 equirect canvas
+(sky / horizon / ground gradient from `palette.env` plus one soft highlight) through
+`PMREMGenerator.fromEquirectangular`, set as `scene.environment` and rebuilt on theme change.
+`RoundedBoxGeometry` is no longer used anywhere in `src/` (the `h.RoundedBoxGeometry` helper is
+kept for add-ons).
+
+## 7c. The Wiring switch (`wiring.js`)
+
+`isWiringOn()` / `setWiring(v)` / `toggleWiring()` / `onWiringChange(cb)`; persisted in
+`localStorage["proto3d.wiring.v1"]` (default **off** for a new visitor) and in documents
+(`serializeWorld` writes `wiring`, `loadWorld` applies it). Propagation:
+
+- `Block3D` subscribes in its constructor and keeps `showPorts: true | false | null` (the
+  per-block override, set from the eye icon in the panel header through `setShowPorts`, saved as
+  `showPorts` in the node record). `portsVisible` = override ?? global. `applyWiring()` sets
+  `visible` on every port group, port label and IN / OUT caption (tracked in `wiringLabels` so
+  `_applyLOD` never re-shows them) and calls `_onWiringChange()` once when the state flips —
+  `Node3D._layout()` then rebuilds the card without the port rows (see below);
+- `Connection3D` defines `visible` as an accessor: what the owner set (collapsed groups hide
+  internal links) AND `cableVisibleFor(conn)` — true when wiring is on or when both blocks show
+  their ports; a preview with a free end is always visible. Tour ghosts and previews therefore
+  work while the switch is off;
+- `Group3D` hides its proxy ports and labels with the switch;
+- `Interaction._allPorts()` lists only ports on blocks whose `portsVisible` is true, so hidden pins
+  are never picked, hovered, snapped to or emphasised; `_tubeMeshes()` already reads `c.visible`;
+- `main.js` owns the button (`#btn-wiring`), the `P` key, the toast and `syncToolbar`; the panel
+  shows the checkbox in the workspace section; the tour sets wiring on for steps flagged
+  `wiring: true` and restores the previous value in `finish()`.
+
+**Node layout with and without ports** (`Node3D._layout`). The reference height `_h0` is the
+full layout (ports shown, no grown sockets) and the node origin is its centre. With ports shown
+the top edge stays at `+h0 / 2` and grown multi-input sockets extend the card downward (never
+under the floor); with ports hidden the **bottom edge stays at −h0 / 2** and the compact card
+(title row → face → footer) is laid out upward from it. `bodyOffsetY` = the body centre, so
+`getAABB` stays honest for routing and framing; `nodeDimensions(def, { ports })` gives both
+footprints to the toolbar ghost.
+
+## 7d. Drop-to-link (`pm/relations.js`, `interaction.js`)
+
+Relationships without cables. While a single block is dragged, `Interaction._updateBlockDrop`
+first tests child pickables (`body3d.acceptsDrop` — a Person over a card assigns it), then the
+bodies and faces of every other block; on a hit it asks `dropLinkCandidates(dragged, target,
+world)`: every `dragged.output × target.input` pair that matches a row of `DROP_LINKS`
+(`'fromType.port>toType.port'`, `*` for any type, `*.screen` for the four devices), plus the
+generic flow rule (an event output named `out | next | yes | no | done | tap | trigger | reached`
+onto an event input named `in | start | trigger`). Pairs that already exist, would replace the
+cable on an occupied single input, or fail `world.canConnect` are dropped; each candidate carries
+the sentence from `describePorts`. The target block lights (`setDropTarget`) and the drag label
+shows the sentence (one candidate) or *"N ways to link · choose on drop"*. On release the dragged
+block springs back to where it was; one candidate runs `cmd.connect` (undoable) and toasts the
+sentence; several open `Overlays.chooser(items, { x, y, title }, onPick)` — a small popover at the
+drop point that closes on pick, Esc or a click outside.
+
 ## 8. Scene objects
 
 - **`Block3D`** (`block3d.js`): shared base — uid, definition, params, state, enabled, ports,
   rim, contact shadow, canvas labels, optional face (`_initFace`, `renderFace`, `onFacePointer`,
   `emit`), derived state / hover / selected visuals, LOD blend, `getAABB` (routing), `footprint`
-  (group frames, ghosts, free-slot search), `serialize`.
+  (group frames, ghosts, free-slot search), `serialize`, the wiring state (`showPorts`,
+  `portsVisible`, `applyWiring`, §7c).
   **Ports** (`createPort`): a stem plus a typed pin — `shape: 'chevron'` (an extruded pentagon
   pointing +X, the flow direction) for `event`, `'slot'` (a growing rounded rectangle, §4b) for
   multi inputs, `'sphere'` for every other value — and a back-face `shell` of the same geometry. The look is derived in `applyLook()` from four flags:
@@ -199,10 +286,14 @@ the same key (typing in a param field, dragging a transform field). `undo / redo
   a tiny **IN** / **OUT** caption above the first port of each side (re-placed per frame from the
   first port's position, so bodies that move their ports — the board when columns change — stay
   correct). `proxy` redirects the world position while the owner sits in a collapsed group.
-- **`Node3D`**: slab + header + port rows + face + footer. Height = header + port rows + face +
-  footer; width by `size` (S 3.6, M 4.6, L 6.4 units). Far LOD: detail labels fade, the title lifts
-  above the slab and scales with distance.
-- **`Device3D`**: form factors from `sizes.device`; the screen plane is the face (emissive canvas).
+- **`Node3D`**: an extruded card (`panelGeometry`, depth 0.16, radius 0.32) with a slim accent
+  line in the category colour along the top edge (`accent`, also exposed as `header` for older
+  callers), a left-aligned title and a small-caps kind label, the port rows (wiring on), the face
+  and a footer. Height = header + port rows + face + footer, or header + face + footer when ports
+  are hidden (§7c); width by `size` (S 3.6, M 4.6, L 6.4 units). Far LOD: detail labels fade, the
+  title lifts above the card, centres and scales with distance.
+- **`Device3D`**: form factors from `sizes.device` (thin bezels, `radius`), slabs are panels, bases
+  are flat slabs; the screen plane is the face (emissive canvas, full bleed).
 - **`Connection3D`** + **`routing.js`**: tube along the routed curve, one continuous flow sheen
   (shader), rings at both ends, outline for hover / selected, `far` for LOD. Either end may be a
   **free point** instead of a port (`from` / `fromPoint`, `to` / `toPoint`; `complete` is true
@@ -214,13 +305,16 @@ the same key (typing in a param field, dragging a transform field). `undo / redo
   hovered, 25 %) and `dimSelect` (a block this cable does not touch is selected, 40 %).
   `setEndHover(end)` enlarges the grabbed ring. Rebuilt only when an endpoint moved, the world
   `layoutVersion` changed or the radius changed.
-- **`Group3D`** (`groups.js`): frame (fill + ring) sized from members' footprints every frame,
-  title at the front edge; `setCollapsed` hides members and internal links, builds a slab and
-  proxy ports for boundary links (`inner.proxy = proxyPort`), `refreshProxies` on connect /
-  disconnect.
-- **`faces.js`**: `drawValue` dispatches on `kindOf` (text, number, boolean pill, JSON, media,
-  media list, media layout); `drawMedia` (image / video poster with progress / audio waveform);
-  `drawMediaGrid` + `gridShape`; `drawScreen` for devices; bitmap cache with `onBitmapReady`.
+- **`Group3D`** (`groups.js`): frame (flat slab fill + ring) sized from members' footprints
+  every frame, title at the front edge; `setCollapsed` hides members and internal links, builds a
+  panel slab with an accent line and proxy ports for boundary links (`inner.proxy = proxyPort`),
+  `refreshProxies` on connect / disconnect; proxies follow the wiring switch.
+- **`faces.js`** — the face design system (§8c): `clear` (rounded face card), `drawCaps`,
+  `drawDivider`, `drawTile`, `drawChip`, `drawBar`, `drawAvatar`, `drawStat`, `fitLine`,
+  `tabular`, `drawText`; `drawValue` dispatches on `kindOf` (text, number, boolean chip, JSON,
+  media, media list, media layout); `drawMedia` (image / video poster with progress / audio
+  waveform); `drawMediaGrid` + `gridShape`; `drawScreen` for devices; bitmap cache with
+  `onBitmapReady`.
 - **`Connection3D` token bursts**: an `event` link watches its source port's `lastPulseAt`; each
   new pulse spawns a bead (white core + type-coloured halo) that runs the curve in 0.35–1.1 s.
   Nothing else is needed for tokens to be visible on any event path, flowchart or not.
@@ -286,9 +380,63 @@ sentences**: `describeLink(conn)` (a table keyed by `type.port>type.port`, overr
 definition with `describeLink`) feeds the midpoint label, the connection panel and the toast
 shown when a cable is created.
 
+## 8c. Face design tokens (`theme.js`, `faces.js`)
+
+Faces are canvases at `sizes.face.pxPerUnit` = 120 px / unit. The tokens every component reads:
+
+| token | dark | light | use |
+| --- | --- | --- | --- |
+| `faceBg` | `#161d2a` | `#ffffff` | the face card (`clear`, rounded corners `RADIUS` 18 px, transparent outside) |
+| `faceCard` | `#1f2838` | `#f1efe9` | inner tiles, chips, tracks |
+| `faceLine` | `rgba(255,255,255,.08)` | `rgba(28,33,48,.10)` | 1 px dividers, bar tracks, ring tracks |
+| `faceText` / `faceDim` | `#eaf1ff` / `#8b9ab5` | `#1c2130` / `#6a7180` | primary / secondary text |
+| `faceAccent` | `#5aa9ff` | `#2b7fe0` | the one accent (bars, rings, links) |
+| `faceGood` / `faceWarn` / `faceBad` | `#34c99a` / `#f5b942` / `#ff5c6c` | `#13906a` / `#b8830c` / `#d93848` | meaning only: done, soon, overdue / over WIP |
+| `categories.*` | saturated hues | darker hues | the accent line on a node, flow shape tint, LOD bars |
+
+Type: `typography.family` (Inter → SF Pro Text → Segoe UI → system-ui), `typography.scale` (title
+30 / subtitle 18 / label 17 / value 17 / small 14 / caps 12 / big 44 px), weights 600 / 500 / 400,
+`capsSpacing` 0.08 em. Spacing: `PAD` 24 px margins on an 8-pt grid (`GRID`). Rules: structure by
+spacing and dividers, not boxes; tiles for sections; chips for tags and people; thin rounded bars
+(4–6 px) for progress; tabular numbers right-aligned; muted timestamps; colour only for meaning.
+Components: Person (avatar · name / role · load bar · tasks grouped by small-caps column with a
+3-px priority stripe and muted dates), Checklist (progress caps + bar, rows with 20 px rounded
+boxes and dividers), Dashboard (board title · stat tiles · ring + column bars · burndown tile ·
+people / checklist tile), board cards (`drawCard`: edge-to-edge on the extruded card, 3-px
+priority stripe, title 600, assignee avatar, due, checklist bar, tag chips, estimate), timeline
+bar faces (title on the bar), device screens (`drawScreen`: flat gradient, slim status bar).
+Canvas labels (`makeLabel`) share the family and support `caps` + `spacing` for small caps (column
+titles, kind labels, IN / OUT captions).
+
 ## 9. Interaction model (`interaction.js`, `ui/overlays.js`, `ui/tour.js`, `selection.js`, `gizmo.js`, `lod.js`)
 
-**Picking** (`pick()`): ports (pin + shell meshes) > sub pickables > faces > bodies > connections
+**Navigation** (`controls/`): `Navigator` replaces OrbitControls with the same surface (`target`,
+`update()`, `enabled`, `minDistance` / `maxDistance` / `maxPolarAngle`, damping, `start` / `end`
+events) and reads its bindings from the active **preset** (`presets.js`: `PRESETS.blender |
+unreal | maya | simple`, each `{ mouse: [{ button, mods, action }], wheel: { plain, shift, ctrl },
+keys: { action: ['Code', 'Mod+Code'] }, addModifier, fly?, settings }`). The `nav` facade is the
+single decision point: `resolveMouse(e)` → `orbit | pan | dolly | turn | marquee | marqueeAdd |
+contextSelect | null`, `resolveWheel(e)`, `keyAction(e)`, `isAddModifier(e)`, `sheet()`
+(the generated cheat sheet), `binding(action)`; the preset id and per-preset settings (invert
+orbit / zoom, sensitivities, zoom to cursor, fly speed) persist in `localStorage["proto3d.nav.v1"]`
+and `nav.onChange` re-renders the panel section, the help sheet and the tour hint. The controller
+handles pointer / wheel / key events on the canvas: orbit and turn deltas, screen-space pan scaled
+to the target distance, dolly (drag or wheel, optionally towards the cursor by shifting the
+target along the cursor plane), Unreal fly (right-drag + WASD / QE moves camera and target
+together; the wheel scales `flySpeed` while flying), numpad views (`viewTo(theta, phi)` animates
+the spherical angles over 0.45 s), 15° steps (`rotateBy`), and the orthographic toggle
+(`setOrtho`: swaps in an `OrthographicCamera` whose frustum is derived from the orbit distance
+every frame, and notifies `ws.onCameraSwap` listeners — interaction, overlays and the gizmo follow;
+`ws.camera` is a getter). Damping is frame-rate independent (`dampingFactor` per 60 Hz frame);
+`moving` reports whether anything is still settling. The interaction layer asks the same facade:
+a press on empty space starts a marquee only when the preset says so (Blender / Unreal / Maya:
+plain left-drag; Simple: Shift+left-drag), the add modifier decides toggling, `contextSelect`
+(right-click in Blender / Maya) selects and opens the panel, and `_presetKey` handles the preset's
+key actions (focus, frame all, views, ortho, steps, select all / none, delete, duplicate + move,
+gizmo modes, panel) before the fixed shortcuts. The controller ignores a press the interaction
+took (it disables `controls` while dragging a block, as before).
+
+**Picking** (`pick()`): ports on blocks that show them (pin + shell meshes) > sub pickables > faces > bodies > connections
 (the `pickTube` and the end rings; the hit carries `end: 'from' | 'to' | null` from
 `Connection3D.endNear`) > group frames. Faces receive `{ type: down | drag | up | click, u, v }`
 in canvas coordinates; a face that handles `down` captures the drag (slider), otherwise the press
@@ -303,7 +451,8 @@ value, links and the drag hint; a block tooltip (label + description) after 500 
 hint. `_recomputeEmphasis()` rebuilds every port's `emphasis` from scratch — the selected cable's
 two ports glow; when a port is hovered or a cable is being dragged, `world.compatiblePorts(src)`
 glow, every other port on other blocks dims, and the rejected pin under the pointer goes red —
-and `update(time)` pulses the glowing set each frame.
+and `update(time)` pulses the glowing set each frame. Step 1 of the tour reads the preset's orbit
+/ pan bindings; steps 2, 3 and 5 set the wiring switch on and `finish()` restores it.
 
 **Cable drags** share one state object `connect = { need, fixed, side, preview, plane, detached,
 origin, snapped, reject }`: `fixed` is the real port the cable stays attached to, `need` the
@@ -330,6 +479,7 @@ selected cable dims the others and the midpoint label in `main.js` shows
 **Overlays** (`ui/overlays.js`) own the HTML layers — tooltip (anchored to a world position and
 re-projected per frame, optional delay), drag label beside the pointer, toast, cable end labels
 (DOM rebuilt only when the label set changes), empty-scene hint (driven by `world.onChange`).
+**Overlays** also own the **chooser** popover (`chooser(items, { x, y, title }, onPick)`, §7d).
 **Tour** (`ui/tour.js`): five steps with a spotlight (`.tour-spot`, a box-shadow cut-out that
 follows a DOM rect or a projected world point) and a card; step 2 picks a real output port with
 a compatible, preferably unconnected, input on another block, frames both and animates a ghost
@@ -346,11 +496,15 @@ hysteresis; the blocks animate the crossfade.
 
 ```json
 { "app": "proto3d", "version": 2, "name": "…", "savedAt": "…",
-  "nodes": [{ "uid", "type", "title", "params", "state", "enabled", "position", "rotationY", "scale" }],
+  "nodes": [{ "uid", "type", "title", "params", "state", "enabled", "showPorts?", "position", "rotationY", "scale" }],
   "connections": [{ "uid", "from": { "node", "port" }, "to": { "node", "port" } }],
   "groups": [{ "uid", "title", "members": ["uid"], "collapsed" }],
+  "wiring": false,
   "camera": { "position", "target" } }
 ```
+
+`showPorts` is written only when a block overrides the wiring switch; `wiring` is the switch
+itself and is applied on load (an autosaved world keeps its setting).
 
 `loadWorld` clears the world, instantiates known types (unknown ids are reported in `skipped`),
 reconnects by uid + port key, rebuilds groups (collapsing after their members exist) and restores
@@ -372,6 +526,12 @@ the camera. `AutoSave` debounces `world.onChange` into `localStorage["proto3d.wo
   inputs that should still take plain `data`).
 - **A link sentence**: a row in the `TABLE` of `pm/relations.js` (`'fromType.port>toType.port'`,
   `'fromType.port>*'` or `'*>toType.port'`) or a `describeLink` hook on the definition.
+- **A drop-to-link pair**: a row in `DROP_LINKS` (`pm/relations.js`, §7d); flow-ish event ports
+  pair up without a row.
+- **A navigation preset**: an entry in `PRESETS` (`controls/presets.js`); the panel select, the
+  ? menu, the help sheet and the tour hint pick it up.
+- **A body**: build it from `panelGeometry` / `slabGeometry` (`h.panelGeometry` inside `body3d`)
+  and `materials.panel`; use `outlineGeometry` for its rim.
 - **A param control**: extend `PARAM_TYPES` in `core/component.js` and `_buildBlock` in `panel.js`.
 - **An undoable operation**: a command in `core/commands.js` built from `World` mutations.
 
@@ -385,4 +545,8 @@ the camera. `AutoSave` debounces `world.onChange` into `localStorage["proto3d.wo
    every key.
 4. Anything visible about a connection (validity, activity, direction, type) is derived from data,
    never set by hand.
-5. Removing scene objects for undo never disposes them; `World.clear()` does.
+5. Removing scene objects for undo never disposes them; `World.clear()` does (and clears the selection).
+6. Every body is a `panelGeometry` panel in a `materials.panel` finish; faces follow the tokens in
+   §8c; nothing draws a header band.
+7. Cables are optional: every relationship the Showcase uses can be made by a drop
+   (`DROP_LINKS`), and nothing about a block's behaviour depends on the wiring switch.

@@ -1,12 +1,19 @@
 # Proto3D — a 3D project-management platform that runs
 
-Proto3D is a browser-based workspace where **components** live as blocks in a calm 3D room,
-connected by typed, animated cables, and **actually run**: a dataflow engine evaluates the graph
-every frame. The scene you land in is a **project-management system**: a standing 3D Kanban
-board with draggable cards, executable flowchart shapes, a 3D Gantt timeline, people,
-milestones, sticky notes, checklists and a dashboard — all ordinary components in the same
-registry (see [Project management](#project-management)), so a board's `done` event can run a
-flow that writes a message on a laptop.
+Proto3D is a browser-based workspace where **components** live as clean cards in a calm 3D room
+and **actually run**: a dataflow engine evaluates the graph every frame. The scene you land in
+is the **Showcase** — a product launch as a project-management system: a standing 3D Kanban board
+with draggable cards and a lane per person, a milestone, a Gantt timeline, a dashboard, a
+checklist, sticky notes, an executable Done flow that writes on a laptop, a phone that ships a
+hotfix, a button that adds a card and a media wall on a monitor — all ordinary components in the
+same registry (see [Project management](#project-management)).
+
+**Cables are optional.** Relationships are made by **dropping one component onto another** (a
+Person onto the board, the Board onto the Timeline); the workspace says what the link means and
+you can undo it. Turn **Wiring** on (`P`) and every block shows its typed pins and every cable
+appears, for the people who want to see or edit the graph (see [Wiring is optional](#wiring-is-optional)).
+Navigation follows **Blender by default** (middle-drag orbits, Shift pans, numpad views) with
+**Unreal**, **Maya** and **Simple** presets under **? → Controls** (see [Controls](#controls)).
 
 Underneath is a **platform**: one component schema, a registry that drives the toolbar / panel /
 engine / serialization, six port types with strict compatibility, an event bus, groups that
@@ -14,15 +21,14 @@ collapse into a single slab, level-of-detail for large systems, undo / redo, sav
 left **Add** toolbar with search and drag-and-drop. Media, text, data, logic, action, transform,
 layout, output and device components are all still in the toolbar.
 
-This round makes the **links mean something** (see [Meaningful links](#meaningful-links)):
-plug a Person into the board's **people slot** — a rectangle that grows one slot per cable — and
-the board lays out a lane per person while the Person card lists their tasks; a person cable only
-fits a person slot (data has **subtypes** with their own colours); every cable explains itself in
-a sentence (*"Maya's tasks appear on Website relaunch"*) in the hover label, the panel and a toast;
-ports are named as plain words (`tasks`, `progress`, `when a card is done`); and a card can be
-dropped on a Person to assign it. The wiring itself stays self-explanatory (see
-[Wiring](#wiring)): typed pin shapes, hover guidance, snapping, grab-and-move cable ends, a
-five-step tour.
+This round is about **look and feel** (see [Look and feel](#look-and-feel)): every body is a
+thin **extruded rounded rectangle with a tiny bevel** in a satin material lit by a soft
+environment — no header bands, no puffy slabs — and every face is flat, modern UI: a slim
+category accent line, Inter type on an 8-pt grid, thin dividers, chips, thin rounded bars.
+Links still **mean something** (see [Meaningful links](#meaningful-links)): a Person plugged into
+(or dropped on) the board's **people slot** gives it a lane and lists their tasks; data has
+**subtypes** with their own colours; every link explains itself in a sentence (*"Maya's tasks
+appear on Launch board"*) in the drag label, the hover label, the panel and a toast.
 
 Shots: [`overview-lod.png`](docs/shots/overview-lod.png) (zoomed out: far LOD, a collapsed
 group), [`connection-hover.png`](docs/shots/connection-hover.png) (hovered link isolated with its
@@ -38,34 +44,36 @@ Static files, no build step.
 
 Three.js r160 comes from `https://unpkg.com/three@0.160.0/` through the import map in
 `index.html`; to run offline, copy `node_modules/three` next to the page and point the two
-import-map entries at it. The first load shows the *Project management* scene and starts a short
-five-step tour (once; **? → Show tour** replays it); after that the workspace restores your
-autosaved world from `localStorage` (**File → New** clears it and shows an empty-scene hint).
+import-map entries at it. Inter is loaded from Google Fonts when online; offline the type stack
+falls back to the system sans. The first load shows the **Showcase** with wiring off and starts a
+short five-step tour (once; **? → Show tour** replays it); after that the workspace restores your
+autosaved world from `localStorage` — including its wiring setting (**File → New** clears it and
+shows an empty-scene hint).
 
 ## Try it in one minute
 
-1. **Look at the people slot.** The three People on the left run into the board's `people`
-   rectangle (three slots, one cable each). The board shows a **lane per person**; each Person
-   card lists **their tasks** by column with due dates. Hover the cable: *"Maya's tasks appear on
-   Website relaunch"*. Grab a cable end off the slot and the lane disappears; undo brings it back.
-2. **Drag a card** on the board into **Done**: a token runs through the flow below and the laptop
-   reads *Urgent item shipped: …* (for urgent cards) or the Log records it. Drop a card **on a
-   Person** (or into another person's lane) to assign it. Click a card to edit it in the panel on
-   the right; the timeline, the people and the dashboard follow.
-3. **Hover a pin.** The tooltip names it, its type (`data · person`) and value and where it is
-   connected; every pin it could connect to lights up, the rest dim. Chevrons are events, circles
-   carry values, rectangles accept several cables; hollow pins are free. Try dragging a person
-   cable onto the timeline's `tasks` slot: *person is not a tasks*.
-4. **Wire something.** Drag from `Launch checklist.when complete` (chevron, right side) to a lit
-   chevron such as `Card done.start`: the cable snaps when you are close and a toast tells you
-   what the link means. Dragging *from* an empty input backwards to an output works too.
-5. **Move a cable.** Grab the end of any cable (the tube near a pin, cursor turns to a hand),
-   drop it on another lit pin to re-route it, or on empty space to disconnect. `Ctrl+Z` undoes
-   either. Click a block: its cables stay bright and their far ends are labelled.
-6. Open the left **Add** toolbar, drag a **Layout** into the scene, connect a few nodes into its
-   `items` slot (watch it grow) and switch its `mode` between row / column / grid / circle: the
-   nodes move. Select two nodes, `Ctrl+G`, then `C`: the group folds into one slab whose ports
-   are the connections that cross its boundary. `F` frames the selection, `Home` frames everything.
+1. **Read the board.** *Launch board* has four columns and a lane per person (Maya, Jonas,
+   Priya): those People stand to its left and are plugged into its people slot — you just cannot
+   see the cables yet. Each Person card lists **their tasks** by column with due dates; the
+   Dashboard on the right names the board and shows done %, overdue, blocked, burndown, people
+   load and the Launch checklist; the Timeline draws a bar per card.
+2. **Drop to link.** Drag *Priya* off the board and onto the Dashboard: the label reads *"Priya's
+   load shows on Launch health"*, the drop creates the relationship (no cable needed), a toast
+   confirms it, `Ctrl+Z` removes it. Drag the board onto the dashboard: two relationships fit, so
+   a small chooser asks which one.
+3. **Drag a card** into **Done**: a token runs through the Done flow and the laptop reads
+   *Shipped: <title>* (urgent cards) or the Log records it. **Tap the phone**: it ships a hotfix
+   through the same flow. Press the **Add hotfix** button: an urgent card lands in *To do*.
+4. **Press `P`.** Wiring on: every block shows its pins, the cables appear with their colours,
+   the multi-input sockets show a slot per person. Hover a pin, drag a cable, grab a cable end,
+   drop it on empty space — everything from the previous rounds is still there. `P` again hides
+   it all; a single block can keep its ports with the eye icon in its panel header.
+5. **Move around.** Middle-drag orbits, Shift+middle pans, the wheel zooms towards the cursor,
+   `Numpad 1 / 3 / 7` are the front / right / top views, `Numpad 5` toggles orthographic, `Home`
+   frames everything, left-drag on the floor box-selects, right-click opens a block's properties.
+   Prefer Unreal or Maya? **? → Controls**.
+6. Open the left **Add** toolbar, drag a component into the room, `Ctrl+G` groups, `C` collapses
+   the group into one slab, `F` frames the selection.
 
 ## Architecture
 
@@ -73,8 +81,11 @@ autosaved world from `localStorage` (**File → New** clears it and shows an emp
 src/
   core/         component schema, registry, port types, engine, world model, commands, history
   components/   one file per component type, grouped by category; index.js registers them all
-  block3d.js    Block3D: what nodes and devices share (typed port pins, rim, shadow, face, LOD, serialize)
-  node3d.js     Node3D: rounded slab with header, port rows, optional face, footer
+  geometry.js   panelGeometry: the one body shape — extruded rounded rectangle with a tiny bevel, exact front-face UVs
+  wiring.js     the global Wiring switch (ports and cables optional), per-block overrides
+  controls/     presets.js (Blender / Unreal / Maya / Simple bindings as data) + navigation.js (the camera controller)
+  block3d.js    Block3D: what nodes and devices share (typed port pins, rim, shadow, face, LOD, serialize, portsVisible)
+  node3d.js     Node3D: thin extruded card with an accent line, title, optional port rows, face, footer
   device3d.js   Device3D: phone / tablet / laptop / monitor whose screen is the component face
   shape3d.js    Shape3D: custom 3D bodies from def.body3d (boards, flow shapes, timeline…) + child pickables
   pm/           model.js (cards, columns, boards, stats, burndown — no Three.js), relations.js (who is plugged into whom + link sentences), board-ops.js, panel-pm.js
@@ -84,7 +95,7 @@ src/
   interaction.js  pointer model: hover guidance, cable drags (forward / backward), cable-end re-route, selection emphasis
   selection.js, lod.js, serialize.js, gizmo.js, panel.js, workspace.js, theme.js
   ui/           toolbar-left.js (Add toolbar), file-menu.js, overlays.js (tooltips, drag label, toast, end labels, empty hint), tour.js
-  examples/     the project scene + the tiny builder API
+  examples/     showcase.js (the default scene) + the tiny builder API
 ```
 
 The full design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The short version:
@@ -191,7 +202,7 @@ and milestones.
 | `milestone` | S · flag on a pole | — | `when reached` event · `milestone` milestone | date | Flag colour follows the state (ahead / soon / reached); `when reached` fires once when today ≥ date. Plug it into a board (header countdown, flags on late cards), a timeline (flag on the rail) or a dashboard. |
 | `sticky-note` | S · tilted square | `text` text | `text` text | text · colour · tilt | Paper-coloured slab with the note on its face. |
 | `checklist` | M · face | — | `progress` number · `when complete` event | items (panel) | Rows with checkboxes; click a row on the 3D face to toggle it (undoable); `when complete` fires when all are done. |
-| `project-dashboard` | L · face | `progress` stats · `tasks` tasks · `milestone` milestone · `people` person\* | `progress` number | caption | Names the board it is plugged into; done-ratio ring, per-column bars (red over WIP), overdue / blocked counts, burndown line from the board's history, next milestone, and a load bar per connected person. |
+| `project-dashboard` | L · face | `progress` stats · `tasks` tasks · `milestone` milestone · `people` person\* · `checklists` number\* | `progress` number | caption | Names the board it is plugged into; stat tiles (done %, overdue, blocked, days remaining), done ring, per-column bars (red over WIP), burndown line from the board's history, the milestone, a load bar per connected person and a progress bar per connected Checklist. |
 
 Port types in the table are the `data` **subtypes** where a port has one (`person`, `tasks`,
 `stats`, `milestone`); see [Meaningful links](#meaningful-links).
@@ -266,25 +277,65 @@ WIP limit); the Board section adds, reorders and removes columns and lists every
 **+** tile → new card in that column. Every edit is one undoable command (`Ctrl+Z`); engine-driven
 edits (event inputs) are not undoable but still autosave.
 
-## Workspace controls
+## Controls
+
+Navigation is a **preset** (`src/controls/presets.js`): plain data that maps mouse buttons +
+modifiers, the wheel and keys to actions. Pick one under **? → Controls** or in the workspace
+panel (*Controls* section); the help legend shows the active preset's cheat sheet, generated
+from the same object. Per-preset settings — invert orbit, invert zoom, orbit / pan sensitivity,
+zoom to cursor, fly speed — live in the same panel section and persist per preset
+(`localStorage["proto3d.nav.v1"]`).
+
+| Preset | Orbit | Pan | Zoom | Select | Notes |
+| --- | --- | --- | --- | --- | --- |
+| **Blender** (default) | middle-drag · `Alt`+left | `Shift`+middle · `Alt`+`Shift`+left · `Shift`/`Ctrl`+wheel | `Ctrl`+middle · wheel | click · `Shift`+click adds · left-drag on the floor box-selects · right-click selects + opens properties | `Numpad 1/3/7` front / right / top (`Ctrl` for the opposite side), `Numpad 5` orthographic, `Numpad 2/4/6/8` 15° steps, `Numpad .` / `Shift+F` focus, `Home` frame all, `A` all, `Alt+A` none, `X` delete, `Shift+D` duplicate + move, `G`/`R`/`S` gizmo move / rotate / scale, `Tab` panel |
+| **Unreal** | `Alt`+left | middle-drag | wheel | click · `Ctrl`+click adds · left-drag box-selects | right-drag **looks around**; right-drag + `W A S D` / `Q E` **flies** (wheel changes fly speed); `F` focus |
+| **Maya** | `Alt`+left | `Alt`+middle | `Alt`+right · wheel | click · `Shift`+click adds · left-drag box-selects · right-click properties | `F` focus, `A` frame all |
+| **Simple** | left-drag on empty space | right-drag | middle-drag · wheel | click · `Shift`+click adds · `Shift`+left-drag box-selects | the previous scheme |
+
+Everything else is the same in every preset:
 
 | Action | Input |
 | --- | --- |
-| Orbit / pan / zoom | left-drag on empty space / right-drag / wheel |
 | Focus | `F` frames the selection · double-click a block · `Home` or **Frame all** frames everything (camera flights are smooth) |
 | Add | left toolbar → category → click a component (adds at the camera target on a free slot) or **drag it into the scene** (ghost footprint, drops where the ray hits the floor) · `Shift+A` opens search |
 | Move | drag a block (all selected blocks move together; `Shift` for height) · gizmo `G`, `W` / `E` / `R` · Transform fields in the panel |
-| Connect | drag from an **OUT** pin to a lit **IN** pin on another node (or backwards from an empty input to an output); the cable snaps within ~1.2 units; a red ring + not-allowed cursor mark an incompatible pin; dropping on empty space cancels |
-| Re-route | grab a cable near either end (hand cursor) and drop it on another compatible pin · drop on empty space to **disconnect** · `Esc` puts it back · pressing a connected single input picks up its cable · dragging from a connected output adds a second cable |
+| Link | **drop a component onto another** (a sentence shows what it will mean; a chooser appears when several links fit) · with wiring on: drag from an **OUT** pin to a lit **IN** pin (or backwards from an empty input); the cable snaps within ~1.2 units |
+| Wiring | `P` or the **Wiring** button shows / hides every pin and cable · the eye icon in a block's panel header overrides it for that block |
+| Re-route | grab a cable near either end (hand cursor) and drop it on another compatible pin · drop on empty space to **disconnect** · `Esc` puts it back |
 | Inspect | hover a pin: tooltip with name, type, value and links; compatible pins glow, others dim · hover a block: label + description · click a block: its cables stay bright with far-end labels · click a cable: midpoint label, both pins pulse, panel shows from → to |
-| Select | click · `Shift`+click adds / toggles · `Shift`+drag on the floor draws a marquee · `Ctrl+A` all · click empty space clears |
-| Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the top bar has ↶ ↷ |
+| Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the top bar has undo / redo |
 | Group | `Ctrl+G` group the selection · `C` collapse / expand · `Ctrl+Shift+G` ungroup · drag the frame to move the whole group · rename in the panel |
 | Interact | click a device screen (`tap`), an Input face (button, toggle, slider) or press the configured key · click / drag a **card** on a Kanban board (drop it on a **Person** or into a lane to assign it), click the **+** tile, click a checklist row, press the **Run** disc on a Flow Terminal, drag a Timeline bar's end handle |
 | File | **File** → New · Save JSON · Load JSON · Examples; autosave to `localStorage` on every change |
-| View | `T` theme · `N` properties panel · `H` help & legend · **?** → Show tour · `Esc` cancel |
+| View | `T` theme · `N` / `Tab` properties panel · `H` help & legend · **?** → Show tour · `Esc` cancel |
 
 Shortcuts are ignored while typing in a panel field.
+
+## Wiring is optional
+
+A fresh workspace starts with **wiring off**: no pins, no port labels, no IN / OUT captions, no
+slot sockets and no cables — blocks read as clean cards and re-lay out without the port rows.
+The graph is still there and still runs; you build it by **dropping one component onto another**.
+While a single block is dragged over another, `pm/relations.js → dropLinkCandidates` looks up the
+pairs of ports that make sense (`DROP_LINKS`): Person → board `people` / dashboard `people` /
+a screen; Milestone → board / timeline / dashboard; Board → timeline `tasks`, dashboard
+`progress` or `tasks`, person `tasks`, flow terminal `start`; Checklist → dashboard
+`checklists`; Media → media grid / screen / display; Media Grid → screen; Input → board
+`add task`; a device `tap` → a flow start; Text / Action / Sticky Note → screens and displays;
+and any flow-ish event output (`out`, `next`, `yes`, `no`, `done`, `tap`, `reached`) → any
+flow-ish event input (`start`, `trigger`). Pairs that already exist or would replace the cable on
+an occupied single input are skipped. With **one** candidate the drag label shows the sentence
+and the drop creates the link (undoable *Connect* + a toast); with **several**, a small chooser
+lists the sentences at the drop point. The target block lights up while it is a drop target.
+Dropping a Person on a **card** still assigns the card.
+
+Turn wiring on with **`P`**, the **Wiring** button or the workspace panel: every pin, label,
+caption, socket and cable appears and everything in [Wiring](#wiring) applies. The switch is
+persisted in `localStorage["proto3d.wiring.v1"]` and inside saved documents (`wiring`), so an
+autosaved world keeps its setting; the eye icon in a block's panel header overrides it for that
+block (`showPorts: true | false`, saved with the block). The tour turns wiring on for its wiring
+steps and restores it afterwards.
 
 ## Wiring
 
@@ -361,25 +412,51 @@ rules.
 - **Events** are pulses `{ t, n, payload }` that exist for one pass; a collapsed group exposes
   every boundary-crossing link on a proxy port so the interface stays visible.
 
-## Design language
+## Look and feel
 
-The good parts of round two are kept: two palettes in `theme.js` (dark near-black blue-grey /
-light off-white; port-type hues are identical across themes, darkened for contrast in light),
-colour reserved for meaning (types and states), the gradient floor with a 1 / 5-unit grid and
-exponential fog (which now thins as the camera pulls back), hemisphere + key + fill light with
-fake contact shadows, `1 unit = 10 cm`, a 10 × 6.5 unit layout pitch, flow left to right.
+**Bodies.** Every body — node cards, device slabs, group slabs and frames, the board's back
+panel, plinth, column panels and cards, timeline bars, the sticky note, the milestone flag and
+base, the flow step — is one shape: `geometry.js → panelGeometry(w, h, depth, { radius, bevel })`,
+a **2D rounded rectangle extruded** a little (nodes 0.16 units) with `bevelEnabled`, a **tiny
+bevel** (0.02, two segments) and 12+ curve segments. The front and back faces are flat and crisp,
+the sides straight; only the bevel catches the light. The outer size is what you ask for (the
+bevel is inside it), the front cap's UVs map the cap exactly to 0..1 so a canvas texture lands
+corner to corner (board cards use this: one mesh, the canvas on the front-cap material group,
+plain sides), and `slabGeometry` is the same shape lying flat. Materials are satin
+`MeshPhysicalMaterial` (roughness 0.45, clearcoat 0.4, clearcoat roughness 0.3, no metalness) lit
+by a small procedural **environment map** (a sky / horizon / ground gradient with one soft
+highlight, run through PMREM, rebuilt per theme) so bevels read without gloss. Selection / hover
+/ error is a **thin outline**: a back-face shell 0.04 wider than the body.
 
-**Node anatomy**: header band tinted by category (eleven low-saturation hues) with the title,
-port rows just under the header (in left, out right; chevron pins for events, spheres for data;
-filled when connected, hollow when free; multi ports slightly larger with a "+"), an optional
-live canvas **face** below the rows (size M or L), a dim footer with the output value, a rim for
-hover / selected / error, and a contact shadow. Devices share ports, rim, shadow and states;
-their screen is the face. **Groups** are translucent rounded frames on the floor with a title
-at the front edge; collapsed, they become a slab with a header band and proxy ports.
-**Custom bodies** (`Shape3D`) keep the header tint, the port anatomy, the rim and the contact
-shadow: the Kanban board and the Timeline are header-banded standing panels on a plinth / rail,
-the flow shapes are extruded flowchart outlines tinted with the Project colour, the milestone is
-a flag, the sticky note a tilted paper square. Cards and bars are canvas faces on small slabs.
+**Faces** are flat, modern UI drawn on canvas at 120 px / unit (`faces.js`): the type stack is
+*Inter → SF Pro Text → Segoe UI → system-ui* (Inter via Google Fonts when online), titles 600,
+labels 500, values 400, small caps with letter-spacing (`drawCaps`), tabular numbers; margins are
+≥ 24 px on an 8-pt grid; structure comes from spacing and 1 px dividers (`drawDivider`) rather
+than boxes, inner sections are slightly lighter tiles (`drawTile`, `drawStat`), tags and
+assignees are chips (`drawChip`), progress is a thin rounded bar (`drawBar`), timestamps are
+muted. `clear()` paints a rounded face card with transparent corners so faces sit on the
+bevelled body. Colour is reserved for meaning — the category accent, type hues, `faceGood` /
+`faceWarn` / `faceBad` — and neutral greys otherwise. Both themes are checked for contrast:
+**dark** is deep navy greys (`#0b0f17` room, `#1a2231` bodies, `#161d2a` faces), **light** is a
+warm off-white (`#f1eee8` room, `#fbfaf7` bodies) with soft shadows.
+
+**Node anatomy**: a slim **accent line** in the category colour along the top edge, the title
+left-aligned under it with the component kind in small caps at the right, then — with wiring on —
+the port rows (in left, out right; chevron pins for events, spheres for data; filled when
+connected, hollow when free; multi inputs are slot rectangles that grow one slot per cable), an
+optional live canvas **face**, a dim footer with the output value. With wiring off the rows
+disappear and the card is laid out around the face. Ports sit just outside the edge with 11–12 px
+labels inside the margin. **Devices** have thin bezels and satin frames; their screen is the face.
+**Groups** are flat rounded frames on the floor with a title at the front edge; collapsed, a slab
+with the same accent line and proxy ports. **The board** is a bevelled back panel on a flat
+plinth: columns are frosted panels with a small-caps title and a count pill, cards are clean
+extruded cards with a 3-px priority stripe, swimlane labels are side tabs in the margin. **The
+timeline** has thin bars with rounded ends, light week gridlines and small labels. **The
+dashboard** has stat tiles, a ring, bars, a burndown and people / checklist bars in a restrained
+palette. The HTML shell (top bar, left rail, flyout, panel, tooltips, toasts, chooser, tour cards,
+menus) uses the same type stack, 8-pt spacing, 10–12 px radii, subtle borders, 18 px stroke icons,
+hover states and focus rings; the top bar groups *File · Undo/Redo | Wiring · Flow · Gizmo |
+Theme · Frame all | ? · Properties*.
 
 **States** are derived by the engine, never hard-coded: `disabled` (unchecked *enabled*) >
 `error` (invalid link attached or `evaluate` threw) > `active` (an output changed / pulsed within
@@ -413,4 +490,8 @@ board `#6d7cff` / `#4655d6`, milestone `#ffd36b` / `#b88a12`, stats `#7d9cc6` / 
 5. **Media**: real `<video>` / `<audio>` playback where the browser allows it, drag-and-drop of
    files onto a Media node, thumbnails in the panel.
 6. **Hardening**: instanced ports for thousands of nodes, occlusion-aware LOD, keyboard-only
-   navigation, contrast checks for both themes.
+   navigation, automated contrast checks for both themes.
+7. **Look and feel, next**: user-editable navigation bindings (a preset editor on top of the
+   preset objects), a "focus mode" that fades everything but the selected zone, per-category
+   face templates so new components inherit the header / section / footer layout, and drop-to-link
+   suggestions rendered as ghost cables while a component hovers a target.

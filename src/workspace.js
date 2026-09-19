@@ -1,8 +1,10 @@
-// workspace.js — the room: renderer, camera + orbit controls, lights, grid floor, fog.
-// Listens to theme changes and recolors background, fog, lights and the floor shader.
+// workspace.js — the room: renderer, camera + navigation controller, lights, a soft procedural
+// environment (so the bevels on every body catch light), grid floor, fog. Listens to theme
+// changes and recolors background, fog, lights, environment and the floor shader.
+// `ws.camera` is a getter: the Navigator may swap in an orthographic camera (Numpad 5).
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { palette, onThemeChange } from './theme.js';
+import { Navigator } from './controls/navigation.js';
 
 // Home view: ~36 deg elevation, framed so the demo graph fills most of the viewport
 const HOME = { position: new THREE.Vector3(5, 30, 42), target: new THREE.Vector3(5, 0.5, 2) };
@@ -20,17 +22,43 @@ export function createWorkspace(container) {
   scene.background = new THREE.Color(palette.bg);
   scene.fog = new THREE.FogExp2(palette.fog, 0.011);
 
-  const camera = new THREE.PerspectiveCamera(42, container.clientWidth / container.clientHeight, 0.1, 400);
-  camera.position.copy(HOME.position);
+  const perspective = new THREE.PerspectiveCamera(42, container.clientWidth / container.clientHeight, 0.1, 400);
+  perspective.position.copy(HOME.position);
 
-  const controls = new OrbitControls(camera, renderer.domElement);
+  const swapListeners = new Set();
+  const controls = new Navigator(perspective, renderer.domElement, { onCameraSwap: (cam) => swapListeners.forEach((cb) => cb(cam)) });
   controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
+  controls.dampingFactor = 0.1;
   controls.minDistance = 3;
   controls.maxDistance = 240;
   controls.maxPolarAngle = Math.PI * 0.495; // never go under the floor
   controls.target.copy(HOME.target);
   controls.update();
+  /** Subscribe to camera swaps (perspective ↔ orthographic). */
+  function onCameraSwap(cb) { swapListeners.add(cb); return () => swapListeners.delete(cb); }
+
+  /* Environment: a small equirect gradient (sky → horizon → ground) run through PMREM. It gives
+     the satin bodies and their bevels something to reflect without reading as glossy. */
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  function buildEnvironment() {
+    const [sky, horizon, ground] = palette.env;
+    const c = document.createElement('canvas'); c.width = 128; c.height = 64;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 64);
+    grad.addColorStop(0, sky); grad.addColorStop(0.5, horizon); grad.addColorStop(1, ground);
+    g.fillStyle = grad; g.fillRect(0, 0, 128, 64);
+    // a soft, wide key "window" high on one side so bevels get a highlight
+    const spot = g.createRadialGradient(40, 14, 2, 40, 14, 34);
+    spot.addColorStop(0, 'rgba(255,255,255,0.85)'); spot.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = spot; g.fillRect(0, 0, 128, 64);
+    const tex = new THREE.CanvasTexture(c);
+    tex.mapping = THREE.EquirectangularReflectionMapping; tex.colorSpace = THREE.SRGBColorSpace;
+    const env = pmrem.fromEquirectangular(tex).texture;
+    tex.dispose();
+    if (scene.environment) scene.environment.dispose();
+    scene.environment = env;
+  }
+  buildEnvironment();
 
   /* Lighting: soft sky/ground hemisphere + key light + cool fill. Calm, not dramatic. */
   const hemi = new THREE.HemisphereLight(palette.skyLight, palette.groundLight, 0.9);
@@ -92,6 +120,7 @@ export function createWorkspace(container) {
   scene.add(floor);
 
   function applyTheme() {
+    buildEnvironment();
     scene.background.setHex(palette.bg);
     scene.fog.color.setHex(palette.fog);
     hemi.color.setHex(palette.skyLight); hemi.groundColor.setHex(palette.groundLight);
@@ -108,15 +137,14 @@ export function createWorkspace(container) {
   function resize() {
     const w = container.clientWidth, h = container.clientHeight;
     if (!w || !h) return;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+    controls.setAspect(w / h);
     renderer.setSize(w, h);
   }
   window.addEventListener('resize', resize);
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resize).observe(container);
 
   function resetCamera() {
-    camera.position.copy(HOME.position);
+    controls.camera.position.copy(HOME.position);
     controls.target.copy(HOME.target);
     controls.update();
   }
@@ -124,6 +152,7 @@ export function createWorkspace(container) {
   /* Camera flights: F focuses the selection, Home frames everything, double-click focuses a block. */
   let flight = null;
   function flyTo(position, target, duration = 0.55) {
+    const camera = controls.camera;
     if (duration <= 0) { camera.position.copy(position); controls.target.copy(target); controls.update(); flight = null; return; }
     flight = { p0: camera.position.clone(), t0: controls.target.clone(), p1: position.clone(), t1: target.clone(), k: 0, duration, start: performance.now() };
   }
@@ -133,7 +162,7 @@ export function createWorkspace(container) {
     if (!flight) return;
     flight.k = Math.min(1, (performance.now() - flight.start) / 1000 / flight.duration);
     const e = 1 - Math.pow(1 - flight.k, 3);
-    camera.position.lerpVectors(flight.p0, flight.p1, e);
+    controls.camera.position.lerpVectors(flight.p0, flight.p1, e);
     controls.target.lerpVectors(flight.t0, flight.t1, e);
     if (flight.k >= 1) flight = null;
   }
@@ -153,8 +182,9 @@ export function createWorkspace(container) {
     for (const b of list) { if (b.getAABB) box.union(b.getAABB(tmp)); else if (b.center) box.expandByPoint(b.center); }
     box.expandByScalar(minRadius * 0.2);
     const center = box.getCenter(new THREE.Vector3());
+    const camera = controls.perspective;
     // view direction: current azimuth, fixed elevation
-    const cur = camera.position.clone().sub(controls.target);
+    const cur = controls.camera.position.clone().sub(controls.target);
     const az = Math.atan2(cur.x, cur.z || 1e-6);
     const dir = new THREE.Vector3(Math.sin(az) * Math.cos(ELEVATION), Math.sin(ELEVATION), Math.cos(az) * Math.cos(ELEVATION));
     const corners = [];
@@ -190,10 +220,15 @@ export function createWorkspace(container) {
   }
   /** Fog thins as the camera pulls back so a far overview stays readable instead of fading out. */
   function updateFog() {
-    const d = camera.position.distanceTo(controls.target);
+    const d = controls.camera.position.distanceTo(controls.target);
     scene.fog.density = 0.011 * THREE.MathUtils.clamp(45 / Math.max(d, 1), 0.28, 1);
     floorMat.uniforms.fadeRadius.value = Math.max(40, d * 0.5); // the lit pool grows with the overview
   }
 
-  return { renderer, scene, camera, controls, resize, resetCamera, applyTheme, setGridVisible, isGridVisible, HOME, flyTo, cancelFlight, updateFlight, frameBlocks, updateFog };
+  return {
+    renderer, scene, controls, resize, resetCamera, applyTheme, setGridVisible, isGridVisible, HOME, flyTo, cancelFlight, updateFlight, frameBlocks, updateFog, onCameraSwap, buildEnvironment,
+    /** The active camera (perspective, or orthographic after Numpad 5). */
+    get camera() { return controls.camera; },
+    get perspective() { return controls.perspective; },
+  };
 }

@@ -1,6 +1,7 @@
 // ui/overlays.js — HTML layers that explain the 3D scene: a tooltip that follows a port or a
 // block, the floating label beside the pointer while a cable is dragged, a short toast, the
-// small end labels on a selected block's cables ("→ Laptop.screen"), and the empty-scene hint.
+// small end labels on a selected block's cables ("→ Laptop.screen"), a chooser popover (several
+// ways to link two dropped components), and the empty-scene hint.
 // Everything here is presentation only: it projects world positions to the screen every frame
 // and never writes to the world.
 import * as THREE from 'three';
@@ -72,6 +73,41 @@ export class Overlays {
     el.hidden = false; el.className = cls; el.innerHTML = html;
     this._clampTo(el, x + 18, y + 18);
   }
+
+  /* ---------- chooser popover (drop-to-link with several candidates) ---------- */
+  /**
+   * Show a small list at screen position; `onPick(value | null)` fires once. Esc, a click
+   * outside or a second chooser cancels the first.
+   */
+  chooser(items, { x, y, title = '' } = {}, onPick = () => {}) {
+    this.closeChooser(null);
+    const el = document.createElement('div');
+    el.id = 'chooser'; el.className = 'chooser'; el.setAttribute('role', 'menu');
+    if (title) { const h = document.createElement('div'); h.className = 'chooser-title'; h.textContent = title; el.appendChild(h); }
+    items.forEach((it, i) => {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = it.label; b.dataset.index = String(i);
+      b.addEventListener('click', (e) => { e.stopPropagation(); this.closeChooser(it.value); });
+      el.appendChild(b);
+    });
+    document.body.appendChild(el);
+    const W = window.innerWidth, H = window.innerHeight;
+    const w = el.offsetWidth || 260, h = el.offsetHeight || 120;
+    el.style.left = `${Math.min(Math.max(8, x + 12), W - w - 8)}px`; el.style.top = `${Math.min(Math.max(8, y + 12), H - h - 8)}px`;
+    const outside = (e) => { if (!el.contains(e.target)) this.closeChooser(null); };
+    const key = (e) => { if (e.key === 'Escape') this.closeChooser(null); };
+    setTimeout(() => { window.addEventListener('pointerdown', outside, true); window.addEventListener('keydown', key, true); }, 0);
+    this._chooser = { el, onPick, outside, key };
+    el.querySelector('button')?.focus();
+    return el;
+  }
+  closeChooser(value) {
+    const c = this._chooser; if (!c) return;
+    this._chooser = null;
+    window.removeEventListener('pointerdown', c.outside, true); window.removeEventListener('keydown', c.key, true);
+    c.el.remove();
+    c.onPick(value === undefined ? null : value);
+  }
+  get chooserOpen() { return !!this._chooser; }
 
   /* ---------- toast ---------- */
   toast(text, ms = 1600) {

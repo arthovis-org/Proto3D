@@ -18,10 +18,11 @@
 //   • emphasis: 'glow' (compatible target while hovering / dragging: pulsing rim), 'dim'
 //     (incompatible: 35 %), 'reject' (red ring under the pointer).
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import {
   palette, states, sizes, materials, makeLabel, refreshLabel, setLabelText, makeShadowBlob, onThemeChange, portColorFor,
 } from './theme.js';
+import { panelGeometry } from './geometry.js';
+import { portsVisibleFor, onWiringChange } from './wiring.js';
 import { defaultParams, clone } from './core/component.js';
 import { formatValue } from './core/types.js';
 import { clear as clearFace } from './faces.js';
@@ -32,7 +33,7 @@ export const genUid = () => `b${(nextUid++).toString(36)}${Date.now().toString(3
 export function bumpUidCounter(n) { nextUid = Math.max(nextUid, n + 1); }
 
 const ballGeo = new THREE.SphereGeometry(sizes.port.radius, 20, 14);
-const stemGeo = new THREE.CylinderGeometry(sizes.port.radius * 0.45, sizes.port.radius * 0.45, sizes.port.stem, 10);
+const stemGeo = new THREE.CylinderGeometry(sizes.port.radius * 0.36, sizes.port.radius * 0.36, sizes.port.stem, 10);
 /** Pentagon "exec pin" pointing +X, extruded in Z and centred. */
 function makePinGeometry() {
   const { w, h, d } = sizes.port.pin;
@@ -49,7 +50,7 @@ const fillGeo = new THREE.BoxGeometry(SLOT.fillW, SLOT.fillH, SLOT.d + 0.02);
 /** Multi-input rectangle for `n` slots (height = pad + slot height × n); `margin` grows it for the outline shell. */
 export function makeSlotGeometry(n, margin = 0) {
   const h = SLOT.pad + SLOT.h * Math.max(1, n);
-  const g = new RoundedBoxGeometry(SLOT.w + margin, h + margin, SLOT.d + margin, 2, 0.06 + margin / 2);
+  const g = panelGeometry(SLOT.w + margin, h + margin, SLOT.d + margin, { radius: SLOT.radius + margin / 2, bevel: 0.012, curveSegments: 6 });
   g.type = 'SlotGeometry'; g.userData.slots = Math.max(1, n); g.userData.height = h;
   return g;
 }
@@ -279,7 +280,23 @@ export class Block3D extends THREE.Group {
     this._portsExtra = 0;            // how much the tallest side of ports grew (multi-input slots)
     this.sideCaptions = null;        // { in, out } small "IN" / "OUT" captions above the port columns
     this._captionAnchor = { in: new THREE.Vector3(NaN, 0, 0), out: new THREE.Vector3(NaN, 0, 0) };
+    this.showPorts = o.showPorts === true || o.showPorts === false ? o.showPorts : null;   // per-component override of the global wiring flag
+    this.wiringLabels = new Set();   // port names, IN / OUT captions: hidden with the ports
     this._offTheme = onThemeChange(() => this.refreshTheme());
+    this._offWiring = onWiringChange(() => this.applyWiring());
+  }
+
+  /** Whether this block shows its pins, labels and captions (its override, else the global wiring flag). */
+  get portsVisible() { return portsVisibleFor(this); }
+  /** Per-component override: true / false, or null to follow the global flag. */
+  setShowPorts(v) { this.showPorts = v === true || v === false ? v : null; this.applyWiring(); this.world?.changed('wiring'); }
+  /** Show / hide every port, its label and the side captions; subclasses re-layout through `_onWiringChange`. */
+  applyWiring() {
+    const on = this.portsVisible;
+    for (const p of this.ports) { p.group.visible = on; if (p.labelMesh) p.labelMesh.visible = on && this.lodBlend < 0.98; }
+    if (this.sideCaptions) for (const c of Object.values(this.sideCaptions)) c.visible = on && this.lodBlend < 0.98;
+    if (this._wiringOn !== on) { this._wiringOn = on; this._onWiringChange?.(on); }
+    this.world?.bumpLayout();
   }
 
   get ports() { return [...this.inputs, ...this.outputs]; }
@@ -334,8 +351,10 @@ export class Block3D extends THREE.Group {
     const inside = this.portLabelSide === 'inside';
     const lx = spec.dir === 'in' ? (inside ? x + inset : x - inset - sizes.port.stem) : (inside ? x - inset : x + inset + sizes.port.stem);
     label.position.set(lx, y, inside ? zFront : z + 0.02);
-    this.add(label); this.labels.push(label); this.detailLabels.push(label);
+    this.add(label); this.labels.push(label); this.detailLabels.push(label); this.wiringLabels.add(label);
     port.labelMesh = label;
+    const on = this.portsVisible;
+    port.group.visible = on; label.visible = on;
     return port;
   }
   /** Position (or create) the "IN" / "OUT" captions above the first port of each side. Cheap; called per frame. */
@@ -352,8 +371,9 @@ export class Block3D extends THREE.Group {
       if (!this.sideCaptions) this.sideCaptions = {};
       let cap = this.sideCaptions[dir];
       if (!cap) {
-        cap = makeLabel(dir === 'in' ? 'IN' : 'OUT', { size: 0.13, color: 'textDim', weight: 700 });
-        this.add(cap); this.labels.push(cap); this.detailLabels.push(cap);
+        cap = makeLabel(dir === 'in' ? 'IN' : 'OUT', { size: 0.115, color: 'textDim', weight: 600, spacing: 0.08 });
+        this.add(cap); this.labels.push(cap); this.detailLabels.push(cap); this.wiringLabels.add(cap);
+        cap.visible = this.portsVisible;
         this.sideCaptions[dir] = cap;
       }
       const w = cap.userData.worldW;
@@ -364,7 +384,7 @@ export class Block3D extends THREE.Group {
 
   /* ---------- face: a live canvas on the body ---------- */
   /** Create the face canvas + plane; the subclass positions the returned mesh. */
-  _initFace(w, h, { emissive = 0.55, mesh = true } = {}) {
+  _initFace(w, h, { emissive = 0.55, mesh = true, transparent = true } = {}) {
     const px = sizes.face.pxPerUnit;
     const canvas = document.createElement('canvas');
     canvas.width = Math.round(w * px); canvas.height = Math.round(h * px);
@@ -373,7 +393,7 @@ export class Block3D extends THREE.Group {
     texture.anisotropy = 4;
     const g = canvas.getContext('2d');
     clearFace(g, canvas.width, canvas.height);
-    const plane = mesh ? new THREE.Mesh(new THREE.PlaneGeometry(w, h), materials.face(texture, { emissive })) : null;
+    const plane = mesh ? new THREE.Mesh(new THREE.PlaneGeometry(w, h), materials.face(texture, { emissive, transparent })) : null;
     if (plane) { plane.userData.face = this; plane.userData.block = this; plane.renderOrder = 1; }
     this.face = { canvas, texture, g, mesh: plane, w, h, lastDrawAt: -1e9 };
     return plane;
@@ -457,7 +477,8 @@ export class Block3D extends THREE.Group {
   }
   _applyLOD() {
     const a = 1 - this.lodBlend;
-    for (const l of this.detailLabels) { l.material.opacity = a; l.visible = a > 0.02; }
+    const ports = this.portsVisible;
+    for (const l of this.detailLabels) { l.material.opacity = a; l.visible = a > 0.02 && (ports || !this.wiringLabels.has(l)); }
   }
   _updateShadow() {
     const sy = this.scale.y || 1;
@@ -491,6 +512,7 @@ export class Block3D extends THREE.Group {
     try { state = JSON.parse(JSON.stringify(this.state)); } catch (_) { state = {}; }
     return {
       uid: this.uid, type: this.typeId, title: this.title, params: clone(this.params), state, enabled: this.enabled,
+      ...(this.showPorts === null ? {} : { showPorts: this.showPorts }),
       position: [+this.position.x.toFixed(3), +this.position.y.toFixed(3), +this.position.z.toFixed(3)],
       rotationY: +this.rotation.y.toFixed(4), scale: +this.scale.x.toFixed(3),
     };
@@ -498,6 +520,7 @@ export class Block3D extends THREE.Group {
 
   dispose() {
     this._offTheme?.();
+    this._offWiring?.();
     this.def.onDestroy?.(this);
     this.traverse((obj) => {
       if (obj === this) return;

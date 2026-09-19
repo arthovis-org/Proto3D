@@ -9,6 +9,8 @@ import { hex, getTheme, setTheme, sizes } from './theme.js';
 import { describeLink } from './pm/relations.js';
 import * as cmd from './core/commands.js';
 import { icons } from './icons.js';
+import { nav } from './controls/navigation.js';
+import { PRESET_IDS } from './controls/presets.js';
 
 const RAD = 180 / Math.PI;
 
@@ -136,10 +138,10 @@ export class Panel {
     else this._buildBlock(items[0]);
     this.refresh();
   }
-  /** Update all live fields (called ~10×/s). */
-  refresh() { this.live.forEach((fn) => fn()); }
+  /** Update all live fields (called ~10×/s). A stale updater (its block just left the world) never breaks the frame. */
+  refresh() { for (const fn of this.live) { try { fn(); } catch (_) { /* rebuilt on the next selection change */ } } }
 
-  _header(iconName, name, sub, onRename) {
+  _header(iconName, name, sub, onRename, tools = null) {
     const h = this._h('div', 'panel-head');
     const ic = this._h('span', 'icon'); ic.innerHTML = icons[iconName] || icons.node; h.appendChild(ic);
     if (onRename) {
@@ -147,8 +149,26 @@ export class Panel {
       i.addEventListener('input', () => onRename(i.value));
       h.appendChild(i);
     } else h.appendChild(this._h('span', 'name-field static', name));
+    if (tools) h.appendChild(tools);
     h.appendChild(this._h('span', 'sub', sub));
     this.body.appendChild(h);
+    return h;
+  }
+  /** The eye in a block's header: cycles follow global → shown → hidden for this block's ports. */
+  _portsEye(b) {
+    const box = this._h('span', 'head-tools');
+    const btn = this._h('button'); btn.type = 'button'; btn.id = 'btn-ports-eye';
+    const upd = () => {
+      const o = b.showPorts;
+      btn.innerHTML = b.portsVisible ? icons.eye : icons.eyeOff;
+      btn.classList.toggle('on', o === true); btn.classList.toggle('forced-off', o === false);
+      btn.title = o === null ? `Ports follow the Wiring switch (${b.portsVisible ? 'shown' : 'hidden'}) · click to always show them on this block` : o ? 'Ports always shown on this block · click to always hide' : 'Ports always hidden on this block · click to follow the Wiring switch';
+      btn.setAttribute('aria-label', 'Ports visibility');
+    };
+    btn.addEventListener('click', () => { b.setShowPorts(b.showPorts === null ? true : b.showPorts === true ? false : null); upd(); });
+    upd(); this.live.push(upd);
+    box.appendChild(btn);
+    return box;
   }
 
   _buildWorkspace() {
@@ -156,10 +176,15 @@ export class Panel {
     this._header('workspace', 'Workspace', 'nothing selected');
     const s = this._section('Workspace');
     this._select(s, 'theme', ['dark', 'light'], () => getTheme(), (v) => setTheme(v));
+    if (this.wiring) {
+      this._check(s, 'wiring (P)', () => this.wiring.isOn(), (v) => this.wiring.set(v), 'wiring');
+      s.appendChild(this._h('div', 'panel-note', 'Wiring off hides every port and cable. Drop a component onto another to link them; a block can still show its own ports (eye icon in its header).'));
+    }
     this._check(s, 'grid', () => ws.isGridVisible(), (v) => ws.setGridVisible(v));
     this._check(s, 'flow animation', () => flow.isEnabled(), (v) => flow.setEnabled(v));
     this._num(s, 'flow speed', () => flow.getSpeed(), (v) => flow.setSpeed(v), { step: 0.1, min: 0, max: 5 });
     this._num(s, 'LOD distance', () => sizes.lod.far, (v) => { sizes.lod.far = Math.max(10, v); }, { step: 2, min: 10, max: 200 });
+    this._buildControls();
     const g = this._section('Gizmo');
     this._check(g, 'enabled (G)', () => gizmo.enabled, (v) => { gizmo.setEnabled(v); this.onGizmoToggle?.(); });
     this._buttons(g, 'mode', [['translate', 'Move', 'W'], ['rotate', 'Rotate', 'E'], ['scale', 'Scale', 'R']], () => gizmo.mode, (v) => gizmo.setMode(v));
@@ -173,6 +198,26 @@ export class Panel {
     const reg = this._section('Registry', false);
     this._readonly(reg, 'component types', () => String(registry.all().length));
     registry.categories().forEach((c) => this._readonly(reg, c.label, () => c.components.map((d) => d.label).join(', ')));
+  }
+
+  /** Navigation presets (Blender default, Unreal, Maya, Simple) and their per-preset settings. */
+  _buildControls() {
+    const c = this._section('Controls');
+    const sel = this._select(c, 'preset', PRESET_IDS, () => nav.presetId, (v) => { nav.setPreset(v); this.build(); }, 'navPreset');
+    sel.querySelectorAll('option').forEach((o) => { o.textContent = nav.presets[o.value].label; });
+    c.appendChild(this._h('div', 'panel-note', nav.preset.description));
+    const S = () => nav.settings;
+    this._check(c, 'invert orbit', () => S().invertOrbit, (v) => nav.setSetting('invertOrbit', v), 'invertOrbit');
+    this._check(c, 'invert zoom', () => S().invertZoom, (v) => nav.setSetting('invertZoom', v), 'invertZoom');
+    this._num(c, 'orbit sensitivity', () => S().orbitSpeed, (v) => nav.setSetting('orbitSpeed', Math.min(4, Math.max(0.1, v))), { step: 0.1, min: 0.1, max: 4, attr: 'orbitSpeed' });
+    this._num(c, 'pan sensitivity', () => S().panSpeed, (v) => nav.setSetting('panSpeed', Math.min(4, Math.max(0.1, v))), { step: 0.1, min: 0.1, max: 4, attr: 'panSpeed' });
+    this._check(c, 'zoom to cursor', () => S().zoomToCursor, (v) => nav.setSetting('zoomToCursor', v), 'zoomToCursor');
+    if (nav.preset.fly) this._num(c, 'fly speed', () => S().flySpeed, (v) => nav.setSetting('flySpeed', Math.min(10, Math.max(0.1, v))), { step: 0.1, min: 0.1, max: 10, attr: 'flySpeed' });
+    this._readonly(c, 'orbit', () => nav.binding('orbit') || '—');
+    this._readonly(c, 'pan', () => nav.binding('pan') || '—');
+    this._readonly(c, 'zoom', () => nav.binding('dolly') || 'Wheel');
+    this._action(c, 'Reset settings', () => { nav.resetSettings(); this.build(); });
+    this._action(c, 'Full cheat sheet (help below)', () => { const h = document.getElementById('help'); if (h) { h.open = true; h.scrollIntoView({ block: 'start' }); } });
   }
 
   _transformSection(nodes) {
@@ -199,7 +244,7 @@ export class Panel {
   _buildBlock(b) {
     const def = b.def;
     const cat = registry.category(def.category);
-    this._header(def.id in icons ? def.id : def.category, b.title, `${def.label} · ${cat.label}`, (v) => this.history.executeCoalesced(`title:${b.uid}`, cmd.setTitle(this.world, b, v)));
+    this._header(def.id in icons ? def.id : def.category, b.title, `${def.label} · ${cat.label}`, (v) => this.history.executeCoalesced(`title:${b.uid}`, cmd.setTitle(this.world, b, v)), this._portsEye(b));
     this._transformSection([b]);
 
     const n = this._section('Component');
@@ -207,7 +252,7 @@ export class Panel {
     this._readonly(n, 'about', () => def.description);
     this._check(n, 'enabled', () => b.enabled, (v) => this.history.execute(cmd.setEnabled(this.world, b, v)), 'enabled');
     this._readonly(n, 'state', () => b.derivedState + (b.rt?.error ? ` · ${b.rt.error}` : ''));
-    if (b.group) this._readonly(n, 'group', () => b.group.title);
+    if (b.group) this._readonly(n, 'group', () => b.group?.title || '—');
     const setP = (key) => (v) => { this.history.executeCoalesced(`param:${b.uid}:${key}`, cmd.setParam(this.world, b, key, v)); };
     for (const p of def.params) {
       if (p.hidden) continue;   // edited by the component's own panel section (boards, checklists)

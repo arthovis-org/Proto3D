@@ -11,13 +11,15 @@ import { icons } from '../../icons.js';
 import { states, setLabelText } from '../../theme.js';
 import { pick, compareValues, OPS, parseLiteral } from '../util.js';
 
-const DEPTH = 0.5;
+const DEPTH = 0.2;
 const tint = (node) => node.headerColor();
 
 /** Extruded flowchart outline (stadium, diamond) with a small bevel. */
 function extrude(shape, depth = DEPTH) {
-  const geo = new THREE.ExtrudeGeometry(shape, { depth: depth - 0.08, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.04, bevelSegments: 2, curveSegments: 16 });
-  geo.translate(0, 0, -depth / 2 + 0.04);
+  const b = 0.02;
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: depth - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: b, bevelSegments: 2, curveSegments: 16 });
+  geo.translate(0, 0, -(depth - 2 * b) / 2);
+  geo.type = 'PanelGeometry'; geo.userData.panel = { depth, bevel: b };
   return geo;
 }
 function stadium(w, h) {
@@ -42,10 +44,10 @@ function flash(node, time) {
   if (node.glow) { node.glow.material.opacity = 0.55 * k; node.glow.visible = k > 0.01; }
 }
 function commonBuild(node, h, geo) {
-  node.shape = h.part(geo, new THREE.MeshStandardMaterial({ color: tint(node), emissive: states.active, emissiveIntensity: 0.05, roughness: 0.5, metalness: 0.05 }), { theme: () => tint(node) });
-  node.glow = new THREE.Mesh(geo.clone().scale(1.06, 1.08, 1.15), new THREE.MeshBasicMaterial({ color: states.active, transparent: true, opacity: 0, side: THREE.BackSide, depthWrite: false }));
+  node.shape = h.part(geo, h.materials.panel(tint(node), { emissive: states.active, emissiveIntensity: 0.04 }), { theme: () => tint(node) });
+  node.glow = new THREE.Mesh(geo.clone().scale(1.05, 1.08, 1.3), new THREE.MeshBasicMaterial({ color: states.active, transparent: true, opacity: 0, side: THREE.BackSide, depthWrite: false }));
   node.glow.visible = false; node.add(node.glow);
-  node.rim = h.rim(geo.clone().scale(1.04, 1.06, 1.1));
+  node.rim = h.rim(geo.clone().scale(1.03, 1.06, 1.3));
 }
 const stepText = (node) => (node.params.duration > 0 ? `${node.params.duration} ms` : 'instant');
 
@@ -62,18 +64,18 @@ registry.register({
   body3d: {
     dims: () => ({ width: 4.2, height: 1.5, depth: DEPTH }),
     titleAt: () => [-0.35, 0.02, DEPTH / 2 + 0.03],
-    titleSize: 0.34, titleColor: 'textOnHeader',
+    titleSize: 0.34, titleColor: '#ffffff',
     ports: () => ({ in: [[-2.1, 0, 0]], out: [[2.1, 0, 0]] }),
     build(node, h) {
       commonBuild(node, h, extrude(stadium(4.2, 1.5)));
       // Run button (start mode): a disc on the right end — a child pickable
-      const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.12, 24), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.25, roughness: 0.4 }));
+      const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.08, 32), new THREE.MeshPhysicalMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.2, roughness: 0.35, clearcoat: 0.5 }));
       btn.rotation.x = Math.PI / 2; btn.position.set(1.3, 0, DEPTH / 2 + 0.02);
       h.sub(btn, { kind: 'run' }, node);
       node.runBtn = btn;
       const tri = new THREE.Mesh(new THREE.ShapeGeometry((() => { const s = new THREE.Shape(); s.moveTo(-0.1, -0.14); s.lineTo(0.16, 0); s.lineTo(-0.1, 0.14); s.closePath(); return s; })()), new THREE.MeshBasicMaterial({ color: tint(node) }));
       tri.position.set(1.32, 0, DEPTH / 2 + 0.09); node.add(tri); node.runTri = tri; node.themed.push([tri, () => tint(node)]);
-      node.countLabel = h.label('', { size: 0.26, color: 'textOnHeader', weight: 600 }, [1.3, 0, DEPTH / 2 + 0.03]);
+      node.countLabel = h.label('', { size: 0.26, color: '#ffffff', weight: 600 }, [1.3, 0, DEPTH / 2 + 0.03]);
     },
     refresh(node) {
       const start = node.params.mode === 'start';
@@ -111,11 +113,11 @@ registry.register({
   body3d: {
     dims: () => ({ width: 4.4, height: 1.7, depth: DEPTH }),
     titleAt: () => [0, 0.16, DEPTH / 2 + 0.03],
-    titleSize: 0.36, titleColor: 'textOnHeader',
+    titleSize: 0.36, titleColor: '#ffffff',
     ports: () => ({ in: [[-2.2, 0, 0]], out: [[2.2, 0, 0]] }),
     build(node, h) {
-      commonBuild(node, h, new h.RoundedBoxGeometry(4.4, 1.7, DEPTH, 4, 0.22));
-      node.subLabel = h.label(stepText(node), { size: 0.2, color: 'textOnHeader', weight: 500 }, [0, -0.35, DEPTH / 2 + 0.03], { detail: true });
+      commonBuild(node, h, h.panelGeometry(4.4, 1.7, DEPTH, { radius: 0.3 }));
+      node.subLabel = h.label(stepText(node), { size: 0.18, color: '#ffffff', weight: 500 }, [0, -0.35, DEPTH / 2 + 0.03], { detail: true });
       node.subLabel.material.opacity = 0.75;
       // progress bar while a delayed token is in flight
       node.bar = new THREE.Mesh(new THREE.BoxGeometry(1, 0.08, 0.04), new THREE.MeshBasicMaterial({ color: states.active }));
@@ -157,12 +159,12 @@ registry.register({
   body3d: {
     dims: () => ({ width: 4.8, height: 2.6, depth: DEPTH }),
     titleAt: () => [0, 0.18, DEPTH / 2 + 0.03],
-    titleSize: 0.32, titleColor: 'textOnHeader',
+    titleSize: 0.32, titleColor: '#ffffff',
     // inputs on the left edge (in at the tip, condition below it), outputs on the right edge (yes up, no down)
     ports: () => ({ in: [[-2.4, 0.0, 0], [-1.6, -0.45, 0]], out: [[1.6, 0.45, 0], [1.6, -0.45, 0]] }),
     build(node, h) {
       commonBuild(node, h, extrude(diamond(4.8, 2.6)));
-      node.ruleLabel = h.label('', { size: 0.19, color: 'textOnHeader', weight: 500, maxWidth: 2.6 }, [0, -0.28, DEPTH / 2 + 0.03], { detail: true });
+      node.ruleLabel = h.label('', { size: 0.18, color: '#ffffff', weight: 500, maxWidth: 2.6 }, [0, -0.28, DEPTH / 2 + 0.03], { detail: true });
       node.ruleLabel.material.opacity = 0.75;
     },
     refresh(node) { const p = node.params; setLabelText(node.ruleLabel, `${p.field || 'payload'} ${p.op} ${p.value}`); },

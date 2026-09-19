@@ -5,9 +5,10 @@
 // crosses the boundary re-attaches to a proxy port on the slab (same port anatomy), so a large
 // system folds into one tidy block without losing its interfaces.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { palette, states, sizes, materials, makeLabel, refreshLabel, setLabelText, onThemeChange } from './theme.js';
 import { createPort, genUid } from './block3d.js';
+import { panelGeometry, slabGeometry, outlineGeometry } from './geometry.js';
+import { isWiringOn, onWiringChange } from './wiring.js';
 
 const PAD = 1.2;
 
@@ -43,6 +44,7 @@ export class Group3D extends THREE.Group {
     this.add(this.titleLabel);
     this.slab = null;
     this._offTheme = onThemeChange(() => this.refreshTheme());
+    this._offWiring = onWiringChange(() => this._applyWiring());
     this.updateBounds(true);
     if (collapsed) this._pendingCollapse = true;
   }
@@ -71,7 +73,7 @@ export class Group3D extends THREE.Group {
     if (force || Math.abs(w - this._size.w) > 0.05 || Math.abs(d - this._size.d) > 0.05) {
       this._size = { w, d };
       this.fill.geometry.dispose();
-      this.fill.geometry = new RoundedBoxGeometry(w, 0.05, d, 2, 0.5);
+      this.fill.geometry = slabGeometry(w, d, 0.05, { radius: 0.6, bevel: 0.01 });
       this.edge.geometry.dispose();
       this.edge.geometry = ringGeometry(w, d, 0.5, 0.1);
     }
@@ -105,14 +107,15 @@ export class Group3D extends THREE.Group {
     const w = Math.max(6, label.userData.worldW + 2.4), h = 3.0, d = 0.7;
     const slab = new THREE.Group();
     slab.userData.h = h;
-    const body = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 4, 0.2), materials.body());
+    const body = new THREE.Mesh(panelGeometry(w, h, d, { radius: 0.32 }), materials.body());
     body.userData.group = this;
-    const header = new THREE.Mesh(new RoundedBoxGeometry(w - 0.2, 0.8, d + 0.06, 3, 0.12), materials.header(palette.groupFill));
-    header.position.y = h / 2 - 0.5; header.userData.group = this;
-    label.position.set(0, header.position.y, d / 2 + 0.05);
+    // slim accent line along the top edge instead of a header band
+    const header = new THREE.Mesh(new THREE.BoxGeometry(w - 0.6, 0.045, 0.012), new THREE.MeshBasicMaterial({ color: palette.groupFill }));
+    header.position.set(0, h / 2 - 0.1, d / 2 + 0.016); header.userData.group = this;
+    label.position.set(0, h / 2 - 0.62, d / 2 + 0.05);
     const sub = makeLabel(`${this.members.length} components`, { size: 0.24, color: 'textDim', weight: 500 });
     sub.position.set(0, -0.2, d / 2 + 0.02);
-    const rim = new THREE.Mesh(new RoundedBoxGeometry(w + 0.1, h + 0.1, d + 0.1, 3, 0.25), materials.rim());
+    const rim = new THREE.Mesh(outlineGeometry(w, h, d, sizes.outline.grow, { radius: 0.32 }), materials.rim());
     rim.visible = false;
     slab.add(body, header, label, sub, rim);
     slab.titleLabel = label; slab.body = body; slab.rim = rim; slab.header = header; slab.sub = sub;
@@ -155,13 +158,14 @@ export class Group3D extends THREE.Group {
     });
     place(ins, 'in', -w / 2);
     place(outs, 'out', w / 2);
+    this._applyWiring();
     const rows = Math.max(ins.length, outs.length);
     const needH = 1.2 + rows * sizes.port.gap + 0.9;
     if (needH > h) { // grow the slab body for many ports
       this.slab.userData.h = needH;
-      this.slab.body.geometry.dispose(); this.slab.body.geometry = new RoundedBoxGeometry(w, needH, d, 4, 0.2);
-      this.slab.rim.geometry.dispose(); this.slab.rim.geometry = new RoundedBoxGeometry(w + 0.1, needH + 0.1, d + 0.1, 3, 0.25);
-      this.slab.header.position.y = needH / 2 - 0.5; this.slab.titleLabel.position.y = this.slab.header.position.y;
+      this.slab.body.geometry.dispose(); this.slab.body.geometry = panelGeometry(w, needH, d, { radius: 0.32 });
+      this.slab.rim.geometry.dispose(); this.slab.rim.geometry = outlineGeometry(w, needH, d, sizes.outline.grow, { radius: 0.32 });
+      this.slab.header.position.y = needH / 2 - 0.1; this.slab.titleLabel.position.y = needH / 2 - 0.62;
       this.slab.sub.position.y = -needH / 2 + 0.4;
       let ii = 0, oi = 0;
       for (const { proxy } of this.proxies) {
@@ -182,6 +186,12 @@ export class Group3D extends THREE.Group {
     this.proxies = []; this.inputs = []; this.outputs = [];
   }
 
+  /** Proxy ports follow the global wiring switch (a collapsed group's cables are hidden with it). */
+  _applyWiring() {
+    const on = isWiringOn();
+    for (const { proxy } of this.proxies) { proxy.group.visible = on; if (proxy.labelMesh) proxy.labelMesh.visible = on; }
+  }
+
   /* ---------- look ---------- */
   setHover(on) { this.hovered = on; this.applyVisual(); }
   setSelected(on) { this.selected = on; this.applyVisual(); }
@@ -195,7 +205,7 @@ export class Group3D extends THREE.Group {
       const rim = this.selected ? states.selected : this.hovered ? states.hover : null;
       this.slab.rim.visible = rim !== null;
       if (rim !== null) { this.slab.rim.material.color.setHex(rim); this.slab.rim.material.opacity = this.selected ? 0.55 : 0.3; }
-      this.slab.header.material.color.setHex(palette.groupFill);
+      this.slab.header.material.color.setHex(this.selected ? states.selected : palette.groupFill);
     }
   }
   setFar(on, distance = 0) { this.far = on; this.farDistance = distance; }
@@ -212,7 +222,7 @@ export class Group3D extends THREE.Group {
     this.applyVisual();
   }
   serialize() { return { uid: this.uid, title: this.title, members: this.members.map((m) => m.uid), collapsed: this.collapsed }; }
-  dispose() { this._offTheme?.(); disposeTree(this); }
+  dispose() { this._offTheme?.(); this._offWiring?.(); disposeTree(this); }
 }
 
 /** Flat rounded-rectangle ring (frame border) in the XY plane, rotated onto the floor by the caller. */

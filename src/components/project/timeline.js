@@ -7,13 +7,13 @@ import * as THREE from 'three';
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { palette, states } from '../../theme.js';
-import { font } from '../../faces.js';
+import { font, fitLine } from '../../faces.js';
 import { toTasks, daysUntil, addDays, isoDate, fmtDate, PRIORITY_COLOURS } from '../../pm/model.js';
 import { buildTimelinePanel } from '../../pm/panel-pm.js';
 import { makeCanvasPlane } from '../../shape3d.js';
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
-const W = 16, H = 7.2, DEPTH = 0.5, TOP = 1.0, RAIL = 0.9, MARGIN = 0.8;
+const W = 16, H = 7.2, DEPTH = 0.3, TOP = 1.0, RAIL = 0.9, MARGIN = 0.8;
 const CHART_W = W - 2 * MARGIN, CHART_TOP = H / 2 - TOP - 0.2, CHART_H = H - TOP - 0.2 - RAIL - 0.4;
 
 function colourFor(task, mode, node) {
@@ -47,16 +47,18 @@ const xOf = (R, iso) => -CHART_W / 2 + daysUntil(iso, new Date(R.start + 'T00:00
 
 const body3d = {
   dims: () => ({ width: W, height: H, depth: DEPTH }),
-  titleAt: () => [0, H / 2 - TOP / 2 - 0.08, DEPTH / 2 + 0.05],
+  titleAt: () => [-W / 2 + 0.5, H / 2 - TOP / 2 - 0.04, DEPTH / 2 + 0.05],
+  titleAlign: 'left',
   ports: (node) => ({ in: node.def.inputs.map((_, i) => [-W / 2, CHART_TOP - 0.5 - i * 0.55, 0]), out: node.def.outputs.map((_, i) => [W / 2, CHART_TOP - 0.5 - i * 0.55, 0]) }),
   build(node, h) {
-    const back = h.part(new h.RoundedBoxGeometry(W, H, 0.3, 3, 0.16), h.materials.body(), { theme: () => palette.body });
-    back.position.z = -0.15;
-    const header = h.part(new h.RoundedBoxGeometry(W - 0.3, TOP - 0.2, 0.34, 3, 0.1), h.materials.header(node.headerColor()), { theme: node.headerColor });
-    header.position.set(0, H / 2 - TOP / 2 - 0.08, 0.02);
-    const rail = h.part(new h.RoundedBoxGeometry(W - 0.6, 0.14, 0.9, 2, 0.05), h.materials.body(), { theme: () => palette.pmRail });
+    const back = h.part(h.panelGeometry(W, H, DEPTH, { radius: 0.36 }), h.materials.body(), { theme: () => palette.body });
+    back.position.z = -DEPTH / 2 + 0.01;
+    // slim accent line along the top edge (project colour) instead of a header band
+    const accent = h.part(new THREE.BoxGeometry(W - 1.0, 0.045, 0.012), h.materials.accent(node.headerColor()), { theme: node.headerColor, pick: false });
+    accent.position.set(0, H / 2 - 0.1, 0.03);
+    const rail = h.part(h.slabGeometry(W - 0.8, 0.9, 0.1, { radius: 0.1, bevel: 0.012 }), h.materials.body(), { theme: () => palette.pmRail });
     rail.position.set(0, -H / 2 + RAIL - 0.25, 0.25); rail.material.color.setHex(palette.pmRail);
-    node.today = new THREE.Mesh(new THREE.BoxGeometry(0.06, CHART_H + 0.6, 0.35), new THREE.MeshBasicMaterial({ color: palette.pmToday, transparent: true, opacity: 0.55, depthWrite: false }));
+    node.today = new THREE.Mesh(new THREE.BoxGeometry(0.04, CHART_H + 0.6, 0.3), new THREE.MeshBasicMaterial({ color: palette.pmToday, transparent: true, opacity: 0.5, depthWrite: false }));
     node.today.position.z = 0.15; node.add(node.today); node.themed.push([node.today, () => palette.pmToday]);
     node.todayLabel = h.label('today', { size: 0.2, color: 'text', weight: 600 }, [0, CHART_TOP + 0.12, 0.3]);
     node._rows = []; node._drag = null;
@@ -73,8 +75,10 @@ const body3d = {
       const iso = addDays(R.start, d); const x = xOf(R, iso);
       const dow = new Date(iso + 'T00:00:00Z').getUTCDay();
       const major = dow === 1;
-      const tick = new THREE.Mesh(new THREE.BoxGeometry(0.03, major ? 0.32 : 0.14, 0.05), new THREE.MeshBasicMaterial({ color: major ? palette.text : palette.textDim }));
+      const tick = new THREE.Mesh(new THREE.BoxGeometry(0.02, major ? 0.3 : 0.12, 0.04), new THREE.MeshBasicMaterial({ color: major ? palette.text : palette.textDim, transparent: true, opacity: major ? 0.9 : 0.5 }));
       tick.position.set(x, railY + 0.18, 0.66); node.children3d.add(tick);
+      // light gridline up the chart on week starts
+      if (major) { const gl = new THREE.Mesh(new THREE.PlaneGeometry(0.015, CHART_H), new THREE.MeshBasicMaterial({ color: palette.textDim, transparent: true, opacity: 0.18, depthWrite: false })); gl.position.set(x, CHART_TOP - CHART_H / 2, 0.02); node.children3d.add(gl); }
       if (major || R.days <= 10) node.childLabel(major ? fmtDate(iso) : String(new Date(iso + 'T00:00:00Z').getUTCDate()), { size: major ? 0.19 : 0.15, color: major ? 'text' : 'textDim' }, [x, railY - 0.02, 0.7], !major);
       if (dow === 0 || dow === 6) { // weekend shading
         const shade = new THREE.Mesh(new THREE.PlaneGeometry(R.upd, CHART_H), new THREE.MeshBasicMaterial({ color: palette.textDim, transparent: true, opacity: 0.06, depthWrite: false }));
@@ -90,28 +94,27 @@ const body3d = {
       const y = CHART_TOP - 0.25 - rowH * i - rowH / 2;
       const len = x1 - x0;
       const col = colourFor(t, mode, node);
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(len, barH, 0.14), new THREE.MeshStandardMaterial({ color: new THREE.Color(col), roughness: 0.5, transparent: t.done, opacity: t.done ? 0.45 : 1 }));
+      const bar = new THREE.Mesh(node._helpers().panelGeometry(len, barH, 0.1, { radius: barH / 2, bevel: 0.012, curveSegments: 8 }), node._helpers().materials.panel(new THREE.Color(col), { transparent: t.done, opacity: t.done ? 0.45 : 1 }));
       bar.position.set((x0 + x1) / 2, y, 0.16);
       const sub = { kind: 'task', id: t.id, own: !!t.own };
       node.childSub(bar, sub);
       if (sel?.kind === 'task' && sel.id === t.id) { bar.material.emissive = new THREE.Color(states.selected); bar.material.emissiveIntensity = 0.5; }
-      if (t.overdue) { const edge = new THREE.Mesh(new THREE.BoxGeometry(len + 0.06, barH + 0.06, 0.02), new THREE.MeshBasicMaterial({ color: PRIORITY_COLOURS.urgent })); edge.position.set((x0 + x1) / 2, y, 0.08); node.children3d.add(edge); }
+      if (t.overdue) { const edge = new THREE.Mesh(node._helpers().panelGeometry(len + 0.08, barH + 0.08, 0.02, { radius: barH / 2 + 0.04, bevel: 0, curveSegments: 8 }), new THREE.MeshBasicMaterial({ color: PRIORITY_COLOURS.urgent, side: THREE.BackSide })); edge.position.set((x0 + x1) / 2, y, 0.16); node.children3d.add(edge); }
       // face with the title (only when the bar is long enough to read)
-      const plane = makeCanvasPlane(len - 0.04, barH - 0.04, { emissive: 0.5 });
-      plane.mesh.position.set((x0 + x1) / 2, y, 0.235);
+      const plane = makeCanvasPlane(Math.max(0.1, len - barH), barH - 0.04, { emissive: 0.5 });
+      plane.mesh.position.set((x0 + x1) / 2, y, 0.215);
       plane.draw((g, w, h) => {
         g.clearRect(0, 0, w, h);
-        g.fillStyle = 'rgba(0,0,0,0.001)'; g.fillRect(0, 0, w, h);
-        g.fillStyle = '#ffffff'; g.font = font(Math.min(h * 0.55, 30), 600); g.textBaseline = 'middle'; g.textAlign = 'left';
-        let s = t.title; while (s.length > 1 && g.measureText(s).width > w - 20) s = s.slice(0, -1);
-        if (w > 40) g.fillText(s === t.title ? s : s + '…', 10, h / 2);
-        if (t.done) { g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 2; g.beginPath(); g.moveTo(10, h / 2); g.lineTo(10 + g.measureText(s).width, h / 2); g.stroke(); }
+        g.fillStyle = '#ffffff'; g.font = font(Math.min(h * 0.5, 26), 500); g.textBaseline = 'middle'; g.textAlign = 'left';
+        const s = fitLine(g, t.title, w - 8);
+        if (w > 30) g.fillText(s, 4, h / 2);
+        if (t.done) { g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(4, h / 2); g.lineTo(4 + g.measureText(s).width, h / 2); g.stroke(); }
       });
       plane.mesh.userData.sub = bar.userData.sub; node.subs.push(plane.mesh); node.children3d.add(plane.mesh);
       // row label on the left rail edge + right-hand drag handle for own tasks
       if (rowH >= 0.3) node.childLabel(t.assignee || t.column || '', { size: Math.min(0.17, rowH * 0.3), color: 'textDim' }, [x0 - 0.12 - 0.45, y, 0.2], true);
       if (t.own) {
-        const handle = new THREE.Mesh(new THREE.BoxGeometry(0.16, barH + 0.1, 0.2), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.3, roughness: 0.4 }));
+        const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, barH + 0.08, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.3, roughness: 0.4 }));
         handle.position.set(x1, y, 0.2);
         node.childSub(handle, { kind: 'handle', id: t.id });
       }
@@ -123,7 +126,7 @@ const body3d = {
       const x = xOf(R, m.date); if (x < -CHART_W / 2 - 0.2 || x > CHART_W / 2 + 0.2) continue;
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.1, 8), new THREE.MeshBasicMaterial({ color: palette.text }));
       pole.position.set(x, railY + 0.6, 0.66); node.children3d.add(pole);
-      const flag = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.32, 0.03), new THREE.MeshBasicMaterial({ color: m.reached ? PRIORITY_COLOURS.medium : palette.pmToday }));
+      const flag = new THREE.Mesh(node._helpers().panelGeometry(0.6, 0.32, 0.03, { radius: 0.06, bevel: 0.006 }), new THREE.MeshBasicMaterial({ color: m.reached ? PRIORITY_COLOURS.medium : palette.pmToday }));
       flag.position.set(x + 0.32, railY + 1.0, 0.66); node.children3d.add(flag);
       node.childLabel(m.title || 'milestone', { size: 0.16, color: 'text', weight: 600, maxWidth: 2 }, [x + 0.32, railY + 1.3, 0.7], true);
     }

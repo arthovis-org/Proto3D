@@ -13,6 +13,7 @@
 import * as THREE from 'three';
 import { portTypes, states, sizes, onThemeChange, portColorFor } from './theme.js';
 import { compatiblePorts } from './core/types.js';
+import { cableVisibleFor } from './wiring.js';
 import { routeCurve, laneInfo } from './routing.js';
 
 let flowEnabled = true;
@@ -135,6 +136,12 @@ export class Connection3D extends THREE.Group {
 
   /** True for a real link (both ends are ports). */
   get complete() { return !!(this.from && this.to); }
+  /**
+   * Visibility = what the owner asked for (collapsed groups hide internal links) AND the wiring
+   * switch (wiring.js): with wiring off a cable shows only when both of its blocks show their ports.
+   */
+  get visible() { return this._vis !== false && cableVisibleFor(this); }
+  set visible(v) { this._vis = !!v; }
   get dimmed() { return this.dimHover || this.dimSelect; }
 
   _typeColor() {

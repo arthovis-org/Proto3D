@@ -1,21 +1,24 @@
-// Project Dashboard — one face that summarises a board: its title, done-ratio ring, per-column
-// bars, overdue count, the burndown line (from the board's state history carried in `progress`),
-// the next milestone and, when People are plugged into `people`, a load bar per person.
-// `progress` re-emits the done ratio as a number for displays and logic.
+// Project Dashboard — one face that summarises a board: stat tiles (done %, overdue, blocked,
+// days remaining), a done ring, per-column bars, the burndown line (from the board's state
+// history carried in `progress`), the next milestone, a load bar per connected Person and a
+// progress bar per connected Checklist. `progress` re-emits the done ratio as a number.
+// Restrained palette: neutral greys, the accent for the board's own numbers, green for done,
+// red only for what is wrong (overdue, over WIP).
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
-import { palette } from '../../theme.js';
-import { clear, roundRect, font, drawText } from '../../faces.js';
+import { palette, typography } from '../../theme.js';
+import { clear, roundRect, font, drawText, PAD, drawCaps, drawBar, drawDivider, drawTile, drawStat, fitLine, tabular } from '../../faces.js';
 import { daysUntil, fmtDate } from '../../pm/model.js';
 
 export default registry.register({
   id: 'project-dashboard', category: 'project', label: 'Project Dashboard', icon: icons['project-dashboard'], size: 'L',
-  description: 'One screen with a board\'s progress: done ring, column bars, burndown, milestone and each connected person\'s load',
+  description: 'One screen with a board\'s progress: stat tiles, done ring, column bars, burndown, milestone, people load and checklists',
   inputs: [
     { key: 'progress', label: 'progress', type: 'data', subtype: 'stats' },
     { key: 'tasks', label: 'tasks', type: 'data', subtype: 'tasks', optional: true },
     { key: 'milestone', label: 'milestone', type: 'data', subtype: 'milestone', optional: true },
     { key: 'people', label: 'people', type: 'data', subtype: 'person', multi: true, optional: true },
+    { key: 'checklists', label: 'checklists', type: 'number', multi: true, optional: true },
   ],
   outputs: [{ key: 'progress', label: 'progress', type: 'number' }],
   params: [{ key: 'caption', label: 'caption', type: 'text', default: '' }],
@@ -25,85 +28,113 @@ export default registry.register({
     const src = upstream('progress')[0]?.node;
     const title = src ? src.title : '';
     if (title !== state.boardTitle) { state.boardTitle = title; instance.faceDirty = true; }
+    const lists = upstream('checklists').map((u, i) => ({ title: u.node.title, value: Array.isArray(inputs.checklists) ? inputs.checklists[i] : undefined }));
+    const sig = JSON.stringify(lists);
+    if (sig !== instance._chkSig) { instance._chkSig = sig; instance._checklists = lists; instance.faceDirty = true; }
     return { progress: s && typeof s.doneRatio === 'number' ? s.doneRatio : undefined };
   },
   footer: ({ inputs, state }) => { const s = inputs.progress; return s ? `${state.boardTitle ? state.boardTitle + ' · ' : ''}${s.done} / ${s.total} done · ${s.overdue} overdue` : 'connect a board\'s progress'; },
   face: {
-    render(g, w, h, { inputs, params, state }) {
+    render(g, w, h, { inputs, params, state, instance }) {
       clear(g, w, h);
       const s = inputs.progress;
-      if (!s || !Array.isArray(s.columns)) { drawText(g, 'connect a Kanban board\'s progress output', 0, 0, w, h, { size: 20, color: palette.faceDim }); return; }
-      const pad = 14;
-      // --- title strip: which board this is about
-      g.fillStyle = palette.faceDim; g.font = font(13, 700); g.textAlign = 'left'; g.textBaseline = 'top';
-      g.fillText((state.boardTitle || params.caption || 'board').toUpperCase(), pad, pad - 4);
-      // --- left: done ring
-      const r = Math.min(h * 0.28, w * 0.15);
-      const cx = pad + r + 6, cy = pad + r + 26;
-      g.lineWidth = r * 0.26; g.lineCap = 'round';
-      g.strokeStyle = palette.faceCard; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
-      g.strokeStyle = '#2dd4bf'; g.beginPath(); g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (s.doneRatio || 0)); g.stroke();
-      drawText(g, `${Math.round((s.doneRatio || 0) * 100)}%`, cx - r, cy - r, 2 * r, 2 * r, { size: r * 0.62, weight: 700, mono: true });
-      drawText(g, `${s.done} of ${s.total} done`, cx - r - 20, cy + r + 8, 2 * r + 40, 22, { size: 15, color: palette.faceDim });
-      // --- right top: per-column bars
-      const bx = cx + r + 30, bw = w - bx - pad, bh = h * 0.42;
-      const people = Array.isArray(inputs.people) ? inputs.people.filter((p) => p && p.name) : [];
+      const P = PAD;
+      if (!s || !Array.isArray(s.columns)) { drawText(g, 'Drop a Kanban board here (or connect its progress) to see its health', P, 0, w - 2 * P, h, { size: 18, color: palette.faceDim, lineHeight: 1.4 }); return; }
+      // --- header: which board · caption
+      g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+      g.fillStyle = palette.faceText; g.font = font(typography.scale.title, 600);
+      g.fillText(fitLine(g, state.boardTitle || params.caption || 'Board', w * 0.6), P, P + 24);
+      const m = inputs.milestone;
+      if (m && m.date) {
+        const dl = daysUntil(m.date);
+        g.textAlign = 'right'; g.fillStyle = m.reached ? palette.faceGood : palette.faceDim; g.font = font(13, 500);
+        g.fillText(`${m.title} · ${fmtDate(m.date)}${Number.isFinite(dl) ? (dl >= 0 ? ` · ${dl} d` : ` · ${-dl} d ago`) : ''}`, w - P, P + 22);
+      } else if (params.caption) { g.textAlign = 'right'; g.fillStyle = palette.faceDim; g.font = font(13, 500); g.fillText(params.caption, w - P, P + 22); }
+      // --- stat tiles
+      const tileY = P + 40, tileH = 74, gap = 8;
+      const tiles = [
+        ['done', `${Math.round((s.doneRatio || 0) * 100)}%`, palette.faceText, `${s.done} of ${s.total}`],
+        ['overdue', String(s.overdue || 0), s.overdue ? palette.faceBad : palette.faceText, ''],
+        ['blocked', String(s.blocked || 0), palette.faceText, ''],
+        ['remaining', `${s.remaining ?? 0}d`, palette.faceText, `of ${s.estimate ?? 0}d`],
+      ];
+      const tw = (w - 2 * P - gap * (tiles.length - 1)) / tiles.length;
+      tiles.forEach(([label, value, color, sub], i) => drawStat(g, P + i * (tw + gap), tileY, tw, tileH, label, value, { color, sub }));
+      // --- ring + column bars
+      const secY = tileY + tileH + 16;
+      const r = Math.min(h * 0.16, 44);
+      const cx = P + r, cy = secY + r + 8;
+      g.lineWidth = r * 0.22; g.lineCap = 'round';
+      g.strokeStyle = palette.faceLine; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+      g.strokeStyle = palette.faceGood; g.beginPath(); g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (s.doneRatio || 0)); g.stroke();
+      tabular(g); drawText(g, `${Math.round((s.doneRatio || 0) * 100)}%`, cx - r, cy - r, 2 * r, 2 * r, { size: r * 0.55, weight: 600 });
+      const bx = cx + r + 24, bw = w - bx - P, bh = 2 * r + 16;
+      drawCaps(g, 'columns', bx, secY + 6);
       const cols = s.columns; const maxC = Math.max(1, ...cols.map((c) => c.count));
       const cw = bw / cols.length;
+      const barTop = secY + 20, barBottom = secY + bh - 16;
       cols.forEach((c, i) => {
-        const x = bx + i * cw + 6, barW = Math.max(6, cw - 12);
-        const hh = Math.max(4, (bh - 26) * c.count / maxC);
-        g.fillStyle = c.overWip ? '#ff4d5e' : i === cols.length - 1 ? '#2dd4bf' : palette.faceAccent;
-        roundRect(g, x, pad + bh - 26 - hh, barW, hh, 5); g.fill();
-        g.fillStyle = palette.faceText; g.font = font(15, 700, true); g.textAlign = 'center'; g.textBaseline = 'alphabetic';
-        g.fillText(String(c.count), x + barW / 2, pad + bh - 30 - hh);
-        g.fillStyle = palette.faceDim; g.font = font(12, 500);
-        let t = c.title; while (t.length > 2 && g.measureText(t).width > barW + 6) t = t.slice(0, -1);
-        g.fillText(t === c.title ? t : t + '…', x + barW / 2, pad + bh - 8);
+        const x = bx + i * cw + 4, barW = Math.max(6, cw - 8);
+        const hh = Math.max(4, (barBottom - barTop - 18) * c.count / maxC);
+        g.fillStyle = c.overWip ? palette.faceBad : i === cols.length - 1 ? palette.faceGood : palette.faceAccent;
+        roundRect(g, x, barBottom - hh, barW, hh, 4); g.fill();
+        tabular(g); g.fillStyle = palette.faceText; g.font = font(13, 600); g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+        g.fillText(String(c.count), x + barW / 2, barBottom - hh - 5);
+        g.fillStyle = palette.faceDim; g.font = font(11, 500);
+        g.fillText(fitLine(g, c.title, barW + 4), x + barW / 2, barBottom + 14);
       });
-      // --- right bottom: burndown line (and, with people connected, a load bar per person beside it)
-      const ly = pad + bh + 10, lh = h - ly - pad - 26;
-      const pw = people.length ? Math.min(bw * 0.46, 250) : 0;
-      const lw = bw - pw - (pw ? 10 : 0);
-      g.fillStyle = palette.faceCard; roundRect(g, bx, ly, lw, lh, 8); g.fill();
+      // --- lower: burndown · people · checklists
+      const ly = secY + bh + 18, lh = h - ly - P;
+      if (lh < 40) return;
+      const people = Array.isArray(inputs.people) ? inputs.people.filter((p) => p && p.name) : [];
+      const lists = instance._checklists || [];
+      const side = people.length || lists.length ? Math.min(bw * 0.5, 250) : 0;
+      const lw = w - 2 * P - side - (side ? 12 : 0);
+      drawTile(g, P, ly, lw, lh);
+      drawCaps(g, 'burndown', P + 12, ly + 16);
       const series = Array.isArray(s.burndown) ? s.burndown : [];
       if (series.length >= 2) {
         const maxR = Math.max(1, ...series.map((p) => p.total || p.remaining || 0));
-        g.strokeStyle = palette.faceAccent; g.lineWidth = 3; g.lineJoin = 'round'; g.beginPath();
-        series.forEach((p, i) => { const x = bx + 10 + (lw - 20) * (i / (series.length - 1)); const y = ly + lh - 8 - (lh - 16) * ((p.remaining || 0) / maxR); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+        const x0 = P + 12, x1 = P + lw - 12, y0 = ly + 30, y1 = ly + lh - 12;
+        g.strokeStyle = palette.faceLine; g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y1); g.lineTo(x1, y1); g.stroke();
+        g.strokeStyle = palette.faceDim; g.setLineDash([3, 5]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); g.setLineDash([]);
+        g.strokeStyle = palette.faceAccent; g.lineWidth = 2.5; g.lineJoin = 'round'; g.lineCap = 'round'; g.beginPath();
+        series.forEach((p, i) => { const x = x0 + (x1 - x0) * (i / (series.length - 1)); const y = y1 - (y1 - y0) * ((p.remaining || 0) / maxR); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
         g.stroke();
-        g.strokeStyle = 'rgba(128,140,160,0.4)'; g.setLineDash([4, 4]); g.lineWidth = 1.5; g.beginPath(); g.moveTo(bx + 10, ly + 8); g.lineTo(bx + lw - 10, ly + lh - 8); g.stroke(); g.setLineDash([]);
-      } else drawText(g, 'burndown: move cards to record points', bx, ly, lw, lh, { size: 13, color: palette.faceDim });
-      g.fillStyle = palette.faceDim; g.font = font(12, 600); g.textAlign = 'left'; g.textBaseline = 'top';
-      g.fillText(`BURNDOWN · ${s.remaining ?? 0} of ${s.estimate ?? 0} d remaining`, bx + 8, ly + 5);
-      if (pw) {
-        const px = bx + lw + 10;
-        g.fillStyle = palette.faceCard; roundRect(g, px, ly, pw, lh, 8); g.fill();
-        g.fillStyle = palette.faceDim; g.font = font(12, 600); g.fillText(`PEOPLE · ${people.length}`, px + 8, ly + 5);
-        const rowH = Math.min(30, (lh - 24) / Math.max(1, people.length));
-        people.forEach((p, i) => {
-          const y = ly + 22 + i * rowH;
-          const cap = Math.max(1, +p.capacity || 1), load = +p.load || 0;
-          g.fillStyle = palette.faceText; g.font = font(Math.min(14, rowH * 0.5), 600); g.textAlign = 'left'; g.textBaseline = 'middle';
-          let name = String(p.name); while (name.length > 3 && g.measureText(name).width > pw * 0.42) name = name.slice(0, -1);
-          g.fillText(name === p.name ? name : name + '…', px + 8, y + rowH / 2);
-          const barX = px + 8 + pw * 0.44, barW = pw - 16 - pw * 0.44 - 34;
-          g.fillStyle = 'rgba(128,140,160,0.3)'; roundRect(g, barX, y + rowH / 2 - 4, barW, 8, 4); g.fill();
-          g.fillStyle = load > cap ? '#ff4d5e' : p.colour || palette.faceAccent; roundRect(g, barX, y + rowH / 2 - 4, barW * Math.min(1, load / cap), 8, 4); g.fill();
-          g.fillStyle = load > cap ? '#ff4d5e' : palette.faceDim; g.font = font(11, 600, true); g.textAlign = 'right'; g.fillText(`${load}/${cap}`, px + pw - 8, y + rowH / 2);
-        });
+      } else drawText(g, 'move cards to record points', P, ly + 20, lw, lh - 20, { size: 13, color: palette.faceDim });
+      if (side) {
+        const px = P + lw + 12;
+        drawTile(g, px, ly, side, lh);
+        let y = ly + 16;
+        const rowH = 22;
+        if (people.length) {
+          drawCaps(g, `people · ${people.length}`, px + 12, y); y += 14;
+          for (const p of people) {
+            if (y + rowH > ly + lh - 4) break;
+            const cap = Math.max(1, +p.capacity || 1), load = +p.load || 0;
+            g.fillStyle = palette.faceText; g.font = font(13, 500); g.textAlign = 'left'; g.textBaseline = 'middle';
+            g.fillText(fitLine(g, String(p.name), side * 0.4), px + 12, y + rowH / 2);
+            const barX = px + 12 + side * 0.42, barW = side - 24 - side * 0.42 - 36;
+            drawBar(g, barX, y + rowH / 2 - 3, barW, 6, load / cap, { fill: load > cap ? palette.faceBad : p.colour || palette.faceAccent });
+            tabular(g); g.fillStyle = load > cap ? palette.faceBad : palette.faceDim; g.font = font(11, 600); g.textAlign = 'right'; g.fillText(`${load}/${cap}`, px + side - 12, y + rowH / 2);
+            y += rowH;
+          }
+        }
+        if (lists.length && y + 30 < ly + lh) {
+          if (people.length) { drawDivider(g, px + 12, y + 4, side - 24); y += 12; }
+          drawCaps(g, `checklists · ${lists.length}`, px + 12, y); y += 14;
+          for (const c of lists) {
+            if (y + rowH > ly + lh - 4) break;
+            const v = typeof c.value === 'number' ? c.value : 0;
+            g.fillStyle = palette.faceText; g.font = font(13, 500); g.textAlign = 'left'; g.textBaseline = 'middle';
+            g.fillText(fitLine(g, c.title, side * 0.4), px + 12, y + rowH / 2);
+            const barX = px + 12 + side * 0.42, barW = side - 24 - side * 0.42 - 36;
+            drawBar(g, barX, y + rowH / 2 - 3, barW, 6, v, { fill: v >= 1 ? palette.faceGood : palette.faceAccent });
+            tabular(g); g.fillStyle = palette.faceDim; g.font = font(11, 600); g.textAlign = 'right'; g.fillText(`${Math.round(v * 100)}%`, px + side - 12, y + rowH / 2);
+            y += rowH;
+          }
+        }
       }
-      // --- bottom strip: overdue · blocked · next milestone
-      const sy = h - pad - 18;
-      g.textBaseline = 'middle'; g.textAlign = 'left';
-      g.fillStyle = s.overdue ? '#ff4d5e' : palette.faceDim; g.font = font(17, 700);
-      g.fillText(`${s.overdue} overdue`, pad, sy);
-      g.fillStyle = palette.faceDim; g.font = font(15, 500);
-      g.fillText(`${s.blocked || 0} blocked`, pad + 120, sy);
-      const m = inputs.milestone;
-      const mt = m && m.date ? `next: ${m.title} · ${fmtDate(m.date)}${Number.isFinite(daysUntil(m.date)) ? ` (${daysUntil(m.date)} d)` : ''}` : params.caption || '';
-      g.textAlign = 'right'; g.fillStyle = m?.reached ? '#2dd4bf' : palette.faceText; g.font = font(15, 600);
-      g.fillText(mt, w - pad, sy);
     },
   },
 });

@@ -6,8 +6,8 @@
 // its board. `tasks` is an optional explicit feed (a board's `tasks` output) for the same list.
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
-import { palette } from '../../theme.js';
-import { clear, drawText, roundRect, font } from '../../faces.js';
+import { palette, typography } from '../../theme.js';
+import { clear, drawText, roundRect, font, PAD, drawAvatar, drawBar, drawCaps, drawDivider, fitLine, tabular } from '../../faces.js';
 import { initials, fmtDate, PRIORITY_COLOURS, daysUntil } from '../../pm/model.js';
 import { personTasks, groupByColumn } from '../../pm/relations.js';
 import { buildPersonPanel } from '../../pm/panel-pm.js';
@@ -53,50 +53,52 @@ export default registry.register({
       clear(g, w, h);
       const rows = instance._tasks || [];
       const open = rows.filter((r) => !r.done);
-      // header: avatar, name, role, load bar
-      const r = 34;
-      g.fillStyle = params.colour || '#5aa9ff'; g.beginPath(); g.arc(16 + r, 16 + r, r, 0, Math.PI * 2); g.fill();
-      drawText(g, initials(params.name), 16, 16, 2 * r, 2 * r, { size: r * 0.9, weight: 700, color: '#fff' });
-      const x = 32 + 2 * r;
-      drawText(g, params.name || '—', x, 12, w - x - 150, 34, { size: 30, weight: 700, align: 'left' });
-      drawText(g, params.role || '', x, 46, w - x - 150, 22, { size: 17, color: palette.faceDim, align: 'left' });
+      const P = PAD;
+      // header: avatar · name / role · load
+      const r = 30;
+      drawAvatar(g, initials(params.name), P + r, P + r, r, params.colour || palette.faceAccent);
+      const x = P + 2 * r + 16;
+      g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+      g.fillStyle = palette.faceText; g.font = font(typography.scale.title, 600);
+      g.fillText(fitLine(g, params.name || '—', w - x - P - 150), x, P + 28);
+      g.fillStyle = palette.faceDim; g.font = font(typography.scale.subtitle, 500);
+      g.fillText(fitLine(g, params.role || '', w - x - P - 150), x, P + 52);
       const load = outputs.load ?? open.length, cap = Math.max(1, params.capacity);
-      const bw = 130, bx = w - bw - 14, by = 44, bh = 10;
-      g.fillStyle = palette.faceCard; roundRect(g, bx, by, bw, bh, 5); g.fill();
-      g.fillStyle = load > cap ? '#ff4d5e' : params.colour || '#5aa9ff'; roundRect(g, bx, by, bw * Math.min(1, load / cap), bh, 5); g.fill();
-      g.fillStyle = load > cap ? '#ff4d5e' : palette.faceDim; g.font = font(15, 600, true); g.textAlign = 'right'; g.textBaseline = 'alphabetic';
-      g.fillText(`${load} / ${cap} open`, w - 14, by - 8);
-      g.fillStyle = palette.faceDim; g.font = font(12, 500); g.fillText(rows.length ? `${rows.length} task${rows.length === 1 ? '' : 's'} on ${new Set(rows.map((t) => t.board)).size} board${new Set(rows.map((t) => t.board)).size === 1 ? '' : 's'}` : 'no board yet', w - 14, by + 26);
+      const bw = 132, bx = w - bw - P, by = P + 22;
+      tabular(g); g.font = font(14, 600); g.textAlign = 'right'; g.fillStyle = load > cap ? palette.faceBad : palette.faceText;
+      g.fillText(`${load} / ${cap} open`, w - P, P + 12);
+      drawBar(g, bx, by, bw, 6, load / cap, { fill: load > cap ? palette.faceBad : params.colour || palette.faceAccent });
+      const boards = new Set(rows.map((t) => t.board)).size;
+      g.fillStyle = palette.faceDim; g.font = font(12, 500);
+      g.fillText(rows.length ? `${rows.length} task${rows.length === 1 ? '' : 's'} · ${boards} board${boards === 1 ? '' : 's'}` : 'no board yet', w - P, by + 26);
       // task list grouped by column
-      let y = 16 + 2 * r + 16;
-      g.strokeStyle = palette.faceGrid; g.lineWidth = 2; g.beginPath(); g.moveTo(14, y - 8); g.lineTo(w - 14, y - 8); g.stroke();
+      let y = P + 2 * r + 20;
+      drawDivider(g, P, y - 8, w - 2 * P);
       if (!rows.length) {
-        drawText(g, 'Plug me into a board\'s people slot\nto see my tasks here', 14, y, w - 28, h - y - 12, { size: 20, color: palette.faceDim, lineHeight: 1.35 });
+        drawText(g, 'Drop me on a board (or plug me into its people slot) to see my tasks here', P, y, w - 2 * P, h - y - P, { size: 18, color: palette.faceDim, lineHeight: 1.4 });
         return;
       }
-      const ROW = 26, HEAD = 22;
+      const ROW = 27, HEAD = 26;
       const groups = groupByColumn(rows);
-      const total = groups.reduce((a, gr) => a + HEAD + gr.rows.length * ROW, 0);
-      const avail = h - y - 10;
-      let left = Math.floor(avail / ROW) + groups.length;   // rough budget of rows we can draw
+      const total = rows.length;
+      let drawn = 0;
       outer: for (const gr of groups) {
-        if (y + HEAD > h - 12) break;
-        g.fillStyle = palette.faceDim; g.font = font(12, 700); g.textAlign = 'left'; g.textBaseline = 'middle';
-        g.fillText(gr.column.toUpperCase(), 14, y + HEAD / 2);
-        g.fillText(String(gr.rows.length), w - 14 - g.measureText(String(gr.rows.length)).width, y + HEAD / 2);
+        if (y + HEAD > h - P) break;
+        const cw = drawCaps(g, gr.column, P, y + HEAD / 2);
+        tabular(g); g.font = font(12, 500); g.fillStyle = palette.faceDim; g.textAlign = 'left'; g.textBaseline = 'middle';
+        g.fillText(`· ${gr.rows.length}`, P + cw + 8, y + HEAD / 2);
         y += HEAD;
         for (const t of gr.rows) {
-          if (y + ROW > h - 8) { g.fillStyle = palette.faceDim; g.font = font(13, 500); g.fillText(`+ ${total - (y - (16 + 2 * r + 16))} more…`, 14, y + 4); break outer; }
-          g.fillStyle = PRIORITY_COLOURS[t.card.priority] || PRIORITY_COLOURS.medium; roundRect(g, 16, y + 8, 8, 10, 2); g.fill();
+          if (y + ROW > h - 6) { g.fillStyle = palette.faceDim; g.font = font(13, 500); g.textAlign = 'left'; g.fillText(`+ ${total - drawn} more…`, P + 14, y + 6); break outer; }
+          g.fillStyle = PRIORITY_COLOURS[t.card.priority] || PRIORITY_COLOURS.medium; roundRect(g, P, y + 8, 3, ROW - 16, 1.5); g.fill();
           const dueText = t.card.due ? (t.overdue ? `! ${fmtDate(t.card.due)}` : t.done ? 'done' : daysUntil(t.card.due) === 0 ? 'today' : fmtDate(t.card.due)) : t.done ? 'done' : '';
-          g.font = font(13, t.overdue ? 700 : 500); const dw = dueText ? g.measureText(dueText).width : 0;
-          g.fillStyle = t.overdue ? '#ff4d5e' : palette.faceDim; g.textAlign = 'right'; g.fillText(dueText, w - 14, y + ROW / 2);
-          g.textAlign = 'left'; g.fillStyle = t.done ? palette.faceDim : palette.faceText; g.font = font(16, t.done ? 500 : 600);
-          const maxW = w - 30 - 14 - dw - 12;
-          let s = t.card.title; while (s.length > 1 && g.measureText(s).width > maxW) s = s.slice(0, -1);
-          g.fillText(s === t.card.title ? s : s + '…', 32, y + ROW / 2);
-          if (t.done) { g.strokeStyle = palette.faceDim; g.lineWidth = 1.5; g.beginPath(); g.moveTo(32, y + ROW / 2); g.lineTo(32 + g.measureText(s).width, y + ROW / 2); g.stroke(); }
-          y += ROW; left -= 1;
+          g.font = font(13, t.overdue ? 600 : 500); const dw = dueText ? g.measureText(dueText).width : 0;
+          g.fillStyle = t.overdue ? palette.faceBad : palette.faceDim; g.textAlign = 'right'; g.fillText(dueText, w - P, y + ROW / 2);
+          g.textAlign = 'left'; g.fillStyle = t.done ? palette.faceDim : palette.faceText; g.font = font(typography.scale.label, t.done ? 400 : 500);
+          const s2 = fitLine(g, t.card.title, w - 2 * P - 14 - dw - 12);
+          g.fillText(s2, P + 14, y + ROW / 2);
+          if (t.done) { g.strokeStyle = palette.faceDim; g.lineWidth = 1.2; g.beginPath(); g.moveTo(P + 14, y + ROW / 2); g.lineTo(P + 14 + g.measureText(s2).width, y + ROW / 2); g.stroke(); }
+          y += ROW; drawn += 1;
         }
       }
     },

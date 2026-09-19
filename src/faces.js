@@ -1,6 +1,15 @@
 // faces.js — 2D drawing helpers for the live faces on node bodies and device screens.
 // Faces are canvases mapped onto a plane; components draw into them through def.face.render.
 // Everything here reads the live palette so faces follow the theme.
+//
+// Design language (flat, modern UI on a 120 px/unit canvas, 8-pt grid):
+//   • `clear` paints a rounded face card with transparent corners so it sits on the bevelled body;
+//   • type: Inter stack, title 600 / label 500 / value 400 (`typography.scale`), small caps with
+//     letter-spacing (`drawCaps`), tabular numbers (`tabular`);
+//   • structure through spacing and 1 px dividers (`drawDivider`), not boxes; inner sections are
+//     slightly lighter tiles (`drawTile`); chips for tags / assignees (`drawChip`); thin rounded
+//     bars for progress (`drawBar`); muted timestamps; colour reserved for meaning
+//     (`palette.faceAccent / faceGood / faceWarn / faceBad`, type hues) and neutral greys otherwise.
 import { palette, typography } from './theme.js';
 import { kindOf, formatValue, formatNumber } from './core/types.js';
 
@@ -29,14 +38,81 @@ export function bitmapFor(src) {
 export function bitmapFailed(src) { return !!bitmaps.get(src)?.failed; }
 
 /* ---------------- primitives ---------------- */
+export const PAD = 24;           // face margin in canvas px (≈ 8 % of a small face)
+export const GRID = 8;           // spacing unit
+export const RADIUS = 18;        // face card corner radius
 export function roundRect(g, x, y, w, h, r) {
   r = Math.min(r, w / 2, h / 2);
   g.beginPath();
   g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
   g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
 }
-export function clear(g, w, h, bg = palette.faceBg) { g.clearRect(0, 0, w, h); g.fillStyle = bg; g.fillRect(0, 0, w, h); }
+/** Wipe the canvas and paint the rounded face card (transparent outside the corners). `radius: 0` = full bleed. */
+export function clear(g, w, h, bg = palette.faceBg, radius = RADIUS) {
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = bg;
+  if (!radius || bg === 'rgba(0,0,0,0)') { if (bg !== 'rgba(0,0,0,0)') g.fillRect(0, 0, w, h); return; }
+  roundRect(g, 0, 0, w, h, radius); g.fill();
+}
 export const font = (px, weight = 500, mono = false) => `${weight} ${px}px ${mono ? typography.mono : typography.family}`;
+/** Tabular figures (numbers align in columns). */
+export const tabular = (g) => { try { g.fontVariantNumeric = 'tabular-nums'; } catch (_) { /* older canvases */ } };
+
+/** Small caps label with letter-spacing (section headers, column titles). Returns the drawn width. */
+export function drawCaps(g, text, x, y, { size = typography.scale.caps, color = palette.faceDim, weight = typography.weight.caps, align = 'left', spacing = typography.capsSpacing } = {}) {
+  const t = String(text).toUpperCase();
+  g.font = font(size, weight); g.fillStyle = color; g.textBaseline = 'middle';
+  try { g.letterSpacing = `${spacing}em`; } catch (_) { /* unsupported */ }
+  const w = g.measureText(t).width + (g.letterSpacing === undefined ? spacing * size * (t.length - 1) : 0);
+  g.textAlign = 'left';
+  const x0 = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
+  if (g.letterSpacing !== undefined) g.fillText(t, x0, y);
+  else { let cx = x0; for (const ch of t) { g.fillText(ch, cx, y); cx += g.measureText(ch).width + spacing * size; } }
+  try { g.letterSpacing = '0px'; } catch (_) { /* ignore */ }
+  return w;
+}
+/** 1 px divider. */
+export function drawDivider(g, x, y, w, color = palette.faceLine) { g.fillStyle = color; g.fillRect(x, Math.round(y), w, 1); }
+/** A slightly lighter inner tile (section background). */
+export function drawTile(g, x, y, w, h, { bg = palette.faceCard, r = 12 } = {}) { g.fillStyle = bg; roundRect(g, x, y, w, h, r); g.fill(); }
+/** A chip (tag, assignee, status). Returns its width. */
+export function drawChip(g, text, x, y, { h = 22, bg = palette.faceCard, color = palette.faceText, size = 12, weight = 600, padX = 9, dot = null } = {}) {
+  g.font = font(size, weight);
+  const tw = g.measureText(text).width;
+  const w = tw + padX * 2 + (dot ? h * 0.55 : 0);
+  g.fillStyle = bg; roundRect(g, x, y, w, h, h / 2); g.fill();
+  let tx = x + padX;
+  if (dot) { g.fillStyle = dot; g.beginPath(); g.arc(x + padX + h * 0.18, y + h / 2, h * 0.18, 0, Math.PI * 2); g.fill(); tx += h * 0.55; }
+  g.fillStyle = color; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(text, tx, y + h / 2 + 0.5);
+  return w;
+}
+/** Thin rounded progress bar. */
+export function drawBar(g, x, y, w, h, ratio, { track = palette.faceLine, fill = palette.faceAccent } = {}) {
+  g.fillStyle = track; roundRect(g, x, y, w, h, h / 2); g.fill();
+  const k = Math.max(0, Math.min(1, ratio || 0));
+  if (k > 0) { g.fillStyle = fill; roundRect(g, x, y, Math.max(h, w * k), h, h / 2); g.fill(); }
+}
+/** Round avatar with initials. */
+export function drawAvatar(g, text, cx, cy, r, colour) {
+  g.fillStyle = colour || palette.faceAccent; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#fff'; g.font = font(r * 0.85, 700); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, cx, cy + r * 0.05);
+}
+/** Single line, ellipsised to `maxW`. Returns the text drawn. */
+export function fitLine(g, text, maxW) {
+  let s = String(text ?? '');
+  if (g.measureText(s).width <= maxW) return s;
+  while (s.length > 1 && g.measureText(s + '…').width > maxW) s = s.slice(0, -1);
+  return s + '…';
+}
+/** Stat tile: small caps label over a big tabular value. */
+export function drawStat(g, x, y, w, h, label, value, { color = palette.faceText, bg = palette.faceCard, sub = '' } = {}) {
+  drawTile(g, x, y, w, h, { bg });
+  drawCaps(g, label, x + 12, y + 15, { size: 11 });
+  const vs = Math.min(26, h * 0.36);
+  g.font = font(vs, 600); tabular(g); g.fillStyle = color; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  g.fillText(String(value), x + 12, y + 26 + vs);
+  if (sub) { g.font = font(11, 500); g.fillStyle = palette.faceDim; g.textBaseline = 'alphabetic'; g.fillText(sub, x + 12 + g.measureText(String(value)).width * (vs / 11) * 0 + Math.ceil(vs * 0.05) + (() => { g.font = font(vs, 600); const wv = g.measureText(String(value)).width; g.font = font(11, 500); return wv + 8; })(), y + 26 + vs); }
+}
 
 export function wrapLines(g, text, maxW, maxLines = 40) {
   const out = [];
@@ -53,7 +129,7 @@ export function wrapLines(g, text, maxW, maxLines = 40) {
 }
 
 /** Text fitted in a box: wraps, shrinks the font until it fits, draws centered or left-aligned. */
-export function drawText(g, text, x, y, w, h, { size = 40, min = 14, color = palette.faceText, weight = 500, mono = false, align = 'center', valign = 'middle', lineHeight = 1.25 } = {}) {
+export function drawText(g, text, x, y, w, h, { size = 40, min = 14, color = palette.faceText, weight = 500, mono = false, align = 'center', valign = 'middle', lineHeight = 1.3 } = {}) {
   let px = size, lines;
   for (;;) {
     g.font = font(px, weight, mono);
@@ -84,7 +160,7 @@ export function jsonLines(v, max = 14) {
 const MEDIA_HUES = { image: '#5aa9ff', video: '#ff8a5b', audio: '#2dd4bf' };
 
 /** Draw one media item (image thumbnail, video poster + progress, audio waveform) into a box. */
-export function drawMedia(g, media, x, y, w, h, { fit = 'cover', time = 0, radius = 10, caption = true } = {}) {
+export function drawMedia(g, media, x, y, w, h, { fit = 'cover', time = 0, radius = 12, caption = true } = {}) {
   g.save();
   roundRect(g, x, y, w, h, radius); g.clip();
   g.fillStyle = palette.faceCard; g.fillRect(x, y, w, h);
@@ -106,7 +182,7 @@ export function drawMedia(g, media, x, y, w, h, { fit = 'cover', time = 0, radiu
     }
   } else {
     // loading / missing: dashed frame + label
-    g.strokeStyle = palette.faceDim; g.setLineDash([6, 6]); g.lineWidth = 2;
+    g.strokeStyle = palette.faceDim; g.setLineDash([6, 6]); g.lineWidth = 1.5;
     roundRect(g, x + 6, y + 6, w - 12, h - 12, radius); g.stroke(); g.setLineDash([]);
     drawText(g, media ? (bitmapFailed(media.src) ? 'failed to load' : 'loading…') : 'no media', x, y, w, h, { size: 16, color: palette.faceDim });
   }
@@ -117,8 +193,8 @@ export function drawMedia(g, media, x, y, w, h, { fit = 'cover', time = 0, radiu
     g.fillStyle = '#fff'; g.beginPath();
     g.moveTo(x + w / 2 - r * 0.32, y + h / 2 - r * 0.45); g.lineTo(x + w / 2 + r * 0.5, y + h / 2); g.lineTo(x + w / 2 - r * 0.32, y + h / 2 + r * 0.45); g.closePath(); g.fill();
     const dur = media.duration || 12, p = (time % dur) / dur;
-    g.fillStyle = 'rgba(255,255,255,0.25)'; g.fillRect(x, y + h - 5, w, 5);
-    g.fillStyle = MEDIA_HUES.video; g.fillRect(x, y + h - 5, w * p, 5);
+    g.fillStyle = 'rgba(255,255,255,0.25)'; g.fillRect(x, y + h - 4, w, 4);
+    g.fillStyle = MEDIA_HUES.video; g.fillRect(x, y + h - 4, w * p, 4);
   }
   if (caption && media && media.title && h >= 60) {
     const ch = Math.min(26, h * 0.26);
@@ -126,7 +202,7 @@ export function drawMedia(g, media, x, y, w, h, { fit = 'cover', time = 0, radiu
     grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, 'rgba(0,0,0,0.6)');
     g.fillStyle = grad; g.fillRect(x, y + h - ch * 1.6, w, ch * 1.6);
     g.fillStyle = '#fff'; g.font = font(Math.max(11, ch * 0.5), 600); g.textAlign = 'left'; g.textBaseline = 'alphabetic';
-    g.fillText(media.title, x + 8, y + h - 8 - (media.kind === 'video' ? 5 : 0));
+    g.fillText(media.title, x + 10, y + h - 9 - (media.kind === 'video' ? 4 : 0));
   }
   g.restore();
 }
@@ -146,7 +222,7 @@ export function drawMediaGrid(g, items, x, y, w, h, { cols = 0, gap = 8, fit = '
   const cw = (w - gap * (c - 1)) / c, ch = (h - gap * (rows - 1)) / rows;
   items.forEach((m, i) => {
     const cx = x + (i % c) * (cw + gap), cy = y + Math.floor(i / c) * (ch + gap);
-    drawMedia(g, m, cx, cy, cw, ch, { fit, time, radius: 8, caption: ch > 70 });
+    drawMedia(g, m, cx, cy, cw, ch, { fit, time, radius: 10, caption: ch > 70 });
   });
   return { cols: c, rows };
 }
@@ -155,54 +231,57 @@ export function drawMediaGrid(g, items, x, y, w, h, { cols = 0, gap = 8, fit = '
 /** Render any value into a box: text, numbers, booleans, JSON, media, media lists and grid layouts. */
 export function drawValue(g, value, x, y, w, h, { time = 0, placeholder = 'no input' } = {}) {
   switch (kindOf(value)) {
-    case 'none': drawText(g, placeholder, x, y, w, h, { size: 18, color: palette.faceDim }); break;
-    case 'number': drawText(g, formatNumber(value), x, y, w, h, { size: Math.min(h * 0.6, 96), weight: 600, mono: true }); break;
+    case 'none': drawText(g, placeholder, x, y, w, h, { size: 17, color: palette.faceDim, weight: 500 }); break;
+    case 'number': tabular(g); drawText(g, formatNumber(value), x, y, w, h, { size: Math.min(h * 0.55, 88), weight: 600 }); break;
     case 'boolean': {
-      const pw = Math.min(w * 0.6, 220), ph = Math.min(h * 0.5, 64);
-      g.fillStyle = value ? '#2dd4bf' : palette.faceCard;
-      roundRect(g, x + (w - pw) / 2, y + (h - ph) / 2, pw, ph, ph / 2); g.fill();
-      drawText(g, value ? 'true' : 'false', x, y, w, h, { size: ph * 0.5, weight: 700, color: value ? '#06231f' : palette.faceDim });
+      const ph = Math.min(h * 0.4, 44), text = value ? 'true' : 'false';
+      g.font = font(ph * 0.45, 600); const pw = g.measureText(text).width + ph * 1.4;
+      const px = x + (w - pw) / 2, py = y + (h - ph) / 2;
+      g.fillStyle = value ? palette.faceGood : palette.faceCard; roundRect(g, px, py, pw, ph, ph / 2); g.fill();
+      g.fillStyle = value ? '#0b2a22' : palette.faceDim; g.beginPath(); g.arc(px + ph * 0.5, py + ph / 2, ph * 0.16, 0, Math.PI * 2); g.fill();
+      g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(text, px + ph * 0.85, py + ph / 2 + 1);
       break;
     }
-    case 'text': drawText(g, value, x, y, w, h, { size: Math.min(h * 0.4, 56), weight: 600 }); break;
-    case 'event': drawText(g, `↯ event #${value.n}${value.payload !== undefined ? '\n' + formatValue(value.payload, 40) : ''}`, x, y, w, h, { size: 26, weight: 600 }); break;
+    case 'text': drawText(g, value, x, y, w, h, { size: Math.min(h * 0.36, 44), weight: 500 }); break;
+    case 'event': drawText(g, `↯ event #${value.n}${value.payload !== undefined ? '\n' + formatValue(value.payload, 40) : ''}`, x, y, w, h, { size: 24, weight: 600 }); break;
     case 'media': drawMedia(g, value, x, y, w, h, { fit: 'contain', time }); break;
     case 'media-list': drawMediaGrid(g, value, x, y, w, h, { time }); break;
     case 'media-layout': drawMediaGrid(g, value.items, x, y, w, h, { cols: value.cols, gap: value.gap ?? 8, fit: value.fit || 'cover', time }); break;
     default: {
       const lines = jsonLines(value, Math.floor(h / 20));
-      const px = Math.max(11, Math.min(18, Math.floor(h / (lines.length * 1.3))));
+      const px = Math.max(11, Math.min(17, Math.floor(h / (lines.length * 1.35))));
       g.font = font(px, 500, true); g.fillStyle = palette.faceText; g.textAlign = 'left'; g.textBaseline = 'top';
-      lines.forEach((l, i) => g.fillText(l.length > 60 ? l.slice(0, 59) + '…' : l, x + 8, y + 6 + i * px * 1.3));
+      lines.forEach((l, i) => g.fillText(l.length > 60 ? l.slice(0, 59) + '…' : l, x + 8, y + 6 + i * px * 1.35));
     }
   }
 }
 
 /* ---------------- device screens ---------------- */
-/** Device screen: lit-glass gradient, status bar with title + state dot, value below. */
+/** Device screen: flat lit glass, a slim status bar with title + state dot, the value below. */
 export function drawScreen(g, w, h, { title = '', value, accent = palette.faceAccent, time = 0, hint = '' } = {}) {
   g.clearRect(0, 0, w, h);
-  const grad = g.createLinearGradient(0, 0, w, h);
+  const grad = g.createLinearGradient(0, 0, 0, h);
   grad.addColorStop(0, palette.screenTop); grad.addColorStop(1, palette.screenBottom);
   g.fillStyle = grad; g.fillRect(0, 0, w, h);
-  const bar = Math.max(22, Math.round(h * 0.11));
-  g.fillStyle = 'rgba(255,255,255,0.10)'; g.fillRect(0, 0, w, bar);
-  g.fillStyle = accent; g.beginPath(); g.arc(bar * 0.6, bar / 2, bar * 0.18, 0, Math.PI * 2); g.fill();
-  g.fillStyle = 'rgba(255,255,255,0.85)'; g.font = font(bar * 0.5, 600); g.textBaseline = 'middle'; g.textAlign = 'left';
-  g.fillText(title, bar * 1.1, bar / 2 + 1);
-  if (hint) { g.textAlign = 'right'; g.fillStyle = 'rgba(255,255,255,0.5)'; g.font = font(bar * 0.42, 500); g.fillText(hint, w - bar * 0.5, bar / 2 + 1); }
-  const pad = Math.round(w * 0.05);
+  const bar = Math.max(24, Math.round(h * 0.1));
+  g.fillStyle = 'rgba(255,255,255,0.07)'; g.fillRect(0, 0, w, bar);
+  g.fillStyle = 'rgba(255,255,255,0.1)'; g.fillRect(0, bar, w, 1);
+  g.fillStyle = accent; g.beginPath(); g.arc(bar * 0.6, bar / 2, bar * 0.14, 0, Math.PI * 2); g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.9)'; g.font = font(bar * 0.46, 600); g.textBaseline = 'middle'; g.textAlign = 'left';
+  g.fillText(title, bar * 1.05, bar / 2 + 1);
+  if (hint) { g.textAlign = 'right'; g.fillStyle = 'rgba(255,255,255,0.5)'; g.font = font(bar * 0.4, 500); g.fillText(hint, w - bar * 0.5, bar / 2 + 1); }
+  const pad = Math.round(Math.min(w, h) * 0.06);
   if (value === undefined) {
-    // abstract UI bars while nothing is connected
-    g.fillStyle = 'rgba(255,255,255,0.10)';
-    for (let i = 0; i < 4; i++) g.fillRect(pad, bar + pad + i * (h - bar) * 0.18, (w - 2 * pad) * (0.7 - i * 0.14), (h - bar) * 0.07);
+    // abstract UI lines while nothing is connected
+    g.fillStyle = 'rgba(255,255,255,0.09)';
+    for (let i = 0; i < 4; i++) { roundRect(g, pad, bar + pad + i * (h - bar) * 0.17, (w - 2 * pad) * (0.7 - i * 0.14), (h - bar) * 0.06, 6); g.fill(); }
     return;
   }
   g.save();
   // text on screens is always light: force the light-on-dark palette locally
-  const saved = { t: palette.faceText, d: palette.faceDim, c: palette.faceCard };
-  palette.faceText = '#eaf1ff'; palette.faceDim = 'rgba(234,241,255,0.55)'; palette.faceCard = 'rgba(255,255,255,0.08)';
+  const saved = { t: palette.faceText, d: palette.faceDim, c: palette.faceCard, l: palette.faceLine };
+  palette.faceText = '#eaf1ff'; palette.faceDim = 'rgba(234,241,255,0.6)'; palette.faceCard = 'rgba(255,255,255,0.09)'; palette.faceLine = 'rgba(255,255,255,0.12)';
   drawValue(g, value, pad, bar + pad, w - 2 * pad, h - bar - 2 * pad, { time });
-  palette.faceText = saved.t; palette.faceDim = saved.d; palette.faceCard = saved.c;
+  palette.faceText = saved.t; palette.faceDim = saved.d; palette.faceCard = saved.c; palette.faceLine = saved.l;
   g.restore();
 }

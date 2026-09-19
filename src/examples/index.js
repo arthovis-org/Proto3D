@@ -1,11 +1,11 @@
 // examples/index.js — example scenes and the small builder API they use.
-import project from './project.js';
+import showcase from './showcase.js';
 import { createInstance } from '../instance.js';
 import { Group3D } from '../groups.js';
 
-export const examples = [project];
+export const examples = [showcase];
 /** The scene shown on first load and whenever the autosave is empty. */
-export const DEFAULT_EXAMPLE = project.id;
+export const DEFAULT_EXAMPLE = showcase.id;
 export const exampleById = (id) => examples.find((e) => e.id === id) || null;
 
 /** Build an example into a (cleared) world. Returns the example's named nodes. */
