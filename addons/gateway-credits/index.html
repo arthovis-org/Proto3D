@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Proto3D · Gateway Credits</title>
+  <link rel="stylesheet" href="../../styles.css" />
+  <link rel="stylesheet" href="./gateway.css" />
+  <script>
+    // Apply the persisted theme before the first paint so the overlay never flashes.
+    try { var t = localStorage.getItem('proto3d.theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <!-- Import map: identical to the core page (import maps are per document, survey §7) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="viewport"></div>
+
+  <nav id="left-bar" aria-label="Add components"></nav>
+
+  <div id="title" class="overlay">
+    <h1>Proto3D</h1>
+    <p>Gateway Credits add-on · live dataflow</p>
+  </div>
+
+  <div id="toolbar" class="overlay">
+    <span class="menu-anchor">
+      <button id="btn-file" type="button" title="File — New, Save JSON, Load JSON, Examples">File</button>
+      <div id="file-menu" class="menu" hidden></div>
+    </span>
+    <span class="group">
+      <button id="btn-undo" type="button" title="Undo (Ctrl+Z)">↶</button>
+      <button id="btn-redo" type="button" title="Redo (Ctrl+Shift+Z or Ctrl+Y)">↷</button>
+    </span>
+    <button id="btn-flow" type="button" title="Toggle the flow animation on cables">Flow</button>
+    <button id="btn-gizmo" type="button" title="Move / rotate / scale gizmo (G) · W move, E rotate, R scale">Gizmo</button>
+    <button id="btn-theme" type="button" title="Switch light / dark theme (T)">Light theme</button>
+    <button id="btn-frame" type="button" title="Frame everything (Home) · F frames the selection">Frame all</button>
+    <span class="menu-anchor">
+      <button id="btn-help" type="button" title="Help, legend and the guided tour (H)">?</button>
+      <div id="help-menu" class="menu" hidden>
+        <button type="button" data-action="help">Help &amp; legend <kbd>H</kbd></button>
+        <button type="button" data-action="tour">Show tour</button>
+      </div>
+    </span>
+    <button id="btn-panel" type="button" title="Show / hide the properties panel (N)">Properties</button>
+  </div>
+
+  <aside id="panel">
+    <div id="panel-body"></div>
+    <details id="help">
+      <summary>Help &amp; legend</summary>
+      <section>
+        <h2>Ports</h2>
+        <ul id="legend-shapes"></ul>
+        <ul id="legend-types"></ul>
+        <h2>Project types</h2>
+        <ul id="legend-subtypes"></ul>
+      </section>
+      <section>
+        <h2>Wiring rules</h2>
+        <ol id="wiring-rules" class="rules">
+          <li>Cables run <b>left → right</b>: from an <b>OUT</b> pin on the right of a node to an <b>IN</b> pin on the left of another.</li>
+          <li><b>Colours must match</b>: same type fits, <i>any</i> fits everything, <i>number</i> fits <i>text</i>; a <i>person</i> cable only fits a <i>person</i> slot. Lit pins fit; dimmed ones do not.</li>
+          <li><b>Drag</b> a pin to connect (either direction), <b>grab a cable end</b> to move it, drop it on empty space to <b>disconnect</b>.</li>
+        </ol>
+      </section>
+      <section>
+        <h2>Navigate</h2>
+        <dl>
+          <dt>Orbit</dt><dd>left-drag on empty space</dd>
+          <dt>Pan</dt><dd>right-drag</dd>
+          <dt>Zoom</dt><dd>wheel / pinch</dd>
+          <dt>Focus</dt><dd><kbd>F</kbd> selection · double-click a block · <kbd>Home</kbd> frame all</dd>
+        </dl>
+      </section>
+      <section>
+        <h2>Build</h2>
+        <dl>
+          <dt>Add</dt><dd>left toolbar: click a category, click a component (or drag it into the scene) · <kbd>Shift</kbd>+<kbd>A</kbd> search</dd>
+          <dt>Move</dt><dd>drag a block (<kbd>Shift</kbd> for height) · gizmo <kbd>G</kbd>, <kbd>W</kbd>/<kbd>E</kbd>/<kbd>R</kbd></dd>
+          <dt>Connect</dt><dd>drag from a pin to a lit pin on another node · hover a pin to see what fits</dd>
+          <dt>Re-route</dt><dd>grab a cable end and drop it on another pin · empty space disconnects · <kbd>Esc</kbd> puts it back</dd>
+          <dt>Select</dt><dd>click · <kbd>Shift</kbd>+click adds · <kbd>Shift</kbd>+drag on the floor: marquee · <kbd>Ctrl</kbd>+<kbd>A</kbd> all</dd>
+          <dt>Edit</dt><dd><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate · <kbd>Del</kbd> delete · <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> undo / redo</dd>
+          <dt>Group</dt><dd><kbd>Ctrl</kbd>+<kbd>G</kbd> group · <kbd>C</kbd> collapse / expand · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> ungroup</dd>
+          <dt>Interact</dt><dd>click / drag cards on a Kanban board · drop a card on a Person (or a Person on a card) to assign it · press Run on a Flow Terminal · click a checklist row · click a device screen or an Input face to fire events</dd>
+          <dt>View</dt><dd><kbd>T</kbd> theme · <kbd>N</kbd> panel · <kbd>H</kbd> help · <kbd>Esc</kbd> cancel</dd>
+        </dl>
+      </section>
+      <section>
+        <h2>States</h2>
+        <ul id="legend-states"></ul>
+      </section>
+    </details>
+  </aside>
+
+  <div id="selection" class="overlay">Nothing selected</div>
+  <div id="conn-label" hidden></div>
+  <div id="marquee" hidden></div>
+
+  <!-- Guidance layers (presentation only, see ui/overlays.js) -->
+  <div id="tip" hidden></div>
+  <div id="drag-label" hidden></div>
+  <div id="cable-labels" hidden></div>
+  <div id="toast" hidden></div>
+  <div id="empty-hint" hidden>
+    <span class="arrow">←</span>
+    <div><b>Add a component from the left to start</b><small>Pick a category, then click a component or drag it into the room · <kbd>Shift</kbd>+<kbd>A</kbd> searches</small></div>
+  </div>
+
+  <!-- First-run tour (ui/tour.js) -->
+  <div id="tour" hidden>
+    <div class="tour-spot" hidden></div>
+    <div class="tour-card" role="dialog" aria-live="polite">
+      <div class="tour-step">1 / 5</div>
+      <h3 class="tour-title"></h3>
+      <p class="tour-text"></p>
+      <div class="tour-btns">
+        <button type="button" class="tour-skip" title="Close the tour (Esc)">Skip</button>
+        <button type="button" class="tour-next">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add-on badge: presentation only, links back to the untouched core app -->
+  <a id="gw-badge" href="../../" title="Open the core Proto3D app (unchanged by this add-on)"><i></i><b>Gateway Credits add-on</b> · simulated providers · core untouched · <span class="link">← core app</span></a>
+
+  <!-- boot.js registers the gw- components, then imports ../../src/main.js (the real app), then installs the plugin -->
+  <script type="module" src="./boot.js"></script>
+</body>
+</html>
