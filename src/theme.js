@@ -7,7 +7,7 @@ import * as THREE from 'three';
 /** Scale: 1 scene unit = 10 cm. A small node is 36 cm wide. */
 export const UNIT_CM = 10;
 
-const CATEGORY_KEYS = ['media', 'text', 'data', 'input', 'logic', 'action', 'transform', 'layout', 'output', 'devices'];
+const CATEGORY_KEYS = ['media', 'text', 'data', 'input', 'logic', 'action', 'transform', 'layout', 'output', 'project', 'devices'];
 const TYPE_KEYS = ['number', 'text', 'boolean', 'data', 'media', 'event', 'any'];
 
 export const palettes = {
@@ -42,11 +42,13 @@ export const palettes = {
     faceDim: '#8b9ab5',
     faceAccent: '#5aa9ff',
     faceGrid: 'rgba(255,255,255,0.08)',
+    // project-management surfaces: translucent column panels, card slabs, sticky default
+    pmColumn: 0x1a2a3d, pmColumnAlpha: 0.55, pmCard: 0x243149, pmCardText: '#eaf1ff', pmCardDim: '#8b9ab5', pmRail: 0x2a3a52, pmToday: 0x5aa9ff,
     screenTop: '#1c3a78',
     screenBottom: '#0f1f45',
     categories: {
       media: 0x6b3a2c, text: 0x6b5726, data: 0x4a3f7e, input: 0x2b6b4a, logic: 0x2a587e,
-      action: 0x7a3a5a, transform: 0x3a5382, layout: 0x465a6e, output: 0x5a4b91, devices: 0x2a3446,
+      action: 0x7a3a5a, transform: 0x3a5382, layout: 0x465a6e, output: 0x5a4b91, project: 0x2a6a63, devices: 0x2a3446,
     },
     portTypes: { number: 0x2dd4bf, text: 0xf5b942, boolean: 0xe25aa6, data: 0x8b7cf6, media: 0xff8a5b, event: 0xf4f6fa, any: 0x9aa7bb },
     states: { hover: 0x9fb3d1, selected: 0x5aa9ff, active: 0x5aa9ff, error: 0xff4d5e, disabled: 0x3a4252 },
@@ -81,11 +83,12 @@ export const palettes = {
     faceDim: '#5d6b82',
     faceAccent: '#2b7fe0',
     faceGrid: 'rgba(0,0,0,0.08)',
+    pmColumn: 0xd8dfea, pmColumnAlpha: 0.7, pmCard: 0xffffff, pmCardText: '#1b2230', pmCardDim: '#5d6b82', pmRail: 0xb9c3d3, pmToday: 0x2b7fe0,
     screenTop: '#26468a',
     screenBottom: '#172a55',
     categories: {
       media: 0xe0a68f, text: 0xdcc088, data: 0xb7a8ea, input: 0x8fd1ad, logic: 0x93bde0,
-      action: 0xdd9dbb, transform: 0x9cb3e4, layout: 0xa9bccb, output: 0xb7a8ea, devices: 0xb0bbcd,
+      action: 0xdd9dbb, transform: 0x9cb3e4, layout: 0xa9bccb, output: 0xb7a8ea, project: 0x8fd0c8, devices: 0xb0bbcd,
     },
     portTypes: { number: 0x0f9f8f, text: 0xc07f0c, boolean: 0xc2388a, data: 0x6a5cd6, media: 0xd9633a, event: 0x48556b, any: 0x6b7788 },
     states: { hover: 0x6f8bb0, selected: 0x2b7fe0, active: 0x2b7fe0, error: 0xd93848, disabled: 0xa2abb8 },
@@ -137,7 +140,7 @@ initTheme();
 
 export const sizes = {
   /** Node footprints by size class: width and face height (0 = no face area). */
-  nodeSize: { S: { width: 3.6, faceH: 0 }, M: { width: 4.6, faceH: 2.2 }, L: { width: 6.4, faceH: 3.4 } },
+  nodeSize: { S: { width: 3.6, faceH: 0 }, M: { width: 4.6, faceH: 2.2 }, L: { width: 6.4, faceH: 3.4 }, XL: { width: 9, faceH: 4.6 } },
   node: { depth: 0.5, radius: 0.14, header: 0.66, footer: 0.42, portTop: 0.3, faceGap: 0.18, minHeight: 2.0 },
   port: { radius: 0.11, stem: 0.22, gap: 0.55, hoverScale: 1.5 },
   connection: {

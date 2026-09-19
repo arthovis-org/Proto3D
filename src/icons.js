@@ -23,6 +23,18 @@ export const icons = {
   tablet: svg('<rect x="4" y="3" width="16" height="18" rx="2.2"/><path d="M11 18h2"/>'),
   laptop: svg('<rect x="4" y="5" width="16" height="11" rx="1.6"/><path d="M2 19h20"/>'),
   monitor: svg('<rect x="3" y="4" width="18" height="12" rx="1.8"/><path d="M12 16v4M8 20h8"/>'),
+  // project management
+  project: svg('<rect x="3" y="3" width="5" height="18" rx="1.2"/><rect x="9.5" y="3" width="5" height="12" rx="1.2"/><rect x="16" y="3" width="5" height="8" rx="1.2"/>'),
+  'kanban-board': svg('<rect x="3" y="3" width="5" height="18" rx="1.2"/><rect x="9.5" y="3" width="5" height="12" rx="1.2"/><rect x="16" y="3" width="5" height="8" rx="1.2"/>'),
+  'flow-step': svg('<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M0.5 12h2.5M21 12h2.5"/>'),
+  'flow-decision': svg('<path d="M12 3l9 9-9 9-9-9z"/>'),
+  'flow-terminal': svg('<rect x="2" y="7" width="20" height="10" rx="5"/><path d="M10 9.5v5l4-2.5z" fill="currentColor"/>'),
+  timeline: svg('<path d="M3 20h18M3 20V4"/><rect x="5" y="6" width="7" height="2.6" rx="1.3"/><rect x="9" y="10.5" width="9" height="2.6" rx="1.3"/><rect x="7" y="15" width="6" height="2.6" rx="1.3"/>'),
+  person: svg('<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1-4 4-6 7.5-6s6.5 2 7.5 6"/>'),
+  milestone: svg('<path d="M6 21V3"/><path d="M6 4h12l-3 4 3 4H6"/>'),
+  'sticky-note': svg('<path d="M4 4h16v10l-6 6H4z"/><path d="M14 20v-6h6"/>'),
+  checklist: svg('<path d="M4 6l1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M11 6h9M11 12h9M11 18h9"/>'),
+  'project-dashboard': svg('<rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/>'),
   // UI
   search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),

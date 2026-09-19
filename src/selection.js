@@ -21,6 +21,8 @@ export class Selection {
   remove(item) { if (!this.has(item)) return; item.setSelected(false); this.items = this.items.filter((i) => i !== item); this._notify(); }
   toggle(item) { this.has(item) ? this.remove(item) : this.add(item); }
   clear() { this.set([]); }
+  /** Re-notify listeners (a sub-selection inside a block changed: the panel rebuilds). */
+  refresh() { this._notify(); }
   /** Drop items that left the world. */
   prune(world) {
     const alive = this.items.filter((i) => (i.kind === 'connection' ? world.connections.includes(i) : i.kind === 'group' ? world.groups.includes(i) : world.nodes.includes(i)));

@@ -11,6 +11,11 @@ the toolbar / panel / engine / serialization, six port types with strict compati
 event bus, groups that collapse into a single slab, level-of-detail for large systems, undo /
 redo, save / load and a left **Add** toolbar with search and drag-and-drop.
 
+On top of it sits a **project-management layer** (see [Project management](#project-management)):
+a standing 3D Kanban board with draggable cards, executable flowchart shapes, a 3D Gantt
+timeline, people, milestones, sticky notes, checklists and a dashboard — all ordinary
+components in the same registry, so a board's `done` event can run a flow that writes to a laptop.
+
 ![Demo 2: the phone's taps are counted, compared, branched and turned into the laptop's screen text; the Add toolbar shows the Logic category](docs/shots/demo-phone-laptop.png)
 
 ![Demo 1: five Media nodes feed a Media Grid whose live face shows the gallery; the same layout is mirrored on a monitor](docs/shots/demo-media-grid.png)
@@ -43,6 +48,9 @@ the workspace restores your autosaved world from `localStorage` (**File → New*
    `items` input and switch its `mode` between row / column / grid / circle: the nodes move.
 4. Select two nodes, `Ctrl+G`, then `C`: the group folds into one slab whose ports are the
    connections that cross its boundary. `F` frames the selection, `Home` frames everything.
+5. **File → Examples → Project management**. Drag a card on the board into **Done**: a token
+   runs through the flow below and the laptop reads *Urgent item shipped: …* (for urgent cards)
+   or the Log records it. Click a card to edit it in the panel; the timeline and dashboard follow.
 
 ## Architecture
 
@@ -53,12 +61,14 @@ src/
   block3d.js    Block3D: what nodes and devices share (ports, rim, shadow, face, LOD, serialize)
   node3d.js     Node3D: rounded slab with header, port rows, optional face, footer
   device3d.js   Device3D: phone / tablet / laptop / monitor whose screen is the component face
+  shape3d.js    Shape3D: custom 3D bodies from def.body3d (boards, flow shapes, timeline…) + child pickables
+  pm/           model.js (cards, columns, boards, stats, burndown — no Three.js), board-ops.js, panel-pm.js
   faces.js      2D drawing helpers for faces and screens (text, JSON, media, grids)
   connection3d.js + routing.js   typed tubes with flow sheen; lanes, lift, obstacle avoidance
   groups.js     Group3D: frame on the floor, collapse to a slab with proxy ports
   selection.js, lod.js, serialize.js, interaction.js, gizmo.js, panel.js, workspace.js, theme.js
   ui/           toolbar-left.js (Add toolbar), file-menu.js
-  examples/     the two demos + the tiny builder API
+  examples/     the three demos + the tiny builder API
 ```
 
 The full design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The short version:
@@ -140,6 +150,51 @@ Devices are components with the same anatomy as nodes; they stand on the floor a
 scale. Video playback is not attempted: a video asset is an animated poster frame with a play
 glyph and a progress bar (honest fallback for headless and offline use).
 
+## Project management
+
+The **Project** category (toolbar glyph: three kanban columns; header tint teal-green) adds ten
+components. They are registry components like every other — typed ports, params, `evaluate`, a
+live face or a custom 3D body — so they compose with Logic, Actions, Text and Devices. The data
+model (`src/pm/model.js`) is plain JSON stored in params / state and saved in the world file:
+`Card { id, title, description, assignee, due, priority, tags, checklist, estimate, createdAt,
+movedAt, blockedBy }`, `Column { id, title, wipLimit, cards }`, `Board { columns }`, plus people
+and milestones.
+
+| id | Size · body | Inputs | Outputs | Params | What it does |
+| --- | --- | --- | --- | --- | --- |
+| `kanban-board` | XL · standing board | `add card` event · `move` event | `card moved` event · `done` event · `stats` data · `cards` data | board (columns, WIP limits, cards — edited in the panel) · dependency arcs | Columns are translucent panels on a plinth; cards are slabs stacked top-down (title, priority stripe, assignee initials, due date — red when overdue, tag pills, checklist progress, lock glyph when blocked). Click a card to edit it, **drag it** to another column / position (ghost + drop slot), click the **+** tile to add one. `done` pulses when a card enters the last column. Far away, columns collapse to count bars. |
+| `flow-terminal` | M · stadium | `trigger` event | `out` event | mode start / end · payload | Start: the **Run** disc or a trigger emits a token. End: counts arrivals. |
+| `flow-step` | M · rounded box | `in` event | `out` event | duration ms | Passes the token on (after an optional delay, with a progress bar); flashes as it goes. |
+| `flow-decision` | M · diamond | `in` event · `condition` boolean | `yes` event · `no` event | payload field · op · value | Routes the token by the boolean input or by a test on the payload (`priority = urgent`). |
+| `timeline` | XL · standing Gantt | `tasks` data\* · `milestones` data\* | `overdue` data · `next milestone` data | own tasks (panel) · units per day · colour by assignee / priority / column | Day ticks and week labels on a rail, weekend shading, one bar per task with its title, a translucent **today** plane, milestone flags. Feed it a board's `cards`; own tasks get a right-hand handle you drag to change the due date. |
+| `person` | S · face | `cards` data | `person` data · `load` number | name · role · colour · capacity | Initials avatar, name, role and a load bar; `load` = open cards assigned to this name. Every Person in the world appears in the card editor's assignee list. |
+| `milestone` | S · flag on a pole | — | `reached` event · `milestone` data | date | Flag colour follows the state (ahead / soon / reached); `reached` fires once when today ≥ date. |
+| `sticky-note` | S · tilted square | `text` text | `text` text | text · colour · tilt | Paper-coloured slab with the note on its face. |
+| `checklist` | M · face | — | `progress` number · `done` event | items (panel) | Rows with checkboxes; click a row on the 3D face to toggle it (undoable); `done` fires when all are complete. |
+| `project-dashboard` | L · face | `stats` data · `tasks` data · `milestone` data | `progress` number | caption | Done-ratio ring, per-column bars (red over WIP), overdue / blocked counts, burndown line from the board's history, next milestone. |
+
+**Dependencies** are a card field, not a component: `blockedBy: [cardId]` draws a dashed red
+arc from the blocker to the blocked card and a lock glyph on it; the card editor's *Blocked by*
+section is a multi-select over the other cards.
+
+**How boards connect to flows and timelines.** `stats` and `cards` are ordinary `data`
+outputs re-evaluated every frame, so a Timeline (`tasks`), a Dashboard (`stats`), a Person
+(`cards`) or any Data / Display node reads them live. `card moved` and `done` are `event`
+outputs whose payload is the card, so a Flow Terminal → Flow Step → Flow Decision chain can
+inspect `priority`, and an Action with an empty payload passes the triggering card on to a Text
+template (`Urgent item shipped: {value.title}`) and a device screen. The reverse works too:
+an Input button wired into `add card` creates cards, and a pulse with `{ cardId, column }` on
+`move` moves them. Tokens are visible: every event link grows a bright bead that runs from source
+to destination when a pulse passes, and flow shapes flash as the token goes through.
+
+**Card controls.** Click a card → the panel shows the card editor (title, description,
+assignee select + free text, due date, priority, tags, estimate, column, checklist add / toggle /
+remove, blocked-by, delete). Drag a card → move it (ghost lifts off the board, a slot shows where
+it lands; drop on another column or between cards). Click a column panel → column editor (title,
+WIP limit); the Board section adds, reorders and removes columns and lists every card. Click the
+**+** tile → new card in that column. Every edit is one undoable command (`Ctrl+Z`); engine-driven
+edits (event inputs) are not undoable but still autosave.
+
 ## Workspace controls
 
 | Action | Input |
@@ -152,7 +207,7 @@ glyph and a progress bar (honest fallback for headless and offline use).
 | Select | click · `Shift`+click adds / toggles · `Shift`+drag on the floor draws a marquee · `Ctrl+A` all · click empty space clears |
 | Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the top bar has ↶ ↷ |
 | Group | `Ctrl+G` group the selection · `C` collapse / expand · `Ctrl+Shift+G` ungroup · drag the frame to move the whole group · rename in the panel |
-| Interact | click a device screen (`tap`), an Input face (button, toggle, slider) or press the configured key |
+| Interact | click a device screen (`tap`), an Input face (button, toggle, slider) or press the configured key · click / drag a **card** on a Kanban board, click the **+** tile, click a checklist row, press the **Run** disc on a Flow Terminal, drag a Timeline bar's end handle |
 | File | **File** → New · Save JSON · Load JSON · Examples; autosave to `localStorage` on every change |
 | View | `T` theme · `N` properties panel · `H` help & legend · `Esc` cancel |
 
@@ -187,12 +242,16 @@ colour reserved for meaning (types and states), the gradient floor with a 1 / 5-
 exponential fog (which now thins as the camera pulls back), hemisphere + key + fill light with
 fake contact shadows, `1 unit = 10 cm`, a 10 × 6.5 unit layout pitch, flow left to right.
 
-**Node anatomy**: header band tinted by category (ten low-saturation hues) with the title,
+**Node anatomy**: header band tinted by category (eleven low-saturation hues) with the title,
 port rows just under the header (in left, out right, multi ports slightly larger), an optional
 live canvas **face** below the rows (size M or L), a dim footer with the output value, a rim for
 hover / selected / error, and a contact shadow. Devices share ports, rim, shadow and states;
 their screen is the face. **Groups** are translucent rounded frames on the floor with a title
 at the front edge; collapsed, they become a slab with a header band and proxy ports.
+**Custom bodies** (`Shape3D`) keep the header tint, the port anatomy, the rim and the contact
+shadow: the Kanban board and the Timeline are header-banded standing panels on a plinth / rail,
+the flow shapes are extruded flowchart outlines tinted with the Project colour, the milestone is
+a flag, the sticky note a tilted paper square. Cards and bars are canvas faces on small slabs.
 
 **States** are derived by the engine, never hard-coded: `disabled` (unchecked *enabled*) >
 `error` (invalid link attached or `evaluate` threw) > `active` (an output changed / pulsed within
@@ -211,6 +270,10 @@ media coral `#ff8a5b` / `#d9633a`, event white `#f4f6fa` / slate `#48556b`, any 
 
 1. **More primitives, same schema**: HTTP / WebSocket sources, a Script component with a sandboxed
    `evaluate`, a Table view, a Chart output, a Store (persisted key-value) component.
+   *Project management next*: swimlanes (rows by assignee) on the board, card attachments
+   (Media into a card), a Sprint component that scopes a board by date range, drag a Timeline bar
+   bodily to shift both dates, a Calendar body, import / export of cards as CSV / JSON, and
+   collaborative editing once a transport exists.
 2. **Real devices**: pair a phone through WebRTC so `tap` / `tilt` / `battery` are real; device
    presence drives the states.
 3. **Routing at scale**: bundle parallel links, avoid group frames, and an auto-layout command

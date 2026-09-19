@@ -2,11 +2,11 @@
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { clear, drawText } from '../../faces.js';
-import { asText } from '../util.js';
+import { asText, pick } from '../util.js';
 
 export default registry.register({
   id: 'text', category: 'text', label: 'Text', icon: icons.text, size: 'M',
-  description: 'Text source, upper/lower case, {value} template or join',
+  description: 'Text source, upper/lower case, {value} / {value.path} template or join',
   inputs: [{ key: 'in', label: 'in', type: 'any', multi: true, optional: true }],
   outputs: [{ key: 'text', label: 'text', type: 'text' }],
   params: [
@@ -27,6 +27,7 @@ export default registry.register({
         const src = upstream('in')[0];
         text = String(params.template)
           .replace(/\{value\}/g, first !== undefined ? asText(first) : '')
+          .replace(/\{value\.([\w.[\]]+)\}/g, (_, path) => asText(pick(first, path)))
           .replace(/\{name\}/g, src ? src.node.title : '')
           .replace(/\{(\d+)\}/g, (_, i) => asText(vals[+i]));
         break;

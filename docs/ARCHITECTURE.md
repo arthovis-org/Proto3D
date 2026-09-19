@@ -11,21 +11,23 @@ document describes the layers, the invariants each one keeps and how they fit to
 │ UI          ui/toolbar-left.js  panel.js  ui/file-menu.js  interaction.js   │
 │             selection.js  gizmo.js  lod.js  main.js (boot + render loop)     │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Scene       block3d.js → node3d.js / device3d.js   connection3d.js          │
+│ Scene       block3d.js → node3d.js / device3d.js / shape3d.js   connection3d.js │
 │             routing.js  groups.js  faces.js  workspace.js  theme.js         │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Core        core/component.js  core/registry.js  core/types.js              │
 │             core/engine.js  core/world.js  core/commands.js  core/history.js │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Components  components/<category>/<name>.js  (17 core definitions)          │
+│ Components  components/<category>/<name>.js  (17 core + 10 project)        │
+│ PM layer    pm/model.js (data, no Three.js)  pm/board-ops.js  pm/panel-pm.js │
 │ Examples    examples/*.js                                                    │
 │ Persistence serialize.js                                                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Dependencies point downward: components import only `core/*`, `icons.js`, `faces.js` and
-`theme.js`; the scene layer imports core; the UI imports everything. `main.js` is the only
-module that knows about all of them.
+`theme.js` (project components also `pm/*` and `shape3d.js`'s canvas-plane helper); the scene
+layer imports core; the UI imports everything. `main.js` is the only module that knows about all
+of them.
 
 ## 2. Component schema (`core/component.js`)
 
@@ -34,18 +36,21 @@ A component type is one plain object, validated and frozen by `defineComponent`:
 | Field | Meaning |
 | --- | --- |
 | `id` | `^[a-z][a-z0-9-]*$`, unique in the registry |
-| `category` | one of the registry categories (`media, text, data, input, logic, action, transform, layout, output, devices`) or a new one (it appears automatically) |
+| `category` | one of the registry categories (`media, text, data, input, logic, action, transform, layout, output, project, devices`) or a new one (it appears automatically) |
 | `label`, `description`, `icon` | toolbar / panel presentation; `icon` is an inline SVG string |
 | `inputs` | `[{ key, label, type, multi?, optional? }]` — `multi` inputs receive arrays |
 | `outputs` | `[{ key, label, type }]` |
 | `params` | `[{ key, label, type: number\|text\|boolean\|select\|json\|color, default, min?, max?, step?, options? }]` |
-| `size` | `S \| M \| L` node footprint (`M`/`L` have a face area); ignored by devices |
+| `size` | `S \| M \| L \| XL` node footprint (`M`/`L` have a face area); ignored by devices and by `body3d` bodies, which size themselves |
 | `device` | `phone \| tablet \| laptop \| monitor` — render as a device (screen = face) |
 | `evaluate(ctx)` | returns `{ [outputKey]: value }`; omit a key (or return `undefined`) to output nothing |
 | `onEvent(ctx, inputKey, pulse)` | optional hook called before `evaluate` for each pulsed event input |
 | `footer(ctx)` | optional footer text (nodes) |
 | `face` | `{ render(g, w, h, ctx), onPointer?(ctx, ev), live?, fps? }` — a live 2D canvas on the body |
 | `onCreate(instance)`, `onDestroy(instance)` | lifecycle (listeners, timers) |
+| `body3d` | custom 3D body (see §8b): `dims, build, ports?, refresh?, update?, applyLOD?, onSubPointer?, onSubHover?, titleAt?` — the instance becomes a `Shape3D` |
+| `panel(api, instance)` | optional component-owned editor section in the properties panel (see §8b) |
+| params `hidden: true` | a param the generic panel skips because `panel()` edits it (a board, a task list) |
 
 `ctx` = `{ inputs, params, state, time, dt, emit(key, payload), touch(key), instance, upstream(key), downstream(key), engine }`.
 `state` is the per-instance persistent object (serialized when JSON-safe). `touch(key)` marks an
@@ -148,6 +153,53 @@ the same key (typing in a param field, dragging a transform field). `undo / redo
 - **`faces.js`**: `drawValue` dispatches on `kindOf` (text, number, boolean pill, JSON, media,
   media list, media layout); `drawMedia` (image / video poster with progress / audio waveform);
   `drawMediaGrid` + `gridShape`; `drawScreen` for devices; bitmap cache with `onBitmapReady`.
+- **`Connection3D` token bursts**: an `event` link watches its source port's `lastPulseAt`; each
+  new pulse spawns a bead (white core + type-coloured halo) that runs the curve in 0.35–1.1 s.
+  Nothing else is needed for tokens to be visible on any event path, flowchart or not.
+
+## 8b. Custom 3D bodies and sub-selection (`shape3d.js`)
+
+A definition with `body3d` is instantiated as a **`Shape3D`** (`instance.js` picks
+`Device3D` / `Shape3D` / `Node3D`). `Shape3D` keeps everything from `Block3D` — uid, params,
+state, typed ports with labels, rim, contact shadow, face canvas, LOD blend, `serialize` — and
+hands geometry to the definition:
+
+| hook | called | purpose |
+| --- | --- | --- |
+| `dims(defOrNode)` | before build, and by the toolbar for the ghost footprint | `{ width, height, depth }`; may depend on params (a board grows with its columns) |
+| `build(node, h)` | once | static parts through helpers: `h.part(geo, mat, { theme })` (pickable body, recoloured on theme change), `h.label(text, opts, pos)`, `h.sub(mesh, { kind, id })`, `h.face(w, h, pos)` (the `def.face` canvas), `h.rim(geo)` |
+| `ports(node)` | once | `{ in: [[x, y, z]], out: [...] }` — same stem + sphere + label anatomy as nodes |
+| `refresh(node)` | whenever `faceDirty` is set: param / state change (any `setParam`, undo, redo, load), theme change, `setTitle` | rebuilds the **data-driven children** in `node.children3d` after `node.clearChildren()`: columns, cards, bars, ticks, arcs |
+| `update(node, time, dt)` | every frame | animation (flash, progress bar, ripple) |
+| `applyLOD(node, blend)` | every frame with the LOD blend | far look (the board hides cards and shows per-column count bars) |
+| `onSubPointer(node, ev)` / `onSubHover(node, sub)` | pointer on a child pickable | see below |
+
+**Child pickables (subs).** Any mesh registered with `h.sub` / `node.childSub` carries
+`userData.sub = { block, kind, id, ... }`. `Interaction.pick()` tests subs right after ports and
+before faces and bodies, so a card wins over the board behind it. A press on a sub is captured by
+the owning block (the board does not start moving): the block receives `down`, then `drag` while
+the pointer moves, then `drop` or `click` on release, or `cancel` on `Esc`. `ev` carries the
+pointer `ray` (the board intersects it with its own front plane and converts to local space),
+plus `history` and `selection` so the component can record an undoable command and set the
+sub-selection. Hover on a sub calls `setSubHover` (the board repaints the hovered card).
+
+**Sub-selection → panel.** `block.subSelection = { kind, id }` names the child the panel should
+edit; `Shape3D.selectSub(sub, selection)` sets it and calls `selection.refresh()` so the panel
+rebuilds with the block still selected. Clearing happens when the block is deselected
+(`setSelected(false)`) or when its body (not a sub) is pressed. The panel builds the generic
+sections (Transform, Component params, Ports) and then calls `def.panel(api, block)`; the
+component's builder reads `block.subSelection` and adds its own sections (card editor, column
+editor, board editor). `api` bundles the panel's DOM helpers (`section, row, text, area, date,
+num, select, check, buttons, action, readonly, h, live`) and undoable writes (`setParam(key,
+value, coalesceKey)`, `exec(cmd)`), plus `persons()` for assignee lists and `rebuild()`.
+
+**Data ownership.** Boards keep their whole model in `params.board` (hidden param): every
+change — a 3D drag, a panel field, an `add card` pulse — is one `setParam('board', next)` produced
+by the pure functions in `pm/model.js` and committed by `pm/board-ops.js` (`commitBoard`), which
+also pulses `card moved` / `done`. Undo therefore restores cards, columns and positions in one
+step, serialization needs nothing new, and `duplicate` clones a board with its cards. The
+burndown history is per-instance `state` (saved, not undoable). Timelines keep their own tasks in
+`params.tasks` the same way; fed tasks are read from `rt.inputs` and never written.
 
 ## 9. Interaction model (`interaction.js`, `selection.js`, `gizmo.js`, `lod.js`)
 
@@ -177,6 +229,8 @@ the camera. `AutoSave` debounces `world.onChange` into `localStorage["proto3d.wo
 
 - **A component**: one file under `src/components/<category>/`, `registry.register({...})`, import
   it in `components/index.js`. See the worked example in `README.md`.
+- **A custom 3D body**: add `body3d` to the definition (§8b); add `panel(api, block)` when it owns
+  data the generic param controls cannot edit, and mark those params `hidden`.
 - **A category**: add a row to `CATEGORIES` in `core/registry.js` (label, kind, description) and an
   icon in `icons.js`; the toolbar picks it up. Unknown categories still work (auto-labelled).
 - **A port type**: add it to `TYPES` / `typeInfo` in `core/types.js`, to `portTypes` in both

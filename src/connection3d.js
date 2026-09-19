@@ -48,6 +48,8 @@ const FRAG = /* glsl */`
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3();
 const ringGeo = new THREE.TorusGeometry(1, 0.22, 8, 24);
+const burstGeo = new THREE.SphereGeometry(1, 12, 10);
+const MAX_BURSTS = 6;
 
 export class Connection3D extends THREE.Group {
   /**
@@ -99,6 +101,9 @@ export class Connection3D extends THREE.Group {
     this.rings = [new THREE.Mesh(ringGeo, ringMat), new THREE.Mesh(ringGeo, ringMat)];
     this.rings.forEach((r) => { r.userData.connection = this; this.add(r); });
 
+    // token bursts: a bright bead runs the length of an event link whenever a pulse passes
+    this.bursts = [];
+    this._seenPulseAt = from.lastPulseAt ?? -1;
     this._p0 = new THREE.Vector3(); this._p3 = new THREE.Vector3();
     this._radius = 0;
     this._layoutVersion = -1;
@@ -200,6 +205,35 @@ export class Connection3D extends THREE.Group {
   update(dt) {
     if (flowEnabled) this.uniforms.travel.value += dt * this.velocity * flowSpeed;
     this.rebuild();
+    this._updateBursts(dt);
+  }
+  /** Spawn a bead when the source port pulsed since we last looked; advance the beads along the curve. */
+  _updateBursts(dt) {
+    if (this.type === 'event' && this.to && this.valid) {
+      const lp = this.from.lastPulseAt ?? -1;
+      if (lp > this._seenPulseAt) { this._seenPulseAt = lp; if (this.visible) this.burst(); }
+    }
+    if (!this.bursts.length || !this.curve) return;
+    const len = this.uniforms.tubeLen.value || 10;
+    const dur = THREE.MathUtils.clamp(len / 28, 0.35, 1.1);
+    for (const b of [...this.bursts]) {
+      b.k += dt / dur;
+      if (b.k >= 1) { this.remove(b.core, b.halo); b.core.material.dispose(); b.halo.material.dispose(); this.bursts.splice(this.bursts.indexOf(b), 1); continue; }
+      this.curve.getPoint(b.k, b.core.position); b.halo.position.copy(b.core.position);
+      const fade = b.k < 0.15 ? b.k / 0.15 : b.k > 0.8 ? (1 - b.k) / 0.2 : 1;
+      const r = this._radius * 3.2;
+      b.core.scale.setScalar(r); b.halo.scale.setScalar(r * 2.2 * (0.8 + 0.2 * Math.sin(b.k * 20)));
+      b.core.material.opacity = 0.95 * fade * (this.dimmed ? 0.3 : 1); b.halo.material.opacity = 0.28 * fade * (this.dimmed ? 0.3 : 1);
+    }
+  }
+  /** Visible token: white-hot core + type-coloured halo travelling from `from` to `to`. */
+  burst() {
+    if (this.bursts.length >= MAX_BURSTS) return;
+    const core = new THREE.Mesh(burstGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+    const halo = new THREE.Mesh(burstGeo, new THREE.MeshBasicMaterial({ color: this.color.clone().lerp(new THREE.Color(0xffffff), 0.3), transparent: true, opacity: 0, depthWrite: false }));
+    core.renderOrder = 3; halo.renderOrder = 3;
+    this.add(core, halo);
+    this.bursts.push({ k: 0, core, halo });
   }
 
   serialize() {
@@ -208,6 +242,7 @@ export class Connection3D extends THREE.Group {
 
   dispose() {
     this._offTheme?.();
+    this.bursts.forEach((b) => { b.core.material.dispose(); b.halo.material.dispose(); }); this.bursts = [];
     this.tube.geometry.dispose(); this.outline.geometry.dispose();
     this.material.dispose(); this.outline.material.dispose();
     this.rings[0].material.dispose();

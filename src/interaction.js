@@ -2,6 +2,8 @@
 //   hover: ports > faces > bodies > connections > group frames
 //   click: select (Shift adds / toggles) · click empty: clear · double-click: focus
 //   drag body: move every selected node (Shift: vertically) · drag from an out-port: connect
+//   sub pickables (cards, tiles, handles owned by a Shape3D body) are picked right after ports:
+//   the owning block gets down / drag / drop / click through body3d.onSubPointer
 //   Shift+drag on empty floor: marquee select · drag on a live face: the component handles it
 //   keys: Del, Esc, F focus, Home frame all, Ctrl+D duplicate, Ctrl+Z / Ctrl+Shift+Z undo / redo,
 //         Ctrl+G group, Ctrl+Shift+G ungroup, Ctrl+A select all
@@ -29,6 +31,8 @@ export class Interaction {
     this.marquee = null;     // { x0, y0, el }
     this.faceDrag = null;    // { block, mesh }
     this.pressFace = null;   // { block, u, v } for click detection
+    this.subDrag = null;     // { block, sub } while a child pickable is pressed
+    this.hoveredSub = null;
     this.downPos = new THREE.Vector2();
     this.shift = false;
     this.marqueeEl = document.getElementById('marquee');
@@ -59,14 +63,17 @@ export class Interaction {
     return out;
   }
   _faceMeshes() { return this._visibleNodes().filter((n) => n.face?.mesh).map((n) => n.face.mesh); }
-  _bodyMeshes() { return this._visibleNodes().flatMap((n) => (n.kind === 'node' ? [n.body, n.header] : n.meshes.filter((m) => m !== n.face?.mesh))); }
+  _subMeshes() { return this._visibleNodes().flatMap((n) => (n.subMeshes ? n.subMeshes() : [])); }
+  _bodyMeshes() { return this._visibleNodes().flatMap((n) => (n.meshes ? n.meshes.filter((m) => m !== n.face?.mesh) : [n.body, n.header])); }
   _tubeMeshes() { return this.world.connections.filter((c) => c.visible).map((c) => c.tube); }
   _groupMeshes() { return this.world.groups.flatMap((g) => (g.collapsed && g.slab ? [g.slab.body, g.slab.header] : [g.fill, g.edge])); }
 
-  /** { kind: 'port'|'face'|'block'|'connection'|'group', target, point, uv } or null. */
+  /** { kind: 'port'|'sub'|'face'|'block'|'connection'|'group', target, point, uv, sub } or null. */
   pick() {
     let hits = this.ray.intersectObjects(this._portMeshes(), false);
     if (hits.length) return { kind: 'port', target: hits[0].object.userData.port, point: hits[0].point };
+    hits = this.ray.intersectObjects(this._subMeshes(), false);
+    if (hits.length) { const sub = hits[0].object.userData.sub; return { kind: 'sub', target: sub.block, sub, point: hits[0].point, mesh: hits[0].object }; }
     hits = this.ray.intersectObjects(this._faceMeshes(), false);
     if (hits.length) return { kind: 'face', target: hits[0].object.userData.block, point: hits[0].point, uv: hits[0].uv, mesh: hits[0].object };
     hits = this.ray.intersectObjects(this._bodyMeshes(), false);
@@ -106,8 +113,15 @@ export class Interaction {
       item.setHover(true);
       if (item.kind === 'connection') { this.world.connections.forEach((c) => c.setDim(c !== item)); this.onHoverConnection(item); }
     }
-    this.renderer.domElement.style.cursor = item ? (item.mesh && item.dir ? 'crosshair' : 'pointer') : '';
+    this.renderer.domElement.style.cursor = item ? (item.mesh && item.dir ? 'crosshair' : 'pointer') : this.hoveredSub ? 'pointer' : '';
   }
+  _setHoverSub(sub) {
+    if (this.hoveredSub === sub) return;
+    if (this.hoveredSub) this.hoveredSub.block.setSubHover(null);
+    this.hoveredSub = sub;
+    if (sub) sub.block.setSubHover(sub);
+  }
+  _subEvent(type, extra = {}) { return { type, sub: this.subDrag?.sub, ray: this.ray.ray, history: this.history, selection: this.selection, shift: this.shift, ...extra }; }
 
   /* ---------- selection helpers ---------- */
   select(item, { toggle = false } = {}) {
@@ -129,6 +143,11 @@ export class Interaction {
     if (this.faceDrag) {
       const uv = this._faceUV(this.faceDrag.mesh);
       if (uv) this.faceDrag.block.onFacePointer({ type: 'drag', ...uv, button: 0 });
+      return;
+    }
+    if (this.subDrag) {
+      const moved = Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4;
+      if (moved) { this.subDrag.moved = true; this.subDrag.block.onSubPointer(this._subEvent('drag')); }
       return;
     }
     if (this.drag) {
@@ -159,9 +178,10 @@ export class Interaction {
       }
       return;
     }
-    if (this.gizmo && this.gizmo.hot) { this._setHover(null); return; }
+    if (this.gizmo && this.gizmo.hot) { this._setHover(null); this._setHoverSub(null); return; }
     const hit = this.pick();
-    this._setHover(hit ? hit.target : null);
+    this._setHoverSub(hit && hit.kind === 'sub' ? hit.sub : null);
+    this._setHover(hit && hit.kind !== 'sub' ? hit.target : null);
   }
 
   onDown(e) {
@@ -189,6 +209,15 @@ export class Interaction {
       this.controls.enabled = false;
       return;
     }
+    if (hit.kind === 'sub') {
+      // a child pickable: the owning block captures the press (cards drag inside their board)
+      const block = hit.target;
+      this.subDrag = { block, sub: hit.sub, moved: false };
+      this.controls.enabled = false;
+      if (!this.selection.has(block)) this.selection.set([block]);
+      block.onSubPointer(this._subEvent('down', { point: hit.point, mesh: hit.mesh }));
+      return;
+    }
     if (hit.kind === 'face') {
       const block = hit.target;
       const uv = { u: hit.uv.x, v: 1 - hit.uv.y };
@@ -212,6 +241,7 @@ export class Interaction {
     if (hit.kind === 'connection') this.select(hit.target, { toggle: e.shiftKey });
   }
   _beginBlockDrag(block, point, e) {
+    if (block.subSelection) { block.subSelection = null; block.faceDirty = true; if (this.selection.has(block)) this.selection.refresh(); }
     if (e.shiftKey) this.selection.toggle(block);
     else if (!this.selection.has(block)) this.selection.set([block]);
     if (!this.selection.has(block)) return;
@@ -237,6 +267,13 @@ export class Interaction {
     this.controls.enabled = true;
     const moved = Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4;
     if (this.marquee) { this._endMarquee(e); return; }
+    if (this.subDrag) {
+      const d = this.subDrag; this.subDrag = null;
+      this._setPointer(e);
+      d.block.onSubPointer({ type: d.moved && moved ? 'drop' : 'click', sub: d.sub, ray: this.ray.ray, history: this.history, selection: this.selection, shift: e.shiftKey });
+      this.selection.refresh();
+      return;
+    }
     if (this.faceDrag) {
       const uv = this._faceUV(this.faceDrag.mesh) || this.pressFace;
       this.faceDrag.block.onFacePointer({ type: 'up', u: uv.u, v: uv.v, button: 0 });
@@ -355,6 +392,7 @@ export class Interaction {
     if (this.connect) { this.world.scene.remove(this.connect.preview); this.connect.preview.dispose(); this.connect = null; }
     if (this.drag) { this.drag.nodes.forEach((n, i) => { n.dragging = false; n.position.fromArray(this.drag.before[i].p); }); this.drag = null; }
     if (this.marquee) { this.marquee = null; if (this.marqueeEl) this.marqueeEl.hidden = true; }
+    if (this.subDrag) { this.subDrag.block.onSubPointer(this._subEvent('cancel')); this.subDrag = null; }
     this.faceDrag = null; this.pressFace = null;
     this.controls.enabled = true;
   }

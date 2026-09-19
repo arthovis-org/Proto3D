@@ -19,6 +19,7 @@ import { Block3D } from './block3d.js';
 
 /** Footprint of a definition before it is instantiated (toolbar ghost, free-slot search). */
 export function nodeDimensions(def) {
+  if (def.body3d) { const d = def.body3d.dims(def); return { width: d.width, height: d.height, depth: d.depth, faceH: 0, rows: 0 }; }
   const n = sizes.node;
   const sz = sizes.nodeSize[def.size] || sizes.nodeSize.S;
   const rows = Math.max(def.inputs.length, def.outputs.length, 1);

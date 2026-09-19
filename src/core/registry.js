@@ -14,6 +14,7 @@ export const CATEGORIES = [
   { id: 'transform', label: 'Transform', kind: 'node',   description: 'Math and range processing' },
   { id: 'layout',    label: 'Layout',    kind: 'node',   description: 'Arrange other components in 3D' },
   { id: 'output',    label: 'Output',    kind: 'node',   description: 'Displays and logs' },
+  { id: 'project',   label: 'Project',   kind: 'node',   description: 'Kanban boards, flows, timelines, people, dashboards' },
   { id: 'devices',   label: 'Devices',   kind: 'device', description: 'Phone, tablet, laptop, monitor' },
 ];
 

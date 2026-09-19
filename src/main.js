@@ -30,6 +30,8 @@ const world = new World(ws.scene);
 const engine = new Engine(world);
 const history = new History();
 const selection = new Selection();
+world.history = history;      // components with 3D editing (cards, checklists) record undoable commands
+world.selection = selection;
 
 /* ---- Gizmo + interaction ---- */
 const gizmo = new Gizmo({ camera: ws.camera, renderer: ws.renderer, scene: ws.scene, controls: ws.controls, world, history, onModeChange: () => panel.refresh() });

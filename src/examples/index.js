@@ -1,10 +1,11 @@
 // examples/index.js — example scenes and the small builder API they use.
 import phoneToLaptop from './phone-to-laptop.js';
 import mediaGrid from './media-grid.js';
+import project from './project.js';
 import { createInstance } from '../instance.js';
 import { Group3D } from '../groups.js';
 
-export const examples = [phoneToLaptop, mediaGrid];
+export const examples = [phoneToLaptop, mediaGrid, project];
 export const exampleById = (id) => examples.find((e) => e.id === id) || null;
 
 /** Build an example into a (cleared) world. Returns the example's named nodes. */

@@ -58,6 +58,22 @@ export class Panel {
     const upd = () => { if (document.activeElement !== i) i.value = get(); }; upd(); this.live.push(upd);
     return i;
   }
+  _area(parent, label, get, set, attr, rows = 3) {
+    const r = this._row(parent, label); r.classList.add('tall');
+    const t = this._h('textarea', 'plain'); t.rows = rows; if (attr) t.dataset.param = attr;
+    t.addEventListener('input', () => set(t.value));
+    r.appendChild(t);
+    const upd = () => { if (document.activeElement !== t) t.value = get() ?? ''; }; upd(); this.live.push(upd);
+    return t;
+  }
+  _date(parent, label, get, set, attr) {
+    const r = this._row(parent, label);
+    const i = this._h('input'); i.type = 'date'; if (attr) i.dataset.param = attr;
+    i.addEventListener('input', () => set(i.value));
+    r.appendChild(i);
+    const upd = () => { if (document.activeElement !== i) i.value = get() || ''; }; upd(); this.live.push(upd);
+    return i;
+  }
   _json(parent, label, get, set, attr) {
     const r = this._row(parent, label); r.classList.add('tall');
     const t = this._h('textarea'); t.rows = 4; if (attr) t.dataset.param = attr;
@@ -193,6 +209,7 @@ export class Panel {
     if (b.group) this._readonly(n, 'group', () => b.group.title);
     const setP = (key) => (v) => { this.history.executeCoalesced(`param:${b.uid}:${key}`, cmd.setParam(this.world, b, key, v)); };
     for (const p of def.params) {
+      if (p.hidden) continue;   // edited by the component's own panel section (boards, checklists)
       const get = () => b.params[p.key];
       switch (p.type) {
         case 'number': this._num(n, p.label, get, setP(p.key), { step: p.step ?? 0.1, min: p.min, max: p.max, attr: p.key }); break;
@@ -204,6 +221,8 @@ export class Panel {
       }
     }
     if (b.footerText !== undefined) this._readonly(n, 'footer', () => b.footerText || '—');
+    // Component-owned editors (Kanban cards / columns, timeline tasks, checklist items…)
+    if (def.panel) { try { def.panel(this._api(b), b); } catch (e) { this._readonly(n, 'panel error', () => e.message); } }
 
     const p = this._section('Ports');
     const list = this._h('ul', 'ports'); p.appendChild(list);
@@ -223,6 +242,33 @@ export class Panel {
         li.querySelector('.dot').style.background = hex(port.color);
       });
     });
+  }
+
+  /** The small API handed to def.panel(api, block): DOM helpers bound to this panel + undoable writes. */
+  _api(b) {
+    const self = this;
+    return {
+      block: b, world: this.world, history: this.history, selection: this.selection, panel: this, icons,
+      h: (tag, cls, text) => self._h(tag, cls, text),
+      section: (title, open = true) => self._section(title, open),
+      row: (parent, label) => self._row(parent, label),
+      readonly: (parent, label, get) => self._readonly(parent, label, get),
+      num: (parent, label, get, set, o) => self._num(parent, label, get, set, o),
+      text: (parent, label, get, set, attr) => self._text(parent, label, get, set, attr),
+      area: (parent, label, get, set, attr, rows) => self._area(parent, label, get, set, attr, rows),
+      date: (parent, label, get, set, attr) => self._date(parent, label, get, set, attr),
+      check: (parent, label, get, set, attr) => self._check(parent, label, get, set, attr),
+      select: (parent, label, options, get, set, attr) => self._select(parent, label, options, get, set, attr),
+      buttons: (parent, label, options, get, set) => self._buttons(parent, label, options, get, set),
+      action: (parent, text, fn, id) => self._action(parent, text, fn, id),
+      color: (parent, label, get, set, attr) => self._color(parent, label, get, set, attr),
+      live: (fn) => self.live.push(fn),
+      exec: (c) => self.history.execute(c),
+      /** Undoable param write; `coalesce` merges rapid edits (typing) under one history entry. */
+      setParam: (key, value, coalesce) => (coalesce ? self.history.executeCoalesced(`param:${b.uid}:${key}:${coalesce}`, cmd.setParam(self.world, b, key, value)) : self.history.execute(cmd.setParam(self.world, b, key, value))),
+      rebuild: () => self.build(),
+      persons: () => self.world.nodes.filter((n) => n.typeId === 'person'),
+    };
   }
 
   _buildMulti(items) {

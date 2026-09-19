@@ -17,4 +17,13 @@ import './devices/phone.js';
 import './devices/tablet.js';
 import './devices/laptop.js';
 import './devices/monitor.js';
+// project management
+import './project/kanban-board.js';
+import './project/flow-shapes.js';
+import './project/timeline.js';
+import './project/person.js';
+import './project/milestone.js';
+import './project/sticky-note.js';
+import './project/checklist.js';
+import './project/project-dashboard.js';
 export { registry } from '../core/registry.js';

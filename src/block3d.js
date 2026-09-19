@@ -97,6 +97,7 @@ export class Block3D extends THREE.Group {
     this.lodBlend = 0;       // animated 0..1
     this.face = null;
     this.faceDirty = true;
+    this.subSelection = null;  // { kind, id } — a child pickable (card, column, item) the panel edits
     this.world = null;
     this._offTheme = onThemeChange(() => this.refreshTheme());
   }
@@ -172,7 +173,7 @@ export class Block3D extends THREE.Group {
   setTitle(text) { this.title = String(text); if (this.titleLabel) setLabelText(this.titleLabel, this.title); this.faceDirty = true; }
   setDerivedState(s) { if (this.derivedState !== s) { this.derivedState = s; this.applyVisual(); this.faceDirty = this.faceDirty || this.kind === 'device'; } }
   setHover(on) { if (this.hovered !== on) { this.hovered = on; this.applyVisual(); } }
-  setSelected(on) { if (this.selected !== on) { this.selected = on; this.applyVisual(); } }
+  setSelected(on) { if (!on) this.subSelection = null; if (this.selected !== on) { this.selected = on; this.applyVisual(); } }
   /** Rim priority: error > selected > hover > active. Ports grey out when disabled. */
   _rimLook() {
     const s = this.derivedState;
