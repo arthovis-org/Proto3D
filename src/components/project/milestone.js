@@ -1,6 +1,7 @@
 // Milestone — a dated goal as a small flag on a pole. `milestone` carries { title, date,
-// daysLeft, reached } (a Timeline draws it on its axis); `reached` pulses once when today
-// reaches the date. The flag turns from accent to green when reached, red when it slipped.
+// daysLeft, reached } (a board shows it in its header, a Timeline draws it on its axis, a
+// Dashboard counts down to it); `when reached` pulses once when today reaches the date. The flag
+// turns from accent to green when reached, red when it slipped.
 import * as THREE from 'three';
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
@@ -14,8 +15,8 @@ const dateText = (node) => { const d = daysUntil(node.params.date); return Numbe
 
 export default registry.register({
   id: 'milestone', category: 'project', label: 'Milestone', icon: icons.milestone, size: 'S',
-  description: 'A dated goal (flag): outputs the milestone data, fires reached once when today ≥ date',
-  outputs: [{ key: 'reached', label: 'reached', type: 'event' }, { key: 'milestone', label: 'milestone', type: 'data' }],
+  description: 'A dated goal on a flag that boards, timelines and dashboards show and that fires once when the day comes',
+  outputs: [{ key: 'reached', label: 'when reached', type: 'event' }, { key: 'milestone', label: 'milestone', type: 'data', subtype: 'milestone' }],
   params: [{ key: 'date', label: 'date (yyyy-mm-dd)', type: 'text', default: isoDate(new Date(Date.now() + 14 * DAY_MS)) }],
   body3d: {
     dims: () => ({ width: W, height: H, depth: D }),

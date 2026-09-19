@@ -2,8 +2,9 @@
 //
 // {
 //   id, category, label, description, icon,
-//   inputs:  [{ key, label, type, multi?, optional? }],
-//   outputs: [{ key, label, type }],
+//   inputs:  [{ key, label, type, subtype?, loose?, multi?, optional? }],
+//   outputs: [{ key, label, type, subtype? }],
+//   describeLink?(fromPort, toDef, toPort, names) → a sentence for a cable leaving this component
 //   params:  [{ key, label, type: 'number'|'text'|'boolean'|'select'|'json'|'color', default, min?, max?, step?, options? }],
 //   size?: 'S'|'M'|'L',            // node footprint; devices ignore it
 //   device?: 'phone'|'tablet'|'laptop'|'monitor',   // renders as a device instead of a slab
@@ -13,7 +14,7 @@
 //   onCreate?(instance), onDestroy?(instance),
 // }
 // ctx = { inputs, params, state, time, dt, emit(key, payload), touch(key), instance, upstream(key), engine }
-import { TYPES } from './types.js';
+import { TYPES, SUBTYPES } from './types.js';
 
 const PARAM_TYPES = ['number', 'text', 'boolean', 'select', 'json', 'color'];
 
@@ -46,7 +47,9 @@ export function defineComponent(def) {
 function normPort(id, p, dir) {
   if (!p.key) throw new Error(`defineComponent(${id}): port without key`);
   if (!TYPES.includes(p.type)) throw new Error(`defineComponent(${id}): port ${p.key} has unknown type ${p.type}`);
-  return Object.freeze({ key: p.key, label: p.label || p.key, type: p.type, dir, multi: !!p.multi && dir === 'in', optional: !!p.optional });
+  if (p.subtype !== undefined && (typeof p.subtype !== 'string' || !/^[a-z][a-z0-9-]*$/.test(p.subtype))) throw new Error(`defineComponent(${id}): port ${p.key} has a bad subtype "${p.subtype}"`);
+  if (p.subtype && !SUBTYPES.includes(p.subtype)) console.warn(`defineComponent(${id}): port ${p.key} uses an unregistered subtype "${p.subtype}" (no colour of its own)`);
+  return Object.freeze({ key: p.key, label: p.label || p.key, type: p.type, subtype: p.subtype || null, loose: !!p.loose, dir, multi: !!p.multi && dir === 'in', optional: !!p.optional });
 }
 function normParam(id, p) {
   if (!p.key) throw new Error(`defineComponent(${id}): param without key`);

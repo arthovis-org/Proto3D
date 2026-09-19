@@ -52,9 +52,9 @@ const stepText = (node) => (node.params.duration > 0 ? `${node.params.duration} 
 /* ---------------- Flow Terminal ---------------- */
 registry.register({
   id: 'flow-terminal', category: 'project', label: 'Flow Terminal', icon: icons['flow-terminal'], size: 'M',
-  description: 'Start / end of a process flow (flowchart stadium): Run button or trigger emits a token; end logs arrivals',
-  inputs: [{ key: 'in', label: 'trigger', type: 'event', optional: true }],
-  outputs: [{ key: 'out', label: 'out', type: 'event' }],
+  description: 'Where a flow starts (press Run or feed an event) or ends (counts arrivals)',
+  inputs: [{ key: 'in', label: 'start', type: 'event', optional: true }],
+  outputs: [{ key: 'out', label: 'next', type: 'event' }],
   params: [
     { key: 'mode', label: 'mode', type: 'select', options: ['start', 'end'], default: 'start' },
     { key: 'payload', label: 'payload (start, if no trigger)', type: 'text', default: 'go' },
@@ -104,9 +104,9 @@ registry.register({
 /* ---------------- Flow Step ---------------- */
 registry.register({
   id: 'flow-step', category: 'project', label: 'Flow Step', icon: icons['flow-step'], size: 'M',
-  description: 'A process step (flowchart box): passes the token on, optionally after a delay; pulses as it goes',
-  inputs: [{ key: 'in', label: 'in', type: 'event' }],
-  outputs: [{ key: 'out', label: 'out', type: 'event' }],
+  description: 'One step of a flow that passes the token on, optionally after a delay',
+  inputs: [{ key: 'in', label: 'start', type: 'event' }],
+  outputs: [{ key: 'out', label: 'next', type: 'event' }],
   params: [{ key: 'duration', label: 'duration (ms)', type: 'number', default: 0, min: 0, max: 60000, step: 50 }],
   body3d: {
     dims: () => ({ width: 4.4, height: 1.7, depth: DEPTH }),
@@ -146,8 +146,8 @@ registry.register({
 /* ---------------- Flow Decision ---------------- */
 registry.register({
   id: 'flow-decision', category: 'project', label: 'Flow Decision', icon: icons['flow-decision'], size: 'M',
-  description: 'A decision (flowchart diamond): routes the token to yes or no by a condition input or a payload test',
-  inputs: [{ key: 'in', label: 'in', type: 'event' }, { key: 'condition', label: 'condition', type: 'boolean', optional: true }],
+  description: 'A yes / no fork in a flow, decided by a condition input or a test on the token',
+  inputs: [{ key: 'in', label: 'start', type: 'event' }, { key: 'condition', label: 'condition', type: 'boolean', optional: true }],
   outputs: [{ key: 'yes', label: 'yes', type: 'event' }, { key: 'no', label: 'no', type: 'event' }],
   params: [
     { key: 'field', label: 'payload field (empty = payload)', type: 'text', default: 'priority' },

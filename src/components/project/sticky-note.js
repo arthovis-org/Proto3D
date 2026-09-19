@@ -14,7 +14,7 @@ const ink = (hexColour) => { const c = new THREE.Color(hexColour || '#f5d76e'); 
 
 export default registry.register({
   id: 'sticky-note', category: 'project', label: 'Sticky Note', icon: icons['sticky-note'], size: 'S',
-  description: 'A tilted coloured note with editable text; optional text input',
+  description: 'A tilted paper note with your text on it',
   inputs: [{ key: 'text', label: 'text', type: 'text', optional: true }],
   outputs: [{ key: 'text', label: 'text', type: 'text' }],
   params: [

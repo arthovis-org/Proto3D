@@ -8,6 +8,13 @@ import { bumpUidCounter } from './block3d.js';
 
 export const FORMAT_VERSION = 2;
 export const AUTOSAVE_KEY = 'proto3d.world.v2';
+/** Port keys renamed when the project ports got plain names; older documents still reconnect. */
+const LEGACY_PORTS = {
+  'kanban-board': { in: { addCard: 'addTask', move: 'moveTask' }, out: { cardMoved: 'moved', stats: 'progress', cards: 'tasks' } },
+  person: { in: { cards: 'tasks' } },
+  'project-dashboard': { in: { stats: 'progress' } },
+};
+const portKey = (typeId, dir, key) => LEGACY_PORTS[typeId]?.[dir]?.[key] || key;
 
 export function serializeWorld(world, { camera, controls, name = 'untitled' } = {}) {
   return {
@@ -40,7 +47,7 @@ export function loadWorld(world, doc, { camera, controls } = {}) {
   for (const c of doc.connections || []) {
     const a = byUid.get(c.from?.node), b = byUid.get(c.to?.node);
     if (!a || !b) continue;
-    const from = a.getPort(c.from.port, 'out'), to = b.getPort(c.to.port, 'in');
+    const from = a.getPort(portKey(a.typeId, 'out', c.from.port), 'out'), to = b.getPort(portKey(b.typeId, 'in', c.to.port), 'in');
     if (from && to) world.addConnection(from, to, { uid: c.uid });
   }
   for (const g of doc.groups || []) {

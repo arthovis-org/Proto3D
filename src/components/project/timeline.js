@@ -1,7 +1,7 @@
 // Timeline — a standing 3D Gantt. Time runs along X (day ticks and week labels on a low rail),
 // every task is a bar in its own row, coloured by assignee, priority or column, with its title on
 // the bar face; milestones are small flags on the rail; a translucent "today" plane cuts the
-// chart. Feed it a board's `cards` output (cards with due dates / estimates become bars) or edit
+// chart. Feed it a board's `tasks` output (cards with due dates / estimates become bars) or edit
 // its own task list in the panel; dragging a bar's right-hand handle in 3D changes its due date.
 import * as THREE from 'three';
 import { registry } from '../../core/registry.js';
@@ -116,7 +116,7 @@ const body3d = {
         node.childSub(handle, { kind: 'handle', id: t.id });
       }
     });
-    if (!n) node.childLabel('connect a board\'s cards or add tasks in the panel', { size: 0.26, color: 'textDim' }, [0, CHART_TOP - CHART_H / 2, 0.2]);
+    if (!n) node.childLabel('plug a board\'s tasks into the tasks slot, or add tasks in the panel', { size: 0.26, color: 'textDim' }, [0, CHART_TOP - CHART_H / 2, 0.2]);
     // milestones: flags on the rail
     const ms = (node.rt?.inputs?.milestones || []).flat().filter((m) => m && m.date);
     for (const m of ms) {
@@ -176,12 +176,12 @@ const body3d = {
 
 export default registry.register({
   id: 'timeline', category: 'project', label: 'Timeline', icon: icons.timeline, size: 'XL',
-  description: 'Gantt chart: bars per task along a day axis, milestones as flags, today marker; feed it a board\'s cards',
+  description: 'A Gantt chart: one bar per task along a day axis, milestone flags and a today marker',
   inputs: [
-    { key: 'tasks', label: 'tasks', type: 'data', multi: true, optional: true },
-    { key: 'milestones', label: 'milestones', type: 'data', multi: true, optional: true },
+    { key: 'tasks', label: 'tasks', type: 'data', subtype: 'tasks', multi: true, optional: true, loose: true },
+    { key: 'milestones', label: 'milestones', type: 'data', subtype: 'milestone', multi: true, optional: true, loose: true },
   ],
-  outputs: [{ key: 'overdue', label: 'overdue', type: 'data' }, { key: 'next', label: 'next milestone', type: 'data' }],
+  outputs: [{ key: 'overdue', label: 'overdue', type: 'data', subtype: 'tasks' }, { key: 'next', label: 'next milestone', type: 'data', subtype: 'milestone' }],
   params: [
     { key: 'tasks', label: 'tasks', type: 'json', default: [], hidden: true },
     { key: 'scale', label: 'units per day (0 = fit)', type: 'number', default: 0, min: 0, max: 4, step: 0.1 },
@@ -192,7 +192,7 @@ export default registry.register({
   evaluate({ inputs, state, instance }) {
     // rebuild when the fed data changed (cheap signature: ids + dates)
     const sig = JSON.stringify([(inputs.tasks || []).flat().map((t) => t && [t.id, t.title, t.due, t.start, t.estimate, t.done, t.assignee, t.column, t.priority]), (inputs.milestones || []).flat().map((m) => m && [m.title, m.date, m.reached]), isoDate()]);
-    if (sig !== state.sig) { state.sig = sig; instance.faceDirty = true; }
+    if (sig !== instance._sig) { instance._sig = sig; instance.faceDirty = true; }   // on the instance, not in saved state: a loaded timeline must rebuild its rows
     const list = instance._rows || [];
     const overdue = list.filter((t) => t.overdue).map((t) => ({ id: t.id, title: t.title, due: t.end, assignee: t.assignee }));
     const ms = (inputs.milestones || []).flat().filter((m) => m && m.date && daysUntil(m.date) >= 0).sort((a, b) => (a.date < b.date ? -1 : 1));

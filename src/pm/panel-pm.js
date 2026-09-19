@@ -8,6 +8,7 @@ import {
   findCard, allCards, PRIORITIES, PRIORITY_COLOURS, fmtDate, isOverdue, isBlocked, toTasks, createCard, isoDate, addDays,
 } from './model.js';
 import { commitBoard } from './board-ops.js';
+import { connectedPeople, personTasks, groupByColumn, sameName } from './relations.js';
 
 const boardOf = (b) => normalizeBoard(b.params.board);
 
@@ -86,10 +87,11 @@ function buildCardEditor(api, b, id) {
   const s = api.section('Card');
   api.text(s, 'title', () => get()?.title || '', (v) => patch({ title: v }, 'Rename card', 'title'), 'cardTitle');
   api.area(s, 'description', () => get()?.description || '', (v) => patch({ description: v }, 'Describe card', 'description'), 'cardDescription', 3);
-  // assignee: every Person component in the world + free text
-  const persons = api.persons().map((p) => String(p.params.name)).filter(Boolean);
+  // assignee: the people plugged into this board first, then every other Person, then free text
+  const linked = connectedPeople(b).map((p) => String(p.params.name)).filter(Boolean);
+  const persons = api.persons().map((p) => String(p.params.name)).filter((n) => n && !linked.some((l) => sameName(l, n)));
   const current = get()?.assignee || '';
-  const opts = ['', ...new Set([...persons, ...(current && !persons.includes(current) ? [current] : [])])];
+  const opts = ['', ...new Set([...linked, ...persons, ...(current && ![...linked, ...persons].includes(current) ? [current] : [])])];
   api.select(s, 'assignee', opts, () => { const a = get()?.assignee || ''; return opts.includes(a) ? a : ''; }, (v) => patch({ assignee: v }, 'Assign card'), 'cardAssignee');
   api.text(s, 'assignee (free text)', () => get()?.assignee || '', (v) => patch({ assignee: v }, 'Assign card', 'assignee'), 'cardAssigneeText');
   api.date(s, 'due', () => get()?.due || '', (v) => patch({ due: v }, 'Set due date'), 'cardDue');
@@ -145,6 +147,33 @@ function buildCardEditor(api, b, id) {
 }
 
 /* ====================================================================================== */
+/*  Person: the tasks assigned to them on every connected board (click → open the card)     */
+/* ====================================================================================== */
+export function buildPersonPanel(api, b) {
+  const s = api.section('Tasks');
+  const rows = personTasks(b);
+  const boards = [...new Set(rows.map((r) => r.board))];
+  api.readonly(s, 'boards', () => { const bs = [...new Set(personTasks(b).map((r) => r.board.title))]; return bs.length ? bs.join(', ') : 'none — plug person into a board\'s people slot'; });
+  api.readonly(s, 'open', () => { const t = personTasks(b); return `${t.filter((r) => !r.done).length} of ${t.length} · capacity ${b.params.capacity}`; });
+  const list = api.h('ul', 'pm-list pm-person-tasks'); s.appendChild(list);
+  if (!rows.length) list.appendChild(api.h('li', 'pm-group', 'no tasks yet'));
+  for (const gr of groupByColumn(rows)) {
+    list.appendChild(api.h('li', 'pm-group', `${gr.column} · ${gr.rows.length}`));
+    for (const r of gr.rows) {
+      const li = api.h('li'); li.dataset.card = r.card.id; li.dataset.board = r.board.uid; li.title = `Open "${r.card.title}" on ${r.board.title}`;
+      const main = api.h('div', 'pm-main');
+      const pr = api.h('i', 'pm-prio'); pr.style.background = PRIORITY_COLOURS[r.card.priority]; main.appendChild(pr);
+      main.appendChild(api.h('span', null, r.card.title));
+      if (boards.length > 1) main.appendChild(api.h('small', null, r.board.title));
+      const due = api.h('small', 'pm-due' + (r.overdue ? ' overdue' : ''), r.done ? 'done' : r.card.due ? (r.overdue ? '! ' : '') + fmtDate(r.card.due) : '');
+      main.appendChild(due); li.appendChild(main);
+      li.addEventListener('click', () => r.board.selectSub({ kind: 'card', id: r.card.id }, api.selection));
+      list.appendChild(li);
+    }
+  }
+}
+
+/* ====================================================================================== */
 /*  Timeline: own task list                                                                 */
 /* ====================================================================================== */
 export function buildTimelinePanel(api, b) {
@@ -158,7 +187,7 @@ export function buildTimelinePanel(api, b) {
     api.readonly(s, 'title', () => t?.title || sel.id);
     api.readonly(s, 'span', () => (t ? `${fmtDate(t.start)} → ${fmtDate(t.end)}` : '—'));
     api.readonly(s, 'assignee', () => t?.assignee || '—');
-    api.readonly(s, 'source', () => 'fed through the tasks input (edit it on the board)');
+    api.readonly(s, 'source', () => 'fed through the tasks slot (edit it on the board)');
     api.action(s, 'Back to timeline', () => b.selectSub(null, api.selection));
   }
   if (own) {

@@ -206,6 +206,11 @@ ul.ports .pcount, ul.ports .pdir { font-size: 11px; }
 .pm-prio { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: none; }
 .pm-hint { color: var(--dim); font-size: 11px; padding: 2px 0; }
 .pm-hint.bad { color: var(--danger); }
+.pm-hint.link-meaning { color: var(--text); font-size: 12px; padding: 4px 8px; border-left: 2px solid var(--accent); background: var(--accent-soft); border-radius: 0 6px 6px 0; margin-bottom: 4px; }
+.pm-list li .pm-main .pm-due { color: var(--dim); flex: none; font-variant-numeric: tabular-nums; }
+.pm-list li .pm-main .pm-due.overdue { color: var(--danger); font-weight: 600; }
+.pm-list li.pm-group { background: none; cursor: default; padding: 6px 6px 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); }
+.pm-list li.pm-group:hover { outline: none; }
 
 /* ---- Guidance layers: tooltip, drag label, toast, cable end labels, empty hint ---- */
 #tip, #drag-label {

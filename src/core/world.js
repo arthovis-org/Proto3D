@@ -4,7 +4,7 @@
 // them in commands.js. `layoutVersion` bumps whenever something moved so connections re-route.
 import { Connection3D } from '../connection3d.js';
 import { sizes } from '../theme.js';
-import { compatible } from './types.js';
+import { compatiblePorts } from './types.js';
 
 export class World {
   constructor(scene) {
@@ -59,6 +59,7 @@ export class World {
     this.scene.add(c);
     this.connections.push(c);
     from.setConnected?.(true); to.setConnected?.(true);
+    this._syncCount(to);
     this.groups.forEach((g) => g.collapsed && g.refreshProxies(this));
     this.changed('connect');
     return c;
@@ -66,13 +67,17 @@ export class World {
   removeConnection(c) {
     this.scene.remove(c);
     this.connections = this.connections.filter((x) => x !== c);
-    this._syncConnected(c.from); if (c.to) this._syncConnected(c.to);
+    this._syncConnected(c.from); if (c.to) { this._syncConnected(c.to); this._syncCount(c.to); }
     this.groups.forEach((g) => g.collapsed && g.refreshProxies(this));
     this.changed('disconnect');
     return c;
   }
   /** A port renders filled while at least one link is attached, hollow otherwise. */
   _syncConnected(port) { port.setConnected?.(this.connections.some((c) => c.from === port || c.to === port)); }
+  /** Multi inputs grow one slot per cable: tell the port how many links it carries. */
+  _syncCount(port) { port.setLinkCount?.(this.connections.filter((c) => c.to === port).length); }
+  /** How many cables end on an input (their slot order is the world's connection order). */
+  linkIndex(conn) { return conn.to ? this.connections.filter((c) => c.to === conn.to).indexOf(conn) : -1; }
   /** Ports of `node` that can take a cable coming from `port` (direction and type), never on the same block. */
   compatiblePorts(port, nodes = this.nodes) {
     const out = [];
@@ -86,7 +91,7 @@ export class World {
   connectionsOf(port) { return this.connections.filter((c) => c.from === port || c.to === port); }
   connectionsOfNode(node) { return this.connections.filter((c) => c.from.owner === node || (c.to && c.to.owner === node)); }
   connectionByUid(uid) { return this.connections.find((c) => c.uid === uid) || null; }
-  canConnect(from, to) { return !!(from && to && from.dir === 'out' && to.dir === 'in' && from.owner !== to.owner && compatible(from.type, to.type) !== 'invalid'); }
+  canConnect(from, to) { return !!(from && to && from.dir === 'out' && to.dir === 'in' && from.owner !== to.owner && compatiblePorts(from, to) !== 'invalid'); }
 
   /* ---------- groups ---------- */
   addGroup(g) {

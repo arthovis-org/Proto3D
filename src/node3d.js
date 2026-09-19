@@ -82,12 +82,27 @@ export class Node3D extends Block3D {
     // Fake contact shadow on the floor (kept under the node as it moves)
     this.shadow = makeShadowBlob(w, d);
     this.add(this.shadow);
+    this._h0 = h;
+    this._faceY0 = this.face?.mesh ? this.face.mesh.position.y : 0;
 
     this.applyVisual();
     def.onCreate?.(this);
   }
 
   _addNodePort(spec, x, y) { return this._addLabelledPort(spec, x, y, 0, this.depth / 2 + 0.01); }
+  /** Multi inputs grew: the slab extends downward (header stays), face and footer move with it. */
+  _onPortsGrow(extra) {
+    const n = sizes.node, w = this.width, d = this.depth, h = this._h0 + extra;
+    this.body.geometry.dispose(); this.body.geometry = new RoundedBoxGeometry(w, h, d, 4, n.radius);
+    this.rim.geometry.dispose(); this.rim.geometry = new RoundedBoxGeometry(w + 0.1, h + 0.1, d + 0.1, 3, n.radius + 0.05);
+    this.body.position.y = -extra / 2; this.rim.position.y = -extra / 2;
+    this.height = h; this.bodyOffsetY = -extra / 2;
+    this.footerLabel.position.y = -this._h0 / 2 - extra + n.footer / 2;
+    if (this.face?.mesh) this.face.mesh.position.y = this._faceY0 - extra;
+    // never sink under the floor while growing
+    const bottom = this.position.y - this._h0 / 2 - extra;
+    if (this.world && bottom < 0.2) this.position.y += 0.2 - bottom;
+  }
 
   /** Live footer (engine). Only redraws when the text changes. */
   setFooter(text) { this.footerText = String(text ?? ''); setLabelText(this.footerLabel, this.footerText || ' '); }

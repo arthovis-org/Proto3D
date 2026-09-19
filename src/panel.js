@@ -4,8 +4,9 @@
 // or the workspace when nothing is selected. Fields are bound live and write back through the
 // History so every edit is undoable.
 import { registry } from './core/registry.js';
-import { formatValue, compatible, typeInfo } from './core/types.js';
-import { portTypes, hex, getTheme, setTheme, sizes } from './theme.js';
+import { formatValue, compatiblePorts, typeInfo, portTypeText, portTypeName, mismatchReason } from './core/types.js';
+import { hex, getTheme, setTheme, sizes } from './theme.js';
+import { describeLink } from './pm/relations.js';
 import * as cmd from './core/commands.js';
 import { icons } from './icons.js';
 
@@ -233,12 +234,12 @@ export class Panel {
       li.appendChild(this._h('span', 'pname', `${port.label}${port.multi ? ' *' : ''}`));
       const val = this._h('span', 'pval'); li.appendChild(val);
       const cnt = this._h('span', 'pcount'); li.appendChild(cnt);
-      li.title = `${typeInfo[port.type]?.label || port.type}${port.multi ? ' (accepts many)' : ''}${port.optional ? ', optional' : ''}`;
+      li.title = `${portTypeText(port)}${port.multi ? ' (accepts several cables)' : ''}${port.optional ? ', optional' : ''}`;
       list.appendChild(li);
       this.live.push(() => {
         val.textContent = formatValue(port.value, 22);
         const k = this.world.connectionsOf(port).length;
-        cnt.textContent = k ? `${k} link${k > 1 ? 's' : ''}` : port.type;
+        cnt.textContent = k ? `${k} link${k > 1 ? 's' : ''}` : portTypeName(port);
         li.querySelector('.dot').style.background = hex(port.color);
       });
     });
@@ -304,16 +305,22 @@ export class Panel {
   }
 
   _buildConnection(c) {
-    this._header('connection', 'Connection', `${c.type} link`);
+    this._header('connection', 'Connection', `${portTypeName(c.from)} link`);
     const s = this._section('Connection');
+    const meaning = describeLink(c);
+    if (meaning) { const m = this._h('div', 'pm-hint link-meaning', meaning); m.id = 'link-meaning'; s.appendChild(m); }
     this._readonly(s, 'from', () => `${c.from.owner.title} · ${c.from.label}`);
     this._readonly(s, 'to', () => (c.to ? `${c.to.owner.title} · ${c.to.label}` : '—'));
-    this._readonly(s, 'type', () => { const k = c.to ? compatible(c.from.type, c.to.type) : 'ok'; return `${c.from.type}${c.to && c.to.type !== c.from.type ? ` → ${c.to.type} (${k === 'invalid' ? 'mismatch' : 'coerced'})` : ''}`; });
+    this._readonly(s, 'type', () => {
+      const k = c.to ? compatiblePorts(c.from, c.to) : 'ok';
+      const a = portTypeText(c.from), b = c.to ? portTypeText(c.to) : '';
+      return k === 'invalid' ? `${a} → ${b} (${mismatchReason(c.from, c.to)})` : `${a}${c.to && b !== a ? ` → ${b}${k === 'coerce' ? ' (converted)' : ''}` : ''}`;
+    });
     this._readonly(s, 'state', () => c.derivedState);
     this._readonly(s, 'value', () => formatValue(c.value, 40));
     this._readonly(s, 'changes / s', () => (c.from.rate || 0).toFixed(1));
     this._readonly(s, 'flow velocity', () => `${c.velocity.toFixed(2)} u/s`);
-    const ty = this._h('div', 'row'); ty.appendChild(this._h('label', null, 'colour')); ty.appendChild(this._dot((portTypes[c.type] || portTypes.any).color)); s.appendChild(ty);
+    const ty = this._h('div', 'row'); ty.appendChild(this._h('label', null, 'colour')); ty.appendChild(this._dot(c.color.getHex())); s.appendChild(ty);
     this._action(s, 'Disconnect (Del)', () => this.interaction.deleteSelection());
   }
 }

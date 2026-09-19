@@ -138,10 +138,11 @@ export class Group3D extends THREE.Group {
     const { w, d } = this.slab.userData;
     const h = this.slab.userData.h;
     const place = (list, dir, x) => list.forEach((inner, i) => {
-      const proxy = createPort(this, { key: `${inner.owner.uid}:${inner.key}`, label: `${inner.owner.title} · ${inner.label}`, type: inner.type, dir, multi: inner.multi });
+      const proxy = createPort(this, { key: `${inner.owner.uid}:${inner.key}`, label: `${inner.owner.title} · ${inner.label}`, type: inner.type, subtype: inner.subtype, loose: inner.loose, dir, multi: inner.multi });
       const y = h / 2 - 1.2 - i * sizes.port.gap;
       proxy.group.position.set(x, y, 0);
       proxy.setConnected(true);
+      if (dir === 'in') proxy.setLinkCount(world.connections.filter((c) => c.to === inner && !this.has(c.from.owner)).length);
       this.slab.add(proxy.group);
       const lbl = makeLabel(proxy.label, { size: sizes.label.port, color: 'textDim', weight: 500, maxWidth: w / 2 - 0.6 });
       const inset = 0.22 + lbl.userData.worldW / 2;

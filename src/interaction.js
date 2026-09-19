@@ -21,8 +21,9 @@ import * as THREE from 'three';
 import { Connection3D } from './connection3d.js';
 import { Group3D } from './groups.js';
 import * as cmd from './core/commands.js';
-import { formatValue, typeInfo, compatible } from './core/types.js';
+import { formatValue, compatiblePorts, portTypeText, portTypeName, mismatchReason } from './core/types.js';
 import { hex, sizes } from './theme.js';
+import { describeLink } from './pm/relations.js';
 
 /** True when the key event comes from a text field (panel) — ignore shortcuts then. */
 export const isTyping = (e) => {
@@ -86,7 +87,7 @@ export class Interaction {
     for (const g of this.world.groups) if (g.collapsed) for (const p of g.ports) out.push(p);
     return out;
   }
-  _portMeshes() { return this._allPorts().flatMap((p) => [p.mesh, p.shell]); }
+  _portMeshes() { return this._allPorts().flatMap((p) => p.pickMeshes || [p.mesh, p.shell]); }
   _faceMeshes() { return this._visibleNodes().filter((n) => n.face?.mesh).map((n) => n.face.mesh); }
   _subMeshes() { return this._visibleNodes().flatMap((n) => (n.subMeshes ? n.subMeshes() : [])); }
   _bodyMeshes() { return this._visibleNodes().flatMap((n) => (n.meshes ? n.meshes.filter((m) => m !== n.face?.mesh) : [n.body, n.header])); }
@@ -166,17 +167,16 @@ export class Interaction {
     this.hoveredSub = sub;
     if (sub) sub.block.setSubHover(sub);
   }
-  _subEvent(type, extra = {}) { return { type, sub: this.subDrag?.sub, ray: this.ray.ray, history: this.history, selection: this.selection, shift: this.shift, ...extra }; }
+  _subEvent(type, extra = {}) { return { type, sub: this.subDrag?.sub, ray: this.ray.ray, history: this.history, selection: this.selection, shift: this.shift, x: this.lastPointer.x, y: this.lastPointer.y, ...extra }; }
 
   /** Tooltip for a port: name, type, value, links and what dragging will do. */
   _tipPort(p) {
     if (!this.overlays) return;
     const links = this.world.connectionsOf(p);
     const other = (c) => (p.dir === 'out' ? c.to : c.from);
-    const t = typeInfo[p.type] || { label: p.type };
     const rows = links.filter((c) => other(c)).map((c) => `<span class="c">${p.dir === 'out' ? '→' : '←'} ${esc(portName(other(c)))}</span>`).join('');
-    const hint = p.owner.kind === 'group' ? '' : p.dir === 'out' ? 'drag to connect' + (links.length ? ' another' : '') : links.length && !p.multi ? 'drag to re-route this cable' : 'drag to connect' + (p.multi ? ' (accepts many)' : '');
-    const html = `<b style="color:${hex(p.color)}">${esc(p.label)}</b><span class="t">${t.label} · ${p.dir === 'in' ? 'input' : 'output'}${p.multi ? ' · many' : ''}${p.optional ? ' · optional' : ''}</span>`
+    const hint = p.owner.kind === 'group' ? '' : p.dir === 'out' ? 'drag to connect' + (links.length ? ' another' : '') : links.length && !p.multi ? 'drag to re-route this cable' : p.multi ? 'accepts several cables · drag to add one' : 'drag to connect';
+    const html = `<b style="color:${hex(p.color)}">${esc(p.label)}</b><span class="t">${esc(portTypeText(p))} · ${p.dir === 'in' ? 'input' : 'output'}${p.optional ? ' · optional' : ''}</span>`
       + `<span class="v">${esc(formatValue(p.value, 40))}</span>${rows}${hint ? `<span class="d">${hint}</span>` : ''}`;
     this.overlays.tip(html, { anchor: p.getWorldPosition(new THREE.Vector3()), offset: [16, -12], cls: 'port-tip' });
   }
@@ -262,6 +262,7 @@ export class Interaction {
         });
         this.world.bumpLayout();
       }
+      this._updateBlockDrop();
       this._cursor('grabbing');
       return;
     }
@@ -336,6 +337,25 @@ export class Interaction {
     else if (!this.selection.has(block)) this.selection.set([block]);
     if (!this.selection.has(block)) return;
     this._beginMove(this._movableNodes(), point, e);
+  }
+  /** A single dragged block over a child pickable that accepts it (a Person over a card): highlight the target. */
+  _updateBlockDrop() {
+    const d = this.drag;
+    let target = null;
+    if (d.nodes.length === 1) {
+      const dragged = d.nodes[0];
+      const hits = this.ray.intersectObjects(this._subMeshes().filter((m) => m.userData.sub.block !== dragged), false);
+      const sub = hits[0]?.object.userData.sub;
+      const B = sub?.block.def.body3d;
+      if (sub && B?.acceptsDrop?.(sub.block, sub, dragged)) target = { block: sub.block, sub, dragged };
+    }
+    if (d.dropTarget?.sub !== target?.sub) {
+      d.dropTarget?.block.setSubHover(null);
+      d.dropTarget = target;
+      if (target) target.block.setSubHover(target.sub);
+    }
+    if (target) this.overlays?.dragLabel(`<b>${esc(target.dragged.title)}</b> → ${esc(target.block.def.body3d.dropLabel?.(target.block, target.sub, target.dragged) || 'drop here')}`, this.lastPointer.x, this.lastPointer.y);
+    else this.overlays?.dragLabel(null);
   }
   _beginMove(nodes, point, e) {
     if (!nodes.length) return;
@@ -420,10 +440,11 @@ export class Interaction {
     this._recomputeEmphasis();
     this._cursor(reject ? 'not-allowed' : snapped ? 'crosshair' : 'grabbing');
     if (this.overlays) {
-      const t = typeInfo[C.fixed.type]?.label || C.fixed.type;
-      let html = `<b style="color:${hex(C.fixed.color)}">${t}</b> · ${C.need === 'in' ? 'from' : 'into'} ${esc(portName(C.fixed))}`;
-      if (reject) html += `<br><em>${reject.dir !== C.need ? (reject.owner === C.fixed.owner ? 'same block' : `needs an ${C.need === 'in' ? 'input' : 'output'}`) : `${esc(reject.type)} does not fit ${esc(C.fixed.type)}`}</em>`;
-      else if (snapped) html += `<br>→ ${esc(portName(snapped))}${compatible(C.need === 'in' ? C.fixed.type : snapped.type, C.need === 'in' ? snapped.type : C.fixed.type) === 'coerce' ? ' (converted)' : ''}`;
+      const t = portTypeName(C.fixed);
+      let html = `<b style="color:${hex(C.fixed.color)}">${esc(t)}</b> · ${C.need === 'in' ? 'from' : 'into'} ${esc(portName(C.fixed))}`;
+      const pair = (p) => (C.need === 'in' ? [C.fixed, p] : [p, C.fixed]);
+      if (reject) html += `<br><em>${reject.dir !== C.need ? (reject.owner === C.fixed.owner ? 'same block' : `needs an ${C.need === 'in' ? 'input' : 'output'}`) : esc(mismatchReason(...pair(reject)))}</em>`;
+      else if (snapped) html += `<br>→ ${esc(portName(snapped))}${compatiblePorts(...pair(snapped)) === 'coerce' ? ' (converted)' : ''}`;
       else html += `<br><span class="d">${C.detached ? 'drop on empty space to disconnect · Esc puts it back' : 'drop on a lit port'}</span>`;
       this.overlays.dragLabel(html, e.clientX, e.clientY, reject ? 'bad' : '');
     }
@@ -447,14 +468,17 @@ export class Interaction {
         }
       } else {
         this.history.execute(cmd.connect(this.world, from, to));
-        this.selection.set([this.world.connections.find((x) => x.from === from && x.to === to)].filter(Boolean));
+        const made = this.world.connections.find((x) => x.from === from && x.to === to);
+        this.selection.set([made].filter(Boolean));
+        // say what the link means ("Maya's tasks appear on Website relaunch"), not just that it exists
+        if (made) this.overlays?.toast(describeLink(made) || `Connected ${portName(from)} → ${portName(to)}`, 2000);
       }
       drop(false);
     } else if (detached) {
       if (reject) { putBack(); this.overlays?.toast('Not connected: incompatible port'); drop(false); }
       else { this.history.execute(cmd.disconnect(this.world, detached)); this.overlays?.toast('Disconnected · Ctrl+Z to undo'); drop(true); }
     } else {
-      if (reject) this.overlays?.toast(reject.dir !== need ? 'Connect an output to an input' : `${reject.type} does not fit ${fixed.type}`);
+      if (reject) this.overlays?.toast(reject.dir !== need ? 'Connect an output to an input' : mismatchReason(...(need === 'in' ? [fixed, reject] : [reject, fixed])));
       drop(true);
     }
     this._recomputeEmphasis();
@@ -470,7 +494,7 @@ export class Interaction {
     if (this.subDrag) {
       const d = this.subDrag; this.subDrag = null;
       this._setPointer(e);
-      d.block.onSubPointer({ type: d.moved && moved ? 'drop' : 'click', sub: d.sub, ray: this.ray.ray, history: this.history, selection: this.selection, shift: e.shiftKey });
+      d.block.onSubPointer({ type: d.moved && moved ? 'drop' : 'click', sub: d.sub, ray: this.ray.ray, history: this.history, selection: this.selection, shift: e.shiftKey, x: e.clientX, y: e.clientY });
       this.selection.refresh();
       return;
     }
@@ -485,7 +509,13 @@ export class Interaction {
     if (this.drag) {
       const d = this.drag; this.drag = null;
       d.nodes.forEach((n) => { n.dragging = false; });
-      if (d.moved && moved) this.history.execute(cmd.transform(this.world, d.nodes, d.before, d.nodes.map(cmd.snapshot)));
+      if (d.dropTarget) {
+        // dropped on a card: the block springs back and the board acts (assign the card to this person)
+        const { block, sub, dragged } = d.dropTarget;
+        block.setSubHover(null); this.overlays?.dragLabel(null);
+        d.nodes.forEach((n, i) => { n.position.fromArray(d.before[i].p); }); this.world.bumpLayout();
+        block.def.body3d.onDropBlock?.(block, sub, dragged, { history: this.history, selection: this.selection, overlays: this.overlays });
+      } else if (d.moved && moved) this.history.execute(cmd.transform(this.world, d.nodes, d.before, d.nodes.map(cmd.snapshot)));
       else if (this.pressFace && !moved) this.pressFace.block.onFacePointer({ type: 'click', u: this.pressFace.u, v: this.pressFace.v, button: 0 });
       this.pressFace = null;
       this._cursor(this._hoverCursor(this.hovered, this.hoveredEnd));
@@ -600,7 +630,7 @@ export class Interaction {
       this.overlays?.dragLabel(null);
       this._recomputeEmphasis();
     }
-    if (this.drag) { this.drag.nodes.forEach((n, i) => { n.dragging = false; n.position.fromArray(this.drag.before[i].p); }); this.drag = null; }
+    if (this.drag) { this.drag.dropTarget?.block.setSubHover(null); this.overlays?.dragLabel(null); this.drag.nodes.forEach((n, i) => { n.dragging = false; n.position.fromArray(this.drag.before[i].p); }); this.drag = null; }
     if (this.marquee) { this.marquee = null; if (this.marqueeEl) this.marqueeEl.hidden = true; }
     if (this.subDrag) { this.subDrag.block.onSubPointer(this._subEvent('cancel')); this.subDrag = null; }
     this.faceDrag = null; this.pressFace = null;

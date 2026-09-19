@@ -21,8 +21,9 @@ import { updateLOD } from './lod.js';
 import { serializeWorld, loadWorld, downloadJSON, pickJSONFile, AutoSave } from './serialize.js';
 import { examples, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
-import { portTypes, states, hex, getTheme, toggleTheme, onThemeChange } from './theme.js';
-import { formatValue, typeInfo, kindOf } from './core/types.js';
+import { portTypes, subtypes, states, hex, getTheme, toggleTheme, onThemeChange } from './theme.js';
+import { formatValue, typeInfo, subtypeInfo, kindOf, portTypeName, mismatchReason } from './core/types.js';
+import { describeLink } from './pm/relations.js';
 import { onBitmapReady } from './faces.js';
 
 const $ = (id) => document.getElementById(id);
@@ -40,6 +41,7 @@ const gizmo = new Gizmo({ camera: ws.camera, renderer: ws.renderer, scene: ws.sc
 const connLabel = $('conn-label');
 let hoveredConnection = null;
 const overlays = new Overlays({ camera: ws.camera, renderer: ws.renderer, world, els: { tip: $('tip'), dragLabel: $('drag-label'), toast: $('toast'), endLabels: $('cable-labels'), emptyHint: $('empty-hint') } });
+world.overlays = overlays;    // components may toast ("Assigned to Maya")
 const interaction = new Interaction({
   camera: ws.camera, renderer: ws.renderer, controls: ws.controls, world, selection, history, gizmo, createInstance, overlays,
   onHoverConnection: (c) => { hoveredConnection = c; connLabel.hidden = !c; },
@@ -82,8 +84,9 @@ function loadExample(id) {
   const ex = exampleById(id); if (!ex) return null;
   selection.clear(); history.clear();
   const named = buildExample(world, ex, { camera: ws.camera, controls: ws.controls });
-  frameAll({ instant: true });
   engine.evaluate();
+  const focus = ex.focus ? ex.focus(named).filter(Boolean) : [];
+  if (focus.length) ws.frameBlocks(focus, { instant: true, fill: 0.7, insetLeft: leftBar?.isOpen ? 300 : 0 }); else frameAll({ instant: true });
   return named;
 }
 const fileMenu = new FileMenu({
@@ -98,13 +101,15 @@ const fileMenu = new FileMenu({
 const SHAPE_SVG = {
   chevron: (c, filled) => `<svg viewBox="0 0 16 12"><path d="M1 1h8l6 5-6 5H1z" fill="${filled ? c : 'none'}" stroke="${c}" stroke-width="1.6"/></svg>`,
   sphere: (c, filled) => `<svg viewBox="0 0 16 12"><circle cx="8" cy="6" r="4.6" fill="${filled ? c : 'none'}" stroke="${c}" stroke-width="1.6"/></svg>`,
+  slot: (c) => `<svg viewBox="0 0 16 12"><rect x="4.5" y="0.8" width="7" height="10.4" rx="2" fill="none" stroke="${c}" stroke-width="1.5"/><rect x="6.5" y="2.6" width="3" height="2.2" fill="${c}"/><rect x="6.5" y="5.6" width="3" height="2.2" fill="${c}"/></svg>`,
 };
 function buildLegend() {
-  const ev = hex(portTypes.event.color), num = hex(portTypes.number.color);
+  const ev = hex(portTypes.event.color), num = hex(portTypes.number.color), per = hex(subtypes.person.color);
   const shapes = $('legend-shapes'); shapes.innerHTML = '';
   for (const [svg, text, title] of [
     [SHAPE_SVG.chevron(ev, true), 'chevron = event (a pulse)', 'Event pins point in the flow direction: into the body on the left, away from it on the right'],
     [SHAPE_SVG.sphere(num, true), 'circle = data (a value)', 'Number, text, boolean, data, media and any carry values'],
+    [SHAPE_SVG.slot(per), 'rectangle = accepts several cables', 'A multi input grows one slot per cable (people on a board, tasks on a timeline); each cable ends in its own slot'],
     [SHAPE_SVG.sphere(num, false), 'hollow = not connected', 'A connected pin is filled and bright; an unconnected pin is a hollow ring'],
   ]) { const li = document.createElement('li'); li.innerHTML = `${svg}${text}`; li.title = title; shapes.appendChild(li); }
   const legend = $('legend-types'); legend.innerHTML = '';
@@ -112,6 +117,13 @@ function buildLegend() {
     const li = document.createElement('li');
     li.innerHTML = `<i style="background:${hex(t.color)}"></i>${name}`; li.title = typeInfo[name]?.description || '';
     legend.appendChild(li);
+  }
+  const sub = $('legend-subtypes'); sub.innerHTML = '';
+  for (const [name, t] of Object.entries(subtypes)) {
+    if (name === 'task') continue;   // same hue as tasks
+    const li = document.createElement('li');
+    li.innerHTML = `<i style="background:${hex(t.color)}"></i>${name}`; li.title = `data · ${name}: ${subtypeInfo[name]?.description || ''}`;
+    sub.appendChild(li);
   }
   const legendStates = $('legend-states'); legendStates.innerHTML = '';
   for (const [name, c] of Object.entries(states)) {
@@ -207,10 +219,11 @@ function updateConnectionLabel() {
   const x = r.left + (_mid.x + 1) / 2 * r.width, y = r.top + (1 - _mid.y) / 2 * r.height;
   connLabel.hidden = _mid.z > 1;
   connLabel.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px) translate(-50%, -120%)`;
-  const typeText = !c.valid ? 'invalid' : c.type === 'any' && c.value !== undefined ? `any · ${kindOf(c.value)}` : c.type;
+  const typeText = !c.valid ? 'invalid' : c.type === 'any' && c.value !== undefined ? `any · ${kindOf(c.value)}` : portTypeName(c.from);
   const path = `${c.from.owner.title}.${c.from.label} → ${c.to.owner.title}.${c.to.label}`;
+  const meaning = c.valid ? describeLink(c) : null;   // "Maya's tasks appear on Website relaunch"
   connLabel.classList.toggle('selected', c !== hoveredConnection);
-  connLabel.innerHTML = `<b style="color:${hex(c.color.getHex())}">${typeText}</b> ${path}<br><span>${c.valid ? formatValue(c.value, 36) : `${c.from.type} → ${c.to.type}: incompatible`}</span>`;
+  connLabel.innerHTML = `<b style="color:${hex(c.color.getHex())}">${typeText}</b> ${meaning || path}<br><span>${meaning ? path + ' · ' : ''}${c.valid ? formatValue(c.value, 36) : mismatchReason(c.from, c.to)}</span>`;
 }
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);

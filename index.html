@@ -60,12 +60,14 @@
         <h2>Ports</h2>
         <ul id="legend-shapes"></ul>
         <ul id="legend-types"></ul>
+        <h2>Project types</h2>
+        <ul id="legend-subtypes"></ul>
       </section>
       <section>
         <h2>Wiring rules</h2>
         <ol id="wiring-rules" class="rules">
           <li>Cables run <b>left → right</b>: from an <b>OUT</b> pin on the right of a node to an <b>IN</b> pin on the left of another.</li>
-          <li><b>Colours must match</b>: same type fits, <i>any</i> fits everything, <i>number</i> fits <i>text</i>. Lit pins fit; dimmed ones do not.</li>
+          <li><b>Colours must match</b>: same type fits, <i>any</i> fits everything, <i>number</i> fits <i>text</i>; a <i>person</i> cable only fits a <i>person</i> slot. Lit pins fit; dimmed ones do not.</li>
           <li><b>Drag</b> a pin to connect (either direction), <b>grab a cable end</b> to move it, drop it on empty space to <b>disconnect</b>.</li>
         </ol>
       </section>
@@ -88,7 +90,7 @@
           <dt>Select</dt><dd>click · <kbd>Shift</kbd>+click adds · <kbd>Shift</kbd>+drag on the floor: marquee · <kbd>Ctrl</kbd>+<kbd>A</kbd> all</dd>
           <dt>Edit</dt><dd><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate · <kbd>Del</kbd> delete · <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> undo / redo</dd>
           <dt>Group</dt><dd><kbd>Ctrl</kbd>+<kbd>G</kbd> group · <kbd>C</kbd> collapse / expand · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> ungroup</dd>
-          <dt>Interact</dt><dd>click / drag cards on a Kanban board · press Run on a Flow Terminal · click a checklist row · click a device screen or an Input face to fire events</dd>
+          <dt>Interact</dt><dd>click / drag cards on a Kanban board · drop a card on a Person (or a Person on a card) to assign it · press Run on a Flow Terminal · click a checklist row · click a device screen or an Input face to fire events</dd>
           <dt>View</dt><dd><kbd>T</kbd> theme · <kbd>N</kbd> panel · <kbd>H</kbd> help · <kbd>Esc</kbd> cancel</dd>
         </dl>
       </section>
@@ -117,7 +119,7 @@
   <div id="tour" hidden>
     <div class="tour-spot" hidden></div>
     <div class="tour-card" role="dialog" aria-live="polite">
-      <div class="tour-step">1 / 4</div>
+      <div class="tour-step">1 / 5</div>
       <h3 class="tour-title"></h3>
       <p class="tour-text"></p>
       <div class="tour-btns">

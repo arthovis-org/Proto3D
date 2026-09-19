@@ -1,6 +1,11 @@
-// core/types.js — the six port types (+ 'any'), compatibility and coercion rules.
-// Colours live in theme.js (portTypes) so both palettes stay the single source of truth;
-// this module owns the semantics only.
+// core/types.js — the six port types (+ 'any'), the project subtypes of `data`, compatibility
+// and coercion rules. Colours live in theme.js (portTypes, subtypes) so both palettes stay the
+// single source of truth; this module owns the semantics only.
+//
+// Subtypes: a `data` port may declare `subtype: 'person' | 'task' | 'tasks' | 'board' |
+// 'milestone' | 'stats' | 'layout'` so a cable carries meaning, not just JSON. Base types must
+// match as before; when both ports declare a subtype they must be the same; a subtyped input
+// accepts a plain `data` output only when its definition says `loose: true`.
 
 /** Port types, in legend order. */
 export const TYPES = ['number', 'text', 'boolean', 'data', 'media', 'event', 'any'];
@@ -16,8 +21,20 @@ export const typeInfo = {
   any:     { label: 'any',     short: 'any',  description: 'generic passthrough' },
 };
 
+/** Project subtypes of `data` (legend order). */
+export const SUBTYPES = ['person', 'task', 'tasks', 'board', 'milestone', 'stats', 'layout'];
+export const subtypeInfo = {
+  person:    { label: 'person',    description: 'a team member { name, role, colour, capacity, load, tasks }' },
+  task:      { label: 'task',      description: 'one card { id, title, assignee, due, priority, column, done }' },
+  tasks:     { label: 'tasks',     description: 'a list of cards / tasks' },
+  board:     { label: 'board',     description: 'a whole board { columns }' },
+  milestone: { label: 'milestone', description: '{ title, date, daysLeft, reached }' },
+  stats:     { label: 'stats',     description: 'board progress { total, done, doneRatio, overdue, blocked, columns, burndown }' },
+  layout:    { label: 'layout',    description: 'an arranged set { items, cols, rows }' },
+};
+
 /**
- * Compatibility of an output type feeding an input type.
+ * Compatibility of an output type feeding an input type (base types only).
  * @returns {'ok'|'coerce'|'invalid'}
  */
 export function compatible(from, to) {
@@ -27,6 +44,30 @@ export function compatible(from, to) {
   return 'invalid';
 }
 export const isCompatible = (from, to) => compatible(from, to) !== 'invalid';
+/**
+ * Compatibility of two port records (or definitions) including subtypes: base types as
+ * `compatible`; `any` on either side ignores subtypes; two subtypes must match; a subtyped input
+ * takes a plain output only when it is `loose`.
+ */
+export function compatiblePorts(from, to) {
+  if (!from || !to) return 'invalid';
+  const k = compatible(from.type, to.type);
+  if (k === 'invalid' || from.type === 'any' || to.type === 'any') return k;
+  const a = from.subtype || null, b = to.subtype || null;
+  if (a && b) return a === b ? k : 'invalid';
+  if (b && !a) return to.loose ? k : 'invalid';
+  return k;
+}
+/** Short name of what a port carries: the subtype when it has one ("person"), else the type. */
+export const portTypeName = (p) => (p && p.subtype ? p.subtype : p ? p.type : '');
+/** One-line description of a port's type for tooltips: "data · person" or "event". */
+export const portTypeText = (p) => (p && p.subtype ? `${p.type} · ${p.subtype}` : p ? p.type : '');
+/** Why two ports do not fit, in plain words (empty when they do). */
+export function mismatchReason(from, to) {
+  if (compatible(from.type, to.type) === 'invalid') return `${from.type} does not fit ${to.type}`;
+  if (compatiblePorts(from, to) === 'invalid') return `${portTypeName(from)} is not ${to.subtype ? 'a ' + to.subtype : 'accepted'}`;
+  return '';
+}
 
 /** Convert a value carried from `from` into what `to` expects (only number→text coerces). */
 export function coerce(value, from, to) {

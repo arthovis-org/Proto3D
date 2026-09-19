@@ -11,8 +11,8 @@
 // grab handles: the tube within `sizes.connection.grabReach` of an end (and the end ring) picks
 // as a "connection end" so the interaction layer can detach and re-route it.
 import * as THREE from 'three';
-import { portTypes, states, sizes, onThemeChange } from './theme.js';
-import { compatible } from './core/types.js';
+import { portTypes, states, sizes, onThemeChange, portColorFor } from './theme.js';
+import { compatiblePorts } from './core/types.js';
 import { routeCurve, laneInfo } from './routing.js';
 
 let flowEnabled = true;
@@ -72,7 +72,8 @@ export class Connection3D extends THREE.Group {
     this.to = isPort(to) ? to : null;
     this.toPoint = isPort(to) ? null : to.clone();
     this.type = (this.from || this.to).type;
-    this.compat = this.from && this.to ? compatible(this.from.type, this.to.type) : 'ok';
+    this.subtype = (this.from || this.to).subtype || null;
+    this.compat = this.from && this.to ? compatiblePorts(this.from, this.to) : 'ok';
     this.valid = this.compat !== 'invalid';
     this.derivedState = this.valid ? 'inactive' : 'invalid';
     this.hovered = false;
@@ -137,9 +138,17 @@ export class Connection3D extends THREE.Group {
   get dimmed() { return this.dimHover || this.dimSelect; }
 
   _typeColor() {
-    // a coerced link (number → text) is drawn in the destination's colour: that is what arrives
-    const t = this.compat === 'coerce' && this.to ? this.to.type : this.type;
-    return (portTypes[t] || portTypes.any).color;
+    // a coerced link (number → text) is drawn in the destination's colour: that is what arrives;
+    // a subtyped port (person, tasks…) lends the cable its own hue
+    const p = this.compat === 'coerce' && this.to ? this.to : (this.from || this.to);
+    return p ? portColorFor(p.type, p.subtype) : portTypes.any.color;
+  }
+  /** Which slot of a multi input this cable ends in: its order among the cables into that port; a preview takes the next free one. */
+  slotIndex() {
+    const to = this.to;
+    if (!to || !to.multi) return -1;
+    const i = this.world ? this.world.linkIndex(this) : -1;
+    return i >= 0 ? i : (to.links || 0);
   }
 
   /* ---------- preview endpoints ---------- */
@@ -151,7 +160,7 @@ export class Connection3D extends THREE.Group {
   /** Attach the free end to a port (snap). */
   setPreviewPort(side, port) {
     if (side === 'from') { this.from = port; this.fromPoint = null; } else { this.to = port; this.toPoint = null; }
-    this.compat = this.from && this.to ? compatible(this.from.type, this.to.type) : 'ok';
+    this.compat = this.from && this.to ? compatiblePorts(this.from, this.to) : 'ok';
     this.rebuild(true);
   }
   /** Legacy helpers (forward preview). */
@@ -160,7 +169,7 @@ export class Connection3D extends THREE.Group {
 
   _endpoints() {
     if (this.from) this.from.getWorldPosition(_a); else _a.copy(this.fromPoint);
-    if (this.to) this.to.getWorldPosition(_b); else _b.copy(this.toPoint);
+    if (this.to) this.to.getWorldPosition(_b, this.slotIndex()); else _b.copy(this.toPoint);
     return [_a, _b];
   }
   /** World position of one end ('from' | 'to'). */

@@ -7,14 +7,20 @@
 //   • event ports are chevron pins pointing in the flow direction (+X): into the body on the
 //     left (inputs), away from it on the right (outputs) — like exec pins in a node editor;
 //   • data ports (number, text, boolean, data, media, any) are spheres;
+//   • multi inputs (accept several cables) are vertical rounded rectangles — Blender's
+//     multi-input socket: one slot per cable, stacked top to bottom in connection order, the
+//     rectangle grows by a slot for every cable (hollow outline when empty, a filled bar per
+//     connected slot, a spare slot with a "+" while a cable hovers) and the ports below shift
+//     down (`relayoutPorts`); event multi inputs stack chevrons the same way;
 //   • a connected port is filled and bright, an unconnected one is a hollow ring in the type
-//     colour (dark core + coloured outline shell); optional ports are slightly smaller and
-//     multi inputs carry a small "+" glyph;
+//     colour (dark core + coloured outline shell); optional ports are slightly smaller;
+//   • a `data` port with a subtype (person, tasks, milestone…) takes the subtype's colour;
 //   • emphasis: 'glow' (compatible target while hovering / dragging: pulsing rim), 'dim'
 //     (incompatible: 35 %), 'reject' (red ring under the pointer).
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import {
-  palette, portTypes, states, sizes, materials, makeLabel, refreshLabel, setLabelText, makeShadowBlob, onThemeChange,
+  palette, states, sizes, materials, makeLabel, refreshLabel, setLabelText, makeShadowBlob, onThemeChange, portColorFor,
 } from './theme.js';
 import { defaultParams, clone } from './core/component.js';
 import { formatValue } from './core/types.js';
@@ -38,39 +44,64 @@ function makePinGeometry() {
   return g;
 }
 const pinGeo = makePinGeometry();
+const SLOT = sizes.port.slot;
+const fillGeo = new THREE.BoxGeometry(SLOT.fillW, SLOT.fillH, SLOT.d + 0.02);
+/** Multi-input rectangle for `n` slots (height = pad + slot height × n); `margin` grows it for the outline shell. */
+export function makeSlotGeometry(n, margin = 0) {
+  const h = SLOT.pad + SLOT.h * Math.max(1, n);
+  const g = new RoundedBoxGeometry(SLOT.w + margin, h + margin, SLOT.d + margin, 2, 0.06 + margin / 2);
+  g.type = 'SlotGeometry'; g.userData.slots = Math.max(1, n); g.userData.height = h;
+  return g;
+}
 let portSeq = 1;
-export const portShapeFor = (type) => (type === 'event' ? 'chevron' : 'sphere');
+/** 'chevron' for events, 'slot' for multi inputs (a rectangle with one slot per cable), 'sphere' for every other value. */
+export const portShapeFor = (type, multi = false, dir = 'in') => (type === 'event' ? 'chevron' : multi && dir === 'in' ? 'slot' : 'sphere');
 
 /**
  * Shared port anatomy. `owner` is the block (or a collapsed group) hosting it. Returns a plain
  * port record that the engine annotates with `value`, `changedAt`, `pulse`, `rate`.
  */
-export function createPort(owner, { key, label, type = 'any', dir = 'in', multi = false, optional = false }) {
+export function createPort(owner, { key, label, type = 'any', subtype = null, loose = false, dir = 'in', multi = false, optional = false }) {
   const sign = dir === 'in' ? -1 : 1;
+  const color0 = portColorFor(type, subtype);
   const group = new THREE.Group();
   const stem = new THREE.Mesh(stemGeo, materials.portStem());
   stem.rotation.z = Math.PI / 2;
   stem.position.x = sign * sizes.port.stem * 0.5;
-  const shape = portShapeFor(type);
-  const geo = shape === 'chevron' ? pinGeo : ballGeo;
-  const mesh = new THREE.Mesh(geo, materials.port(type));
+  const shape = portShapeFor(type, multi, dir);
+  const stacked = multi && dir === 'in';                      // slot rectangle, or stacked chevrons for event multi inputs
+  const geo = shape === 'chevron' ? pinGeo : shape === 'slot' ? makeSlotGeometry(1) : ballGeo;
+  const mesh = new THREE.Mesh(geo, materials.port(type, color0));
   mesh.position.x = sign * sizes.port.stem;
-  const shell = new THREE.Mesh(geo, materials.portShell(type));
+  const shell = new THREE.Mesh(shape === 'slot' ? makeSlotGeometry(1, SLOT.margin) : geo, materials.portShell(type, color0));
   shell.position.copy(mesh.position);
   shell.renderOrder = 1;
   group.add(stem, mesh, shell);
-  const baseScale = (multi ? 1.15 : 1) * (optional ? sizes.port.optionalScale : 1);
+  const baseScale = (multi && shape !== 'slot' ? 1.15 : 1) * (optional ? sizes.port.optionalScale : 1);
   const port = {
     kind: 'port',
-    id: portSeq++, owner, key, label: label || key, name: label || key, type, dir, multi, optional, shape, group, mesh, shell, stem,
-    color: (portTypes[type] || portTypes.any).color,
+    id: portSeq++, owner, key, label: label || key, name: label || key, type, subtype, loose, dir, multi, optional, shape, group, mesh, shell, stem,
+    color: color0,
     baseScale,
+    basePos: [0, 0, 0],       // where the owner placed the port; relayoutPorts() shifts it down under grown multi inputs
+    links: 0,                 // cables ending here (multi inputs grow one slot per cable)
+    slots: 1,                 // slots currently shown (links, plus a spare one while a cable hovers)
+    spare: 0,                 // 1 while the spare slot (with the "+") is shown
+    extraHeight: 0,           // how far this port pushes the ports below it down
+    fills: [],                // per-slot filled bars (slot) or extra chevrons (event multi)
+    pickMeshes: [mesh, shell],
     value: undefined, changedAt: -1, lastPulseAt: -1, pulse: null, rate: 0, changes: 0,
     disabled: false, hovered: false, connected: false, emphasis: null, pulsePhase: 0,
     proxy: null,   // set while the owner sits in a collapsed group: connections attach to the proxy
     labelMesh: null, glyphMesh: null,
-    getWorldPosition(target = new THREE.Vector3()) {
-      if (port.proxy) return port.proxy.getWorldPosition(target);
+    /** World position of the pin, or of slot `index` on a multi input (cables end in their own slot). */
+    getWorldPosition(target = new THREE.Vector3(), index = -1) {
+      if (port.proxy) return port.proxy.getWorldPosition(target, index);
+      if (stacked && index >= 0) {
+        target.set(mesh.position.x, -Math.min(index, port.slots - 1) * SLOT.h, 0);
+        group.updateWorldMatrix(true, false);
+        return group.localToWorld(target);
+      }
       return mesh.getWorldPosition(target);
     },
     /** Direction the cable leaves / enters in world space (+X for outputs, −X for inputs, rotated with the owner). */
@@ -80,31 +111,69 @@ export function createPort(owner, { key, label, type = 'any', dir = 'in', multi 
       if (o && o.isObject3D) target.applyQuaternion(o.getWorldQuaternion(new THREE.Quaternion()));
       return target;
     },
-    setHover(on) { port.hovered = on; port.applyLook(); },
+    setHover(on) { port.hovered = on; port._layoutSlots(); port.applyLook(); },
     setConnected(on) { on = !!on; if (port.connected !== on) { port.connected = on; port.applyLook(); } },
+    /** Number of cables ending on this input; a multi input grows a slot per cable. */
+    setLinkCount(n) { n = Math.max(0, n | 0); if (port.links !== n) { port.links = n; port._layoutSlots(); port.applyLook(); } },
     /** null | 'glow' | 'dim' | 'reject' */
-    setEmphasis(mode) { mode = mode || null; if (port.emphasis !== mode) { port.emphasis = mode; port.applyLook(); } },
+    setEmphasis(mode) { mode = mode || null; if (port.emphasis !== mode) { port.emphasis = mode; port._layoutSlots(); port.applyLook(); } },
     setDisabled(on) { port.disabled = on; port.applyLook(); },
     /** Per-frame pulse for 'glow' emphasis (called by the interaction layer). */
     pulseTick(t) {
       if (port.emphasis !== 'glow') return;
       const k = 0.5 + 0.5 * Math.sin(t * 6 + port.pulsePhase);
       shell.material.opacity = 0.45 + 0.5 * k;
-      shell.scale.setScalar(port.baseScale * (sizes.port.shellScale + 0.22 * k));
+      if (shape === 'slot') shell.scale.setScalar(1 + 0.1 * k);
+      else shell.scale.setScalar(port.baseScale * (sizes.port.shellScale + 0.22 * k));
       mesh.material.emissiveIntensity = 0.7 + 0.6 * k;
+    },
+    /**
+     * Multi inputs: show one slot per cable plus a spare slot with a "+" while a cable hovers
+     * (hovered or a compatible target). Rebuilds the rectangle, moves the stem to its centre and
+     * asks the owner to shift the ports below when the height changed.
+     */
+    _layoutSlots() {
+      if (!stacked) return;
+      const spare = shape === 'slot' && (port.hovered || port.emphasis === 'glow') ? 1 : 0;
+      port.spare = spare;
+      const slots = Math.max(1, port.links + spare);
+      if (slots !== port.slots) {
+        port.slots = slots;
+        if (shape === 'slot') {
+          mesh.geometry.dispose(); mesh.geometry = makeSlotGeometry(slots);
+          shell.geometry.dispose(); shell.geometry = makeSlotGeometry(slots, SLOT.margin);
+        }
+        const cy = -(slots - 1) * SLOT.h / 2;
+        mesh.position.y = cy; shell.position.y = cy; stem.position.y = cy;
+      }
+      // per-slot marks: filled bars inside the rectangle, or extra chevrons for event multi inputs
+      while (port.fills.length < slots) {
+        const i = port.fills.length;
+        const f = shape === 'slot' ? new THREE.Mesh(fillGeo, materials.port(type, port.color)) : new THREE.Mesh(pinGeo, materials.port(type, port.color));
+        f.position.set(mesh.position.x, -i * SLOT.h, 0);
+        f.userData.port = port; f.renderOrder = 1;
+        group.add(f); port.fills.push(f); port.pickMeshes.push(f);
+      }
+      port.fills.forEach((f, i) => { f.visible = shape === 'slot' ? i < port.links : i > 0 && i < slots; });
+      if (port.glyphMesh) { port.glyphMesh.position.set(mesh.position.x, -port.links * SLOT.h, 0.14); port.glyphMesh.visible = spare > 0 && !port.disabled; }
+      const extra = (slots - 1) * SLOT.h;
+      if (extra !== port.extraHeight) { port.extraHeight = extra; owner.relayoutPorts?.(); }
     },
     /** Derive every material property from the state flags. */
     applyLook() {
       const c = port.color;
       const m = mesh.material, sm = shell.material;
+      if (shape === 'slot') { port._applySlotLook(); return; }
       const s = port.baseScale * (port.hovered ? sizes.port.hoverScale : 1);
       mesh.scale.setScalar(s);
       shell.scale.setScalar(s * sizes.port.shellScale);
       m.opacity = 1; sm.opacity = 0.95;
       stem.material.opacity = 1;
+      const fills = port.fills;
       if (port.disabled) {
         m.color.setHex(states.disabled); m.emissive.setHex(states.disabled); m.emissiveIntensity = 0.05;
         shell.visible = false;
+        fills.forEach((f) => { f.material.color.setHex(states.disabled); f.material.emissive.setHex(states.disabled); });
         return;
       }
       if (port.connected || port.hovered) {
@@ -116,6 +185,7 @@ export function createPort(owner, { key, label, type = 'any', dir = 'in', multi 
         m.color.setHex(palette.body); m.emissive.setHex(c); m.emissiveIntensity = 0.1;
         shell.visible = true; sm.color.setHex(c); sm.opacity = 0.95;
       }
+      fills.forEach((f) => { f.material.color.copy(m.color); f.material.emissive.copy(m.emissive); f.material.emissiveIntensity = m.emissiveIntensity; f.material.opacity = 1; f.scale.setScalar(s); });
       switch (port.emphasis) {
         case 'glow':
           shell.visible = true; sm.color.setHex(c); sm.opacity = 0.7;
@@ -124,6 +194,7 @@ export function createPort(owner, { key, label, type = 'any', dir = 'in', multi 
           break;
         case 'dim':
           m.opacity = 0.35; sm.opacity = 0.3; stem.material.opacity = 0.5;
+          fills.forEach((f) => { f.material.opacity = 0.35; });
           break;
         case 'reject':
           shell.visible = true; sm.color.setHex(states.error); sm.opacity = 1;
@@ -133,8 +204,33 @@ export function createPort(owner, { key, label, type = 'any', dir = 'in', multi 
         default: break;
       }
     },
+    /** Slot rectangle: dark core, coloured outline always on (it is a socket), a bright bar per cable. */
+    _applySlotLook() {
+      const c = port.color;
+      const m = mesh.material, sm = shell.material;
+      mesh.scale.setScalar(1);
+      shell.scale.setScalar(port.hovered ? SLOT.hoverScale : 1);
+      m.opacity = 1; stem.material.opacity = 1;
+      if (port.disabled) {
+        m.color.setHex(states.disabled); m.emissive.setHex(states.disabled); m.emissiveIntensity = 0.05;
+        shell.visible = false; port.fills.forEach((f) => { f.visible = false; });
+        if (port.glyphMesh) port.glyphMesh.visible = false;
+        return;
+      }
+      const any = port.links > 0;
+      m.color.setHex(palette.body); m.emissive.setHex(c); m.emissiveIntensity = port.hovered ? 0.35 : any ? 0.18 : 0.08;
+      shell.visible = true; sm.color.setHex(c); sm.opacity = port.hovered ? 1 : any ? 0.95 : 0.8;
+      port.fills.forEach((f, i) => { f.visible = i < port.links; f.material.color.setHex(c); f.material.emissive.setHex(c); f.material.emissiveIntensity = port.hovered ? 1.2 : 0.7; f.material.opacity = 1; });
+      if (port.glyphMesh) port.glyphMesh.visible = !!port.spare;   // only while a cable hovers
+      switch (port.emphasis) {
+        case 'glow': sm.opacity = 0.7; m.emissive.setHex(c); m.emissiveIntensity = 0.5; break;
+        case 'dim': m.opacity = 0.35; sm.opacity = 0.3; stem.material.opacity = 0.5; port.fills.forEach((f) => { f.material.opacity = 0.35; }); break;
+        case 'reject': sm.color.setHex(states.error); sm.opacity = 1; shell.scale.setScalar(1.15); m.emissive.setHex(states.error); m.emissiveIntensity = 0.6; break;
+        default: break;
+      }
+    },
     refreshTheme() {
-      port.color = (portTypes[type] || portTypes.any).color;
+      port.color = portColorFor(type, subtype);
       stem.material.color.setHex(palette.portStem);
       port.applyLook();
     },
@@ -178,6 +274,9 @@ export class Block3D extends THREE.Group {
     this.subSelection = null;  // { kind, id } — a child pickable (card, column, item) the panel edits
     this.world = null;
     this.portLabelSide = 'inside';   // 'outside' for devices (labels would cover the screen)
+    this.dropTarget = false;         // a card is being dragged over this block (assign on drop)
+    this.bodyOffsetY = 0;            // the body's centre relative to the origin when it grew (getAABB)
+    this._portsExtra = 0;            // how much the tallest side of ports grew (multi-input slots)
     this.sideCaptions = null;        // { in, out } small "IN" / "OUT" captions above the port columns
     this._captionAnchor = { in: new THREE.Vector3(NaN, 0, 0), out: new THREE.Vector3(NaN, 0, 0) };
     this._offTheme = onThemeChange(() => this.refreshTheme());
@@ -188,17 +287,41 @@ export class Block3D extends THREE.Group {
 
   _addPort(spec, x, y, z = 0) {
     const port = createPort(this, spec);
+    port.basePos = [x, y, z];
     port.group.position.set(x, y, z);
     this.add(port.group);
     (spec.dir === 'in' ? this.inputs : this.outputs).push(port);
     if (spec.multi) {
-      // stack glyph: a small "+" above the pin says "accepts many links"
-      const g = makeLabel('+', { size: 0.15, color: 'text', weight: 700 });
-      g.position.set(port.mesh.position.x, 0.19, 0.1);
-      port.group.add(g); this.labels.push(g); this.detailLabels.push(g);
+      // "+" glyph: sits in the spare slot of a multi input while a cable hovers ("one more fits here")
+      const g = makeLabel('+', { size: 0.16, color: 'text', weight: 700 });
+      g.position.set(port.mesh.position.x, port.shape === 'slot' ? 0 : 0.19, 0.14);
+      g.visible = port.shape !== 'slot';
+      port.group.add(g); this.labels.push(g);
+      if (port.shape !== 'slot') this.detailLabels.push(g);
       port.glyphMesh = g;
+      port._layoutSlots();
     }
     return port;
+  }
+  /**
+   * Re-place every port from its `basePos`, shifting the ports under a grown multi input down by
+   * its extra height (Blender node behaviour); labels follow. Subclasses may grow their body
+   * through `_onPortsGrow(extra)`.
+   */
+  relayoutPorts() {
+    let most = 0;
+    for (const list of [this.inputs, this.outputs]) {
+      let acc = 0;
+      for (const p of list) {
+        const [x, y, z] = p.basePos;
+        p.group.position.set(x, y - acc, z);
+        if (p.labelMesh) p.labelMesh.position.y = y - acc - (p.extraHeight || 0) / 2;
+        acc += p.extraHeight || 0;
+      }
+      most = Math.max(most, acc);
+    }
+    if (most !== this._portsExtra) { this._portsExtra = most; this._onPortsGrow?.(most); }
+    this.world?.bumpLayout();
   }
   /**
    * A port with its name label beside it (inside the body by default; outside for devices).
@@ -300,10 +423,13 @@ export class Block3D extends THREE.Group {
   setDerivedState(s) { if (this.derivedState !== s) { this.derivedState = s; this.applyVisual(); this.faceDirty = this.faceDirty || this.kind === 'device'; } }
   setHover(on) { if (this.hovered !== on) { this.hovered = on; this.applyVisual(); } }
   setSelected(on) { if (!on) this.subSelection = null; if (this.selected !== on) { this.selected = on; this.applyVisual(); } }
-  /** Rim priority: error > selected > hover > active. Ports grey out when disabled. */
+  /** A card (or another block) is being dragged over this block and will act on it when dropped. */
+  setDropTarget(on) { on = !!on; if (this.dropTarget !== on) { this.dropTarget = on; this.applyVisual(); } }
+  /** Rim priority: error > drop target > selected > hover > active. Ports grey out when disabled. */
   _rimLook() {
     const s = this.derivedState;
     if (s === 'error') return [states.error, 0.6];
+    if (this.dropTarget) return [states.active, 0.75];
     if (this.selected) return [states.selected, 0.55];
     if (this.hovered && s !== 'disabled') return [states.hover, 0.3];
     if (s === 'active') return [states.active, 0.2];
@@ -352,7 +478,7 @@ export class Block3D extends THREE.Group {
   getAABB(box = new THREE.Box3()) {
     const s = this.scale.x || 1;
     const hw = this.width / 2 * s, hh = this.height / 2 * s, hd = Math.max(this.depth / 2, 0.4) * s;
-    const cy = this.position.y + (this.kind === 'device' ? hh : 0);
+    const cy = this.position.y + (this.kind === 'device' ? hh : 0) + (this.bodyOffsetY || 0) * s;
     box.min.set(this.position.x - hw, cy - hh, this.position.z - hd);
     box.max.set(this.position.x + hw, cy + hh, this.position.z + hd);
     return box;
@@ -375,7 +501,7 @@ export class Block3D extends THREE.Group {
     this.def.onDestroy?.(this);
     this.traverse((obj) => {
       if (obj === this) return;
-      if (obj.geometry === pinGeo || obj.geometry === ballGeo || obj.geometry === stemGeo) { obj.material?.dispose?.(); return; }  // shared geometries
+      if (obj.geometry === pinGeo || obj.geometry === ballGeo || obj.geometry === stemGeo || obj.geometry === fillGeo) { obj.material?.dispose?.(); return; }  // shared geometries
       obj.geometry?.dispose?.();
       if (obj.material) {
         obj.material.map?.dispose?.();

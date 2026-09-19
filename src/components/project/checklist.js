@@ -1,5 +1,5 @@
 // Checklist — items with done flags. Edit them in the panel or click a row on the 3D face to
-// toggle it (undoable). `progress` is 0..1; `done` pulses once when every item is complete.
+// toggle it (undoable). `progress` is 0..1; `when complete` pulses once when every item is done.
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { palette } from '../../theme.js';
@@ -12,8 +12,8 @@ const itemsOf = (params) => (Array.isArray(params.items) ? params.items : []);
 
 export default registry.register({
   id: 'checklist', category: 'project', label: 'Checklist', icon: icons.checklist, size: 'M',
-  description: 'Items with done flags; click rows on the face to toggle; progress 0..1 and a done event',
-  outputs: [{ key: 'progress', label: 'progress', type: 'number' }, { key: 'done', label: 'done', type: 'event' }],
+  description: 'A list of items to tick off by clicking the rows on its face',
+  outputs: [{ key: 'progress', label: 'progress', type: 'number' }, { key: 'done', label: 'when complete', type: 'event' }],
   params: [{ key: 'items', label: 'items', type: 'json', default: [{ text: 'Kick-off meeting', done: true }, { text: 'Write the brief', done: false }, { text: 'Review with the team', done: false }], hidden: true }],
   panel: buildChecklistPanel,
   evaluate({ params, state, emit }) {

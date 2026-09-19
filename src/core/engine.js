@@ -4,7 +4,7 @@
 // emitted by Input / Action / device components propagate downstream within the same pass.
 // Cycles are broken by treating back-edges as previous-frame values. Values are cached on
 // connections for display; every output tracks `changedAt` to drive active / inactive looks.
-import { compatible, coerce, equal, makePulse, isPulse } from './types.js';
+import { compatiblePorts, coerce, equal, makePulse, isPulse } from './types.js';
 
 /** How long after a change an output / connection / node still counts as "active" (s). */
 export const ACTIVE_WINDOW = 1.5;
@@ -77,7 +77,7 @@ export class Engine {
     const inbound = new Map();
     const invalidNodes = new Set();
     for (const c of world.connections) {
-      c.valid = !!(c.to && compatible(c.from.type, c.to.type) !== 'invalid');
+      c.valid = !!(c.to && compatiblePorts(c.from, c.to) !== 'invalid');
       if (!c.valid) { if (c.to) { invalidNodes.add(c.from.owner); invalidNodes.add(c.to.owner); } c.value = undefined; continue; }
       if (!inbound.has(c.to)) inbound.set(c.to, []);
       inbound.get(c.to).push(c);
@@ -135,8 +135,9 @@ export class Engine {
         inputs, params: node.params, state: node.state, time: t, dt: this.dt, instance: node, engine: this,
         emit: (key, payload) => { const p = node.getPort(key, 'out'); if (p) { this._pulse(p, payload); emitted.add(p); } },
         touch: (key) => { const p = node.getPort(key, 'out'); if (p) p._touch = true; },
-        upstream: (key) => { const p = node.getPort(key, 'in'); return p ? (inbound.get(p) || []).map((c) => ({ node: c.from.owner, port: c.from, connection: c })) : []; },
-        downstream: (key) => { const p = node.getPort(key, 'out'); return p ? world.connections.filter((c) => c.valid && c.from === p).map((c) => ({ node: c.to.owner, port: c.to, connection: c })) : []; },
+        // relationships, not values: which instances (and their ports) sit on the other end of a port's cables
+        upstream: (key) => { const p = node.getPort(key, 'in'); return p ? (inbound.get(p) || []).map((c) => ({ node: c.from.owner, port: c.from, key: c.from.key, connection: c })) : []; },
+        downstream: (key) => { const p = node.getPort(key, 'out'); return p ? world.connections.filter((c) => c.valid && c.from === p).map((c) => ({ node: c.to.owner, port: c.to, key: c.to.key, connection: c })) : []; },
       };
       node.rt.ctx = ctx;
       node.rt.inputs = inputs;

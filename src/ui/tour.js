@@ -1,6 +1,7 @@
-// ui/tour.js — first-run walkthrough: four steps with a spotlight over the thing being
+// ui/tour.js — first-run walkthrough: five steps with a spotlight over the thing being
 // explained (the Add toolbar, a real output port with a ghost cable running to a compatible
-// input, a card on the board, a cable end) and a small card with Next / Skip. Shown once
+// input, the board's people slot, a card on the board, a cable end) and a small card with
+// Next / Skip. Shown once
 // (localStorage flag) and re-openable from the "?" menu. The backdrop does not swallow pointer
 // events, so the person can try things while reading.
 import * as THREE from 'three';
@@ -13,7 +14,8 @@ export function markTourSeen(key = TOUR_KEY) { try { localStorage.setItem(key, '
 const STEPS = [
   { id: 'toolbar', title: 'Add components', text: 'Add components from the left toolbar: pick a category, then click a component or drag it into the room.' },
   { id: 'connect', title: 'Connect ports', text: 'Connect an output on the right of a node to an input on the left of another. Matching colours fit; chevrons are events, circles carry data.' },
-  { id: 'card', title: 'Edit on the right', text: 'Click a card on the board to edit it in the properties panel on the right. Drag a card to move it between columns.' },
+  { id: 'people', title: 'Plug people into the board', text: 'Plug a person into the board\'s people slot to see their tasks: the rectangle grows one slot per person, the board draws a lane per person and each Person card lists their tasks.' },
+  { id: 'card', title: 'Edit on the right', text: 'Click a card on the board to edit it in the properties panel on the right. Drag a card to move it between columns, or drop it on a Person to assign it.' },
   { id: 'reroute', title: 'Move or remove a cable', text: 'Grab a cable end to move it to another port; drop it on empty space to disconnect. Undo anything with Ctrl+Z.' },
 ];
 
@@ -80,6 +82,13 @@ export class Tour {
           this.ghost = { conn, from, to, k: 0 };
           this.anchor = () => from.getWorldPosition(new THREE.Vector3());
         }
+        break;
+      }
+      case 'people': {
+        const board = nodes.find((n) => n.typeId === 'kanban-board') || null;
+        const slot = board?.getPort('people', 'in') || null;
+        const people = board ? this.world.connections.filter((c) => c.to === slot).map((c) => c.from.owner) : [];
+        if (board) { this.ws.frameBlocks([board, ...people], { fill: 0.6 }); this.anchor = () => slot.getWorldPosition(new THREE.Vector3(), Math.max(0, slot.links - 1) / 2 | 0); }
         break;
       }
       case 'card': {

@@ -9,6 +9,8 @@ export const UNIT_CM = 10;
 
 const CATEGORY_KEYS = ['media', 'text', 'data', 'input', 'logic', 'action', 'transform', 'layout', 'output', 'project', 'devices'];
 const TYPE_KEYS = ['number', 'text', 'boolean', 'data', 'media', 'event', 'any'];
+/** Project subtypes of `data`: their own hues so a person cable never looks like a stats cable. */
+const SUBTYPE_KEYS = ['person', 'task', 'tasks', 'board', 'milestone', 'stats', 'layout'];
 
 export const palettes = {
   dark: {
@@ -51,6 +53,7 @@ export const palettes = {
       action: 0x7a3a5a, transform: 0x3a5382, layout: 0x465a6e, output: 0x5a4b91, project: 0x2a6a63, devices: 0x2a3446,
     },
     portTypes: { number: 0x2dd4bf, text: 0xf5b942, boolean: 0xe25aa6, data: 0x8b7cf6, media: 0xff8a5b, event: 0xf4f6fa, any: 0x9aa7bb },
+    subtypes: { person: 0xff8fa3, task: 0x34c99a, tasks: 0x34c99a, board: 0x6d7cff, milestone: 0xffd36b, stats: 0x7d9cc6, layout: 0xb59cf5 },
     states: { hover: 0x9fb3d1, selected: 0x5aa9ff, active: 0x5aa9ff, error: 0xff4d5e, disabled: 0x3a4252 },
   },
   light: {
@@ -91,6 +94,7 @@ export const palettes = {
       action: 0xdd9dbb, transform: 0x9cb3e4, layout: 0xa9bccb, output: 0xb7a8ea, project: 0x8fd0c8, devices: 0xb0bbcd,
     },
     portTypes: { number: 0x0f9f8f, text: 0xc07f0c, boolean: 0xc2388a, data: 0x6a5cd6, media: 0xd9633a, event: 0x48556b, any: 0x6b7788 },
+    subtypes: { person: 0xd6456a, task: 0x13906a, tasks: 0x13906a, board: 0x4655d6, milestone: 0xb88a12, stats: 0x4d6a94, layout: 0x7a5fd0 },
     states: { hover: 0x6f8bb0, selected: 0x2b7fe0, active: 0x2b7fe0, error: 0xd93848, disabled: 0xa2abb8 },
   },
 };
@@ -101,6 +105,10 @@ export const palette = {};
 export const categories = Object.fromEntries(CATEGORY_KEYS.map((k) => [k, { header: 0 }]));
 /** Port / connection types. One color each, used everywhere. */
 export const portTypes = Object.fromEntries(TYPE_KEYS.map((k) => [k, { color: 0, label: k }]));
+/** Project subtypes (person, tasks, board, milestone, stats, layout): a colour each, falling back to `data`. */
+export const subtypes = Object.fromEntries(SUBTYPE_KEYS.map((k) => [k, { color: 0, label: k }]));
+/** The colour of a port: its subtype's hue when it has one, else its base type's. */
+export const portColorFor = (type, subtype) => (subtype && subtypes[subtype] ? subtypes[subtype].color : (portTypes[type] || portTypes.any).color);
 /** State accent colors (nodes, devices, connections). */
 export const states = { hover: 0, selected: 0, active: 0, error: 0, disabled: 0 };
 
@@ -116,9 +124,10 @@ export function onThemeChange(cb) { listeners.add(cb); return () => listeners.de
 export function setTheme(name, { persist = true } = {}) {
   const src = palettes[name] || palettes.dark;
   currentTheme = palettes[name] ? name : 'dark';
-  for (const k of Object.keys(src)) if (!['categories', 'portTypes', 'states'].includes(k)) palette[k] = src[k];
+  for (const k of Object.keys(src)) if (!['categories', 'portTypes', 'subtypes', 'states'].includes(k)) palette[k] = src[k];
   for (const k of Object.keys(categories)) categories[k].header = src.categories[k] ?? src.headerDefault;
   for (const k of Object.keys(portTypes)) portTypes[k].color = src.portTypes[k];
+  for (const k of Object.keys(subtypes)) subtypes[k].color = src.subtypes?.[k] ?? src.portTypes.data;
   for (const k of Object.keys(states)) states[k] = src.states[k];
   if (typeof document !== 'undefined') document.documentElement.dataset.theme = currentTheme;
   if (persist) { try { localStorage.setItem(STORAGE_KEY, currentTheme); } catch (_) { /* private mode */ } }
@@ -147,6 +156,8 @@ export const sizes = {
     pin: { w: 0.26, h: 0.2, d: 0.11 },   // event pins: pentagon chevron pointing in the flow direction (+X)
     shellScale: 1.32,                    // hollow outline around an unconnected / highlighted port
     optionalScale: 0.85,
+    /** Multi inputs: a vertical rounded rectangle with one slot per cable (Blender multi-input style). */
+    slot: { w: 0.2, h: 0.3, pad: 0.16, d: 0.18, fillW: 0.1, fillH: 0.15, margin: 0.06, hoverScale: 1.1 },
   },
   connection: {
     radius: { inactive: 0.024, idle: 0.035, active: 0.05, selected: 0.06, invalid: 0.035 },
@@ -187,15 +198,15 @@ export const materials = {
   header(color = palette.headerDefault) {
     return new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.05 });
   },
-  port(type = 'any') {
-    const c = (portTypes[type] || portTypes.any).color;
+  port(type = 'any', color = null) {
+    const c = color ?? (portTypes[type] || portTypes.any).color;
     return new THREE.MeshStandardMaterial({
       color: c, emissive: c, emissiveIntensity: 0.35, roughness: 0.35, metalness: 0.1, transparent: true, opacity: 1,
     });
   },
   /** Back-face outline shell around a port: the hollow ring of an unconnected port, the glow of a compatible target. */
-  portShell(type = 'any') {
-    const c = (portTypes[type] || portTypes.any).color;
+  portShell(type = 'any', color = null) {
+    const c = color ?? (portTypes[type] || portTypes.any).color;
     return new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.95, side: THREE.BackSide, depthWrite: false });
   },
   portStem() {
