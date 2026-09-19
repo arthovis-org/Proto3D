@@ -1,6 +1,6 @@
 // node3d.js — Node3D: a rounded slab built from a component definition. Header band (category
 // tint) with the title, in-ports on the left face, out-ports on the right face, an optional
-// live canvas face below the port rows (Media Grid, Text, Display, Log, Input) and a dim
+// live canvas face below the port rows (Text, Display, Log, Input, Dashboard) and a dim
 // footer line with the current output value(s).
 //
 //   ┌──────────────────────────┐  header (category tint)
@@ -87,15 +87,7 @@ export class Node3D extends Block3D {
     def.onCreate?.(this);
   }
 
-  _addNodePort(spec, x, y) {
-    const port = this._addPort(spec, x, y);
-    const label = makeLabel(spec.label, { size: sizes.label.port, color: 'textDim', weight: 500 });
-    const inset = 0.22 + label.userData.worldW / 2;
-    label.position.set(spec.dir === 'in' ? x + inset : x - inset, y, this.depth / 2 + 0.01);
-    this.add(label); this.labels.push(label); this.detailLabels.push(label);
-    port.labelMesh = label;
-    return port;
-  }
+  _addNodePort(spec, x, y) { return this._addLabelledPort(spec, x, y, 0, this.depth / 2 + 0.01); }
 
   /** Live footer (engine). Only redraws when the text changes. */
   setFooter(text) { this.footerText = String(text ?? ''); setLabelText(this.footerLabel, this.footerText || ' '); }

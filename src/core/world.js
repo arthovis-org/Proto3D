@@ -58,6 +58,7 @@ export class World {
     c.visible = true;
     this.scene.add(c);
     this.connections.push(c);
+    from.setConnected?.(true); to.setConnected?.(true);
     this.groups.forEach((g) => g.collapsed && g.refreshProxies(this));
     this.changed('connect');
     return c;
@@ -65,9 +66,22 @@ export class World {
   removeConnection(c) {
     this.scene.remove(c);
     this.connections = this.connections.filter((x) => x !== c);
+    this._syncConnected(c.from); if (c.to) this._syncConnected(c.to);
     this.groups.forEach((g) => g.collapsed && g.refreshProxies(this));
     this.changed('disconnect');
     return c;
+  }
+  /** A port renders filled while at least one link is attached, hollow otherwise. */
+  _syncConnected(port) { port.setConnected?.(this.connections.some((c) => c.from === port || c.to === port)); }
+  /** Ports of `node` that can take a cable coming from `port` (direction and type), never on the same block. */
+  compatiblePorts(port, nodes = this.nodes) {
+    const out = [];
+    for (const n of nodes) {
+      if (n === port.owner || !n.visible) continue;
+      const list = port.dir === 'out' ? n.inputs : n.outputs;
+      for (const p of list) if (!p.proxy && (port.dir === 'out' ? this.canConnect(port, p) : this.canConnect(p, port))) out.push(p);
+    }
+    return out;
   }
   connectionsOf(port) { return this.connections.filter((c) => c.from === port || c.to === port); }
   connectionsOfNode(node) { return this.connections.filter((c) => c.from.owner === node || (c.to && c.to.owner === node)); }

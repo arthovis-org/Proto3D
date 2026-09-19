@@ -1,6 +1,6 @@
 // main.js — boots the platform: theme, workspace, registry (all core components), world model,
-// engine, history, selection, gizmo, interaction, properties panel, Add toolbar, File menu,
-// LOD, autosave, examples and the render loop. Exposes window.__proto for debugging / tests.
+// engine, history, selection, gizmo, interaction, guidance overlays, properties panel, Add
+// toolbar, File / help menus, first-run tour, LOD, autosave, the example and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
 import { createWorkspace } from './workspace.js';
 import { registry } from './components/index.js';
@@ -14,10 +14,12 @@ import { Gizmo } from './gizmo.js';
 import { Panel } from './panel.js';
 import { LeftToolbar } from './ui/toolbar-left.js';
 import { FileMenu } from './ui/file-menu.js';
+import { Overlays } from './ui/overlays.js';
+import { Tour, tourSeen } from './ui/tour.js';
 import { createInstance } from './instance.js';
 import { updateLOD } from './lod.js';
 import { serializeWorld, loadWorld, downloadJSON, pickJSONFile, AutoSave } from './serialize.js';
-import { examples, exampleById, buildExample } from './examples/index.js';
+import { examples, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
 import { portTypes, states, hex, getTheme, toggleTheme, onThemeChange } from './theme.js';
 import { formatValue, typeInfo, kindOf } from './core/types.js';
@@ -37,8 +39,9 @@ world.selection = selection;
 const gizmo = new Gizmo({ camera: ws.camera, renderer: ws.renderer, scene: ws.scene, controls: ws.controls, world, history, onModeChange: () => panel.refresh() });
 const connLabel = $('conn-label');
 let hoveredConnection = null;
+const overlays = new Overlays({ camera: ws.camera, renderer: ws.renderer, world, els: { tip: $('tip'), dragLabel: $('drag-label'), toast: $('toast'), endLabels: $('cable-labels'), emptyHint: $('empty-hint') } });
 const interaction = new Interaction({
-  camera: ws.camera, renderer: ws.renderer, controls: ws.controls, world, selection, history, gizmo, createInstance,
+  camera: ws.camera, renderer: ws.renderer, controls: ws.controls, world, selection, history, gizmo, createInstance, overlays,
   onHoverConnection: (c) => { hoveredConnection = c; connLabel.hidden = !c; },
   onFocus: (blocks) => ws.frameBlocks(blocks, { insetLeft: leftBar?.isOpen ? 300 : 0 }),
   onFrameAll: () => frameAll(),
@@ -92,7 +95,18 @@ const fileMenu = new FileMenu({
 });
 
 /* ---- Legend swatches come from the theme so the overlay never drifts from the 3D language ---- */
+const SHAPE_SVG = {
+  chevron: (c, filled) => `<svg viewBox="0 0 16 12"><path d="M1 1h8l6 5-6 5H1z" fill="${filled ? c : 'none'}" stroke="${c}" stroke-width="1.6"/></svg>`,
+  sphere: (c, filled) => `<svg viewBox="0 0 16 12"><circle cx="8" cy="6" r="4.6" fill="${filled ? c : 'none'}" stroke="${c}" stroke-width="1.6"/></svg>`,
+};
 function buildLegend() {
+  const ev = hex(portTypes.event.color), num = hex(portTypes.number.color);
+  const shapes = $('legend-shapes'); shapes.innerHTML = '';
+  for (const [svg, text, title] of [
+    [SHAPE_SVG.chevron(ev, true), 'chevron = event (a pulse)', 'Event pins point in the flow direction: into the body on the left, away from it on the right'],
+    [SHAPE_SVG.sphere(num, true), 'circle = data (a value)', 'Number, text, boolean, data, media and any carry values'],
+    [SHAPE_SVG.sphere(num, false), 'hollow = not connected', 'A connected pin is filled and bright; an unconnected pin is a hollow ring'],
+  ]) { const li = document.createElement('li'); li.innerHTML = `${svg}${text}`; li.title = title; shapes.appendChild(li); }
   const legend = $('legend-types'); legend.innerHTML = '';
   for (const [name, t] of Object.entries(portTypes)) {
     const li = document.createElement('li');
@@ -124,7 +138,12 @@ $('btn-theme').addEventListener('click', () => toggleTheme());
 $('btn-gizmo').addEventListener('click', () => setGizmo(!gizmo.enabled));
 $('btn-panel').addEventListener('click', () => togglePanel());
 $('btn-frame').addEventListener('click', () => frameAll());
-$('btn-help').addEventListener('click', () => toggleHelp());
+const helpMenu = $('help-menu');
+const closeHelpMenu = () => { helpMenu.hidden = true; $('btn-help').classList.remove('on'); };
+$('btn-help').addEventListener('click', (e) => { e.stopPropagation(); helpMenu.hidden = !helpMenu.hidden; $('btn-help').classList.toggle('on', !helpMenu.hidden); });
+helpMenu.querySelector('[data-action="help"]').addEventListener('click', () => { closeHelpMenu(); toggleHelp(); });
+helpMenu.querySelector('[data-action="tour"]').addEventListener('click', () => { closeHelpMenu(); tour.start(); });
+window.addEventListener('pointerdown', (e) => { if (!helpMenu.contains(e.target) && e.target !== $('btn-help')) closeHelpMenu(); });
 $('btn-undo').addEventListener('click', () => { history.undo(); selection.prune(world); });
 $('btn-redo').addEventListener('click', () => { history.redo(); selection.prune(world); });
 
@@ -161,30 +180,37 @@ window.addEventListener('keydown', (e) => {
 });
 syncToolbar();
 
-/* ---- First scene: the autosave if there is one, otherwise the phone → laptop demo ---- */
+/* ---- First scene: the autosave if there is one, otherwise the project-management scene ---- */
 const saved = autosave.load();
 let restored = false;
 if (saved && saved.nodes && saved.nodes.length) {
   try { loadWorld(world, saved, { camera: ws.camera, controls: ws.controls }); restored = true; } catch (e) { console.warn('autosave ignored:', e.message); }
 }
-if (!restored) loadExample('phone-to-laptop');
+if (!restored) loadExample(DEFAULT_EXAMPLE);
 autosave.enabled = true;
+overlays.setEmptyHint(world.nodes.length === 0);
+
+/* ---- First-run tour: once per browser, re-openable from "?" → Show tour ---- */
+const tour = new Tour({ ws, world, el: $('tour'), onDone: () => frameAll() });
+if (!tourSeen()) setTimeout(() => { if (!tour.active) tour.start(); }, 600);
 
 /* ---- Render loop ---- */
 const clock = new THREE.Clock();
 let panelAcc = 0;
 const _mid = new THREE.Vector3();
+/** Midpoint label: the hovered cable, else the selected one ("Board.done → Start.trigger · event · value"). */
 function updateConnectionLabel() {
-  const c = hoveredConnection;
-  if (!c || !c.visible) { connLabel.hidden = true; return; }
+  const c = hoveredConnection || (selection.size === 1 ? selection.connections[0] : null);
+  if (!c || !c.visible || !c.complete || interaction.connect) { connLabel.hidden = true; return; }
   c.midpoint(_mid).project(ws.camera);
   const r = ws.renderer.domElement.getBoundingClientRect();
   const x = r.left + (_mid.x + 1) / 2 * r.width, y = r.top + (1 - _mid.y) / 2 * r.height;
   connLabel.hidden = _mid.z > 1;
   connLabel.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px) translate(-50%, -120%)`;
-  const dest = c.to ? `${c.to.owner.title} · ${c.to.label}` : '—';
   const typeText = !c.valid ? 'invalid' : c.type === 'any' && c.value !== undefined ? `any · ${kindOf(c.value)}` : c.type;
-  connLabel.innerHTML = `<b style="color:${hex(c.color.getHex())}">${typeText}</b> ${c.from.owner.title} · ${c.from.label} → ${dest}<br><span>${c.valid ? formatValue(c.value, 36) : `${c.from.type} → ${c.to?.type}: incompatible`}</span>`;
+  const path = `${c.from.owner.title}.${c.from.label} → ${c.to.owner.title}.${c.to.label}`;
+  connLabel.classList.toggle('selected', c !== hoveredConnection);
+  connLabel.innerHTML = `<b style="color:${hex(c.color.getHex())}">${typeText}</b> ${path}<br><span>${c.valid ? formatValue(c.value, 36) : `${c.from.type} → ${c.to.type}: incompatible`}</span>`;
 }
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -198,6 +224,9 @@ function frame() {
   world.groups.forEach((g) => g.update(dt));
   updateLOD(world, ws.camera, dt);
   world.connections.forEach((c) => c.update(dt));
+  interaction.update(t, dt);
+  overlays.update();
+  tour.update(dt);
   updateConnectionLabel();
   panelAcc += dt;
   if (panelAcc >= 0.1) { panel.refresh(); panelAcc = 0; }
@@ -208,7 +237,7 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, fileMenu, registry, autosave, examples, THREE,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, fileMenu, registry, autosave, examples, THREE, overlays, tour,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd,
   serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls }),
   load: (doc) => loadWorld(world, doc, { camera: ws.camera, controls: ws.controls }),

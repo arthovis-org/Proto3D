@@ -142,10 +142,18 @@ export const sizes = {
   /** Node footprints by size class: width and face height (0 = no face area). */
   nodeSize: { S: { width: 3.6, faceH: 0 }, M: { width: 4.6, faceH: 2.2 }, L: { width: 6.4, faceH: 3.4 }, XL: { width: 9, faceH: 4.6 } },
   node: { depth: 0.5, radius: 0.14, header: 0.66, footer: 0.42, portTop: 0.3, faceGap: 0.18, minHeight: 2.0 },
-  port: { radius: 0.11, stem: 0.22, gap: 0.55, hoverScale: 1.5 },
+  port: {
+    radius: 0.11, stem: 0.22, gap: 0.55, hoverScale: 1.5,
+    pin: { w: 0.26, h: 0.2, d: 0.11 },   // event pins: pentagon chevron pointing in the flow direction (+X)
+    shellScale: 1.32,                    // hollow outline around an unconnected / highlighted port
+    optionalScale: 0.85,
+  },
   connection: {
     radius: { inactive: 0.024, idle: 0.035, active: 0.05, selected: 0.06, invalid: 0.035 },
-    ringScale: 2.4,
+    ringScale: 3.0,
+    grabReach: 0.9,      // world units from either end that act as a grab handle (re-route / disconnect)
+    snapReach: 1.2,      // magnetic snap distance while dragging a cable
+
     tangent: 0.45,       // handle length as a fraction of endpoint distance
     tangentMin: 1.5,
     wavelength: 7,       // world units per brightness crest of the flow sheen
@@ -182,8 +190,13 @@ export const materials = {
   port(type = 'any') {
     const c = (portTypes[type] || portTypes.any).color;
     return new THREE.MeshStandardMaterial({
-      color: c, emissive: c, emissiveIntensity: 0.35, roughness: 0.35, metalness: 0.1,
+      color: c, emissive: c, emissiveIntensity: 0.35, roughness: 0.35, metalness: 0.1, transparent: true, opacity: 1,
     });
+  },
+  /** Back-face outline shell around a port: the hollow ring of an unconnected port, the glow of a compatible target. */
+  portShell(type = 'any') {
+    const c = (portTypes[type] || portTypes.any).color;
+    return new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.95, side: THREE.BackSide, depthWrite: false });
   },
   portStem() {
     return new THREE.MeshStandardMaterial({ color: palette.portStem, roughness: 0.7 });

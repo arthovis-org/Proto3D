@@ -9,7 +9,8 @@ document describes the layers, the invariants each one keeps and how they fit to
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ UI          ui/toolbar-left.js  panel.js  ui/file-menu.js  interaction.js   │
-│             selection.js  gizmo.js  lod.js  main.js (boot + render loop)     │
+│             ui/overlays.js  ui/tour.js  selection.js  gizmo.js  lod.js      │
+│             main.js (boot + render loop)                                     │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Scene       block3d.js → node3d.js / device3d.js / shape3d.js   connection3d.js │
 │             routing.js  groups.js  faces.js  workspace.js  theme.js         │
@@ -19,7 +20,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Components  components/<category>/<name>.js  (17 core + 10 project)        │
 │ PM layer    pm/model.js (data, no Three.js)  pm/board-ops.js  pm/panel-pm.js │
-│ Examples    examples/*.js                                                    │
+│ Examples    examples/project.js (the default scene) + examples/index.js      │
 │ Persistence serialize.js                                                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -115,37 +116,58 @@ Values are cached on `connection.value` for the hover label and the panel; every
 
 ## 6. World model (`core/world.js`)
 
-`World` owns `nodes` (component instances: `Node3D` / `Device3D`), `connections`
+`World` owns `nodes` (component instances: `Node3D` / `Device3D` / `Shape3D`), `connections`
 (`Connection3D`) and `groups` (`Group3D`), all in one `THREE.Scene`. It offers only low-level
 mutations (`addNode / removeNode / addConnection / removeConnection / addGroup / removeGroup`) and
-helpers (`connectionsOf`, `nextFreeSlot`, `canConnect`, `detectMoves`, `clear`). It emits
+helpers (`connectionsOf`, `nextFreeSlot`, `canConnect`, `compatiblePorts(port)` — the ports on
+other visible blocks a cable from `port` may land on — `detectMoves`, `clear`). `addConnection` /
+`removeConnection` keep every port's `connected` flag in sync (filled vs hollow pin). It emits
 `change` events (autosave) and bumps `layoutVersion` whenever geometry moved (connections
 re-route). Undoable behaviour lives one layer up.
 
 ## 7. Commands and history (`core/commands.js`, `core/history.js`)
 
-Every edit is a `{ label, do(), undo() }`: `addNode, removeNodes, connect, disconnect, transform,
-setParam, setTitle, setEnabled, addGroup, removeGroup, setCollapsed, setGroupTitle, duplicate`
-and `composite`. `History.execute` pushes; `executeCoalesced(key, cmd)` merges rapid edits with
+Every edit is a `{ label, do(), undo() }`: `addNode, removeNodes, connect, disconnect, reroute,
+transform, setParam, setTitle, setEnabled, addGroup, removeGroup, setCollapsed, setGroupTitle,
+duplicate` and `composite`. `disconnect.do` tolerates a link the interaction layer already lifted
+off the world (a cable end being dragged); `reroute(world, conn, from, to)` removes `conn` (if
+still present) and creates the new link, its undo puts the original object back. `History.execute` pushes; `executeCoalesced(key, cmd)` merges rapid edits with
 the same key (typing in a param field, dragging a transform field). `undo / redo` are bound to
 `Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y` and the ↶ ↷ buttons. Removing a node keeps the instance alive
 (not disposed) so undo can re-add the very same object with its connections.
 
 ## 8. Scene objects
 
-- **`Block3D`** (`block3d.js`): shared base — uid, definition, params, state, enabled, ports
-  (`createPort`: stem + coloured sphere; `proxy` redirects the world position while collapsed),
+- **`Block3D`** (`block3d.js`): shared base — uid, definition, params, state, enabled, ports,
   rim, contact shadow, canvas labels, optional face (`_initFace`, `renderFace`, `onFacePointer`,
   `emit`), derived state / hover / selected visuals, LOD blend, `getAABB` (routing), `footprint`
   (group frames, ghosts, free-slot search), `serialize`.
+  **Ports** (`createPort`): a stem plus a typed pin — `shape: 'chevron'` (an extruded pentagon
+  pointing +X, the flow direction) for `event`, `'sphere'` for every data type — and a back-face
+  `shell` of the same geometry. The look is derived in `applyLook()` from four flags:
+  `connected` (filled, bright) vs not (dark core + coloured shell = hollow ring), `hovered`
+  (×1.5), `disabled` (grey) and `emphasis` (`'glow'` pulsing rim for compatible targets,
+  `'dim'` 35 % for incompatible ones, `'reject'` red ring under the pointer). Optional ports are
+  scaled 0.85, multi ports 1.15 with a "+" glyph. `_addLabelledPort` places the name beside the
+  pin (inside the body; outside on devices, `portLabelSide`), and `positionSideCaptions()` keeps
+  a tiny **IN** / **OUT** caption above the first port of each side (re-placed per frame from the
+  first port's position, so bodies that move their ports — the board when columns change — stay
+  correct). `proxy` redirects the world position while the owner sits in a collapsed group.
 - **`Node3D`**: slab + header + port rows + face + footer. Height = header + port rows + face +
   footer; width by `size` (S 3.6, M 4.6, L 6.4 units). Far LOD: detail labels fade, the title lifts
   above the slab and scales with distance.
 - **`Device3D`**: form factors from `sizes.device`; the screen plane is the face (emissive canvas).
 - **`Connection3D`** + **`routing.js`**: tube along the routed curve, one continuous flow sheen
-  (shader), rings at both ends, outline for hover / selected, `dim` uniform for hover isolation,
-  `far` for LOD. Rebuilt only when an endpoint moved, the world `layoutVersion` changed or the
-  radius changed.
+  (shader), rings at both ends, outline for hover / selected, `far` for LOD. Either end may be a
+  **free point** instead of a port (`from` / `fromPoint`, `to` / `toPoint`; `complete` is true
+  for a real link) — that is the preview while a cable is dragged forwards or backwards
+  (`setPreviewPoint(side, p)` / `setPreviewPort(side, port)`). A hidden fat `pickTube`
+  (radius ≥ 0.16) plus the two rings are what the raycaster tests, so a 1-px cable is easy to
+  hover; `endNear(point)` says whether a hit lies within `sizes.connection.grabReach` (0.9) of an
+  end. Dimming has two independent levels combined in `_applyDim`: `dimHover` (another cable is
+  hovered, 25 %) and `dimSelect` (a block this cable does not touch is selected, 40 %).
+  `setEndHover(end)` enlarges the grabbed ring. Rebuilt only when an endpoint moved, the world
+  `layoutVersion` changed or the radius changed.
 - **`Group3D`** (`groups.js`): frame (fill + ring) sized from members' footprints every frame,
   title at the front edge; `setCollapsed` hides members and internal links, builds a slab and
   proxy ports for boundary links (`inner.proxy = proxyPort`), `refreshProxies` on connect /
@@ -201,15 +223,60 @@ step, serialization needs nothing new, and `duplicate` clones a board with its c
 burndown history is per-instance `state` (saved, not undoable). Timelines keep their own tasks in
 `params.tasks` the same way; fed tasks are read from `rt.inputs` and never written.
 
-## 9. Interaction model (`interaction.js`, `selection.js`, `gizmo.js`, `lod.js`)
+## 9. Interaction model (`interaction.js`, `ui/overlays.js`, `ui/tour.js`, `selection.js`, `gizmo.js`, `lod.js`)
 
-Picking order: ports > faces > bodies > connections > group frames. Faces receive
-`{ type: down | drag | up | click, u, v }` in canvas coordinates; a face that handles `down`
-captures the drag (slider), otherwise the press is a normal block drag and a click (no movement)
-is delivered on release (device tap, button). Moves are recorded as one `transform` command per
-drag; the gizmo records one per handle drag. `Selection` holds nodes, groups and connections and
-notifies the panel and the gizmo. `lod.js` computes camera distance per node / connection /
-group with hysteresis; the blocks animate the crossfade.
+**Picking** (`pick()`): ports (pin + shell meshes) > sub pickables > faces > bodies > connections
+(the `pickTube` and the end rings; the hit carries `end: 'from' | 'to' | null` from
+`Connection3D.endNear`) > group frames. Faces receive `{ type: down | drag | up | click, u, v }`
+in canvas coordinates; a face that handles `down` captures the drag (slider), otherwise the press
+is a normal block drag and a click (no movement) is delivered on release (device tap, button).
+Moves are recorded as one `transform` command per drag; the gizmo records one per handle drag.
+
+**Hover.** `_setHover(item, end)` drives one cursor state (`_cursor`: default, `grab` over a
+draggable body / group / cable end, `grabbing` while dragging, `crosshair` over a pin,
+`not-allowed` over an incompatible target, `pointer` over a live face / cable body / sub,
+`move` while the gizmo is hot) and the tooltip (`Overlays.tip`): a port tooltip with name, type,
+value, links and the drag hint; a block tooltip (label + description) after 500 ms; the cable-end
+hint. `_recomputeEmphasis()` rebuilds every port's `emphasis` from scratch — the selected cable's
+two ports glow; when a port is hovered or a cable is being dragged, `world.compatiblePorts(src)`
+glow, every other port on other blocks dims, and the rejected pin under the pointer goes red —
+and `update(time)` pulses the glowing set each frame.
+
+**Cable drags** share one state object `connect = { need, fixed, side, preview, plane, detached,
+origin, snapped, reject }`: `fixed` is the real port the cable stays attached to, `need` the
+direction being looked for (`'in'` when dragging from an output, `'out'` when dragging backwards
+from an input), `side` the preview's free end. `_beginConnect(port)` starts a new cable from an
+output or from an empty / multi input. Pressing a connected single input, or the tube / ring near
+either end of a cable, records `pendingDetach = { conn, end }`; the first movement beyond 4 px
+runs `_beginDetach`, which removes the link from the world **without history**, and the drop
+decides: `_updateConnect` snaps to a port under the pointer (or the nearest compatible port within
+`sizes.connection.snapReach` = 1.2 along the ray), marks a wrong-side / same-block / mismatched
+pin as `reject`, colours the preview and writes the drag label; `_endConnect` then executes
+`connect` (new cable), `reroute` (detached end onto another port), `disconnect` (detached end on
+empty space, with a toast) or puts the link back with no history (dropped on its own port, on an
+incompatible pin, or `Esc` via `cancel()`); a cancelled new cable fades over 0.28 s
+(`fading`). An incompatible drop never creates a link.
+
+**Selection emphasis** (`applySelectionEmphasis`, on every selection and world change): the
+selected nodes (plus members of selected groups) keep their cables at full brightness and every
+other cable gets `dimSelect`; each cable leaving the set is labelled at its far end through
+`Overlays.setEndLabels` (`→ To.port` at the input end, `From.port →` at the output end). A
+selected cable dims the others and the midpoint label in `main.js` shows
+`From.port → To.port · type · value`.
+
+**Overlays** (`ui/overlays.js`) own the HTML layers — tooltip (anchored to a world position and
+re-projected per frame, optional delay), drag label beside the pointer, toast, cable end labels
+(DOM rebuilt only when the label set changes), empty-scene hint (driven by `world.onChange`).
+**Tour** (`ui/tour.js`): four steps with a spotlight (`.tour-spot`, a box-shadow cut-out that
+follows a DOM rect or a projected world point) and a card; step 2 picks a real output port with
+a compatible, preferably unconnected, input on another block, frames both and animates a ghost
+`Connection3D` from the output to the input; step 3 frames the board and spots its first card;
+step 4 spots a cable's input end. The backdrop does not capture pointer events. Seen state is
+`localStorage["proto3d.tour.v1"]`; **? → Show tour** replays it.
+
+`Selection` holds nodes, groups and connections and notifies the panel, the gizmo and the
+interaction layer. `lod.js` computes camera distance per node / connection / group with
+hysteresis; the blocks animate the crossfade.
 
 ## 10. Serialization (`serialize.js`)
 
@@ -234,7 +301,8 @@ the camera. `AutoSave` debounces `world.onChange` into `localStorage["proto3d.wo
 - **A category**: add a row to `CATEGORIES` in `core/registry.js` (label, kind, description) and an
   icon in `icons.js`; the toolbar picks it up. Unknown categories still work (auto-labelled).
 - **A port type**: add it to `TYPES` / `typeInfo` in `core/types.js`, to `portTypes` in both
-  palettes in `theme.js`, and a `compatible` rule if it coerces.
+  palettes in `theme.js`, and a `compatible` rule if it coerces. `portShapeFor` in `block3d.js`
+  decides the pin shape (only `event` is a chevron).
 - **A param control**: extend `PARAM_TYPES` in `core/component.js` and `_buildBlock` in `panel.js`.
 - **An undoable operation**: a command in `core/commands.js` built from `World` mutations.
 

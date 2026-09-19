@@ -11,6 +11,7 @@ export class Device3D extends Block3D {
   constructor(def, o = {}) {
     super(def, o);
     this.type = def.device;
+    this.portLabelSide = 'outside';   // names sit beside the pins, off the screen
     this.meshes = [];      // pickable body parts
     this.themedParts = []; // [mesh, paletteKey]
     const spec = sizes.device[this.type] || sizes.device.phone;
@@ -28,7 +29,7 @@ export class Device3D extends Block3D {
     const cy = this.slab.position.y;
     const place = (list, x) => list.forEach((p, i) => {
       const y = cy + ((list.length - 1) / 2 - i) * sizes.port.gap;
-      this._addPort(p, x, y, this.slab.position.z);
+      this._addLabelledPort(p, x, y, this.slab.position.z, this.slab.position.z + spec.d / 2 + 0.02);
     });
     place(def.inputs, -spec.w / 2);
     place(def.outputs, spec.w / 2);

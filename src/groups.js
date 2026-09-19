@@ -141,6 +141,7 @@ export class Group3D extends THREE.Group {
       const proxy = createPort(this, { key: `${inner.owner.uid}:${inner.key}`, label: `${inner.owner.title} · ${inner.label}`, type: inner.type, dir, multi: inner.multi });
       const y = h / 2 - 1.2 - i * sizes.port.gap;
       proxy.group.position.set(x, y, 0);
+      proxy.setConnected(true);
       this.slab.add(proxy.group);
       const lbl = makeLabel(proxy.label, { size: sizes.label.port, color: 'textDim', weight: 500, maxWidth: w / 2 - 0.6 });
       const inset = 0.22 + lbl.userData.worldW / 2;

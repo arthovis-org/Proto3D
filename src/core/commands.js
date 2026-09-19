@@ -38,8 +38,22 @@ export function connect(world, from, to) {
     undo() { if (conn) world.removeConnection(conn); },
   };
 }
+/** Remove a connection. `do` tolerates a link already detached by the interaction layer (cable-end drag). */
 export function disconnect(world, conn) {
-  return { label: 'Disconnect', do: () => world.removeConnection(conn), undo: () => world.addConnection(conn.from, conn.to, { instance: conn }) };
+  return { label: 'Disconnect', do: () => { if (world.connections.includes(conn)) world.removeConnection(conn); }, undo: () => world.addConnection(conn.from, conn.to, { instance: conn }) };
+}
+/**
+ * Move one end of an existing connection to another port (drag a cable end onto a compatible port).
+ * `conn` may already be detached from the world; undo puts the original link back.
+ */
+export function reroute(world, conn, from, to) {
+  let made = null;
+  return {
+    label: 'Re-route connection',
+    do() { if (world.connections.includes(conn)) world.removeConnection(conn); made = world.addConnection(from, to, made ? { instance: made } : {}); },
+    undo() { if (made) world.removeConnection(made); world.addConnection(conn.from, conn.to, { instance: conn }); },
+    get connection() { return made; },
+  };
 }
 
 /** Move (and optionally rotate / scale) a set of nodes: before/after snapshots. */

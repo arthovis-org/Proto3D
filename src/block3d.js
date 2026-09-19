@@ -1,7 +1,17 @@
 // block3d.js — Block3D: everything a node and a device share. A block is a registered
 // component instance in the scene: definition, params, per-instance state, typed ports,
 // a rim for hover / selected / error, a fake contact shadow, canvas labels, an optional live
-// canvas face and level-of-detail blending. Node3D and Device3D only add geometry.
+// canvas face and level-of-detail blending. Node3D, Device3D and Shape3D only add geometry.
+//
+// Port anatomy (createPort): a short stem out of the side face + a typed pin.
+//   • event ports are chevron pins pointing in the flow direction (+X): into the body on the
+//     left (inputs), away from it on the right (outputs) — like exec pins in a node editor;
+//   • data ports (number, text, boolean, data, media, any) are spheres;
+//   • a connected port is filled and bright, an unconnected one is a hollow ring in the type
+//     colour (dark core + coloured outline shell); optional ports are slightly smaller and
+//     multi inputs carry a small "+" glyph;
+//   • emphasis: 'glow' (compatible target while hovering / dragging: pulsing rim), 'dim'
+//     (incompatible: 35 %), 'reject' (red ring under the pointer).
 import * as THREE from 'three';
 import {
   palette, portTypes, states, sizes, materials, makeLabel, refreshLabel, setLabelText, makeShadowBlob, onThemeChange,
@@ -17,12 +27,23 @@ export function bumpUidCounter(n) { nextUid = Math.max(nextUid, n + 1); }
 
 const ballGeo = new THREE.SphereGeometry(sizes.port.radius, 20, 14);
 const stemGeo = new THREE.CylinderGeometry(sizes.port.radius * 0.45, sizes.port.radius * 0.45, sizes.port.stem, 10);
+/** Pentagon "exec pin" pointing +X, extruded in Z and centred. */
+function makePinGeometry() {
+  const { w, h, d } = sizes.port.pin;
+  const s = new THREE.Shape();
+  s.moveTo(-w / 2, -h / 2); s.lineTo(w * 0.08, -h / 2); s.lineTo(w / 2, 0); s.lineTo(w * 0.08, h / 2); s.lineTo(-w / 2, h / 2); s.closePath();
+  const g = new THREE.ExtrudeGeometry(s, { depth: d, bevelEnabled: false });
+  g.translate(0, 0, -d / 2);
+  g.computeVertexNormals();
+  return g;
+}
+const pinGeo = makePinGeometry();
 let portSeq = 1;
+export const portShapeFor = (type) => (type === 'event' ? 'chevron' : 'sphere');
 
 /**
- * Shared port anatomy: a short stem out of the face + a colored sphere.
- * `owner` is the block (or a collapsed group) hosting it. Returns a plain port record that the
- * engine annotates with `value`, `changedAt`, `pulse`, `rate`.
+ * Shared port anatomy. `owner` is the block (or a collapsed group) hosting it. Returns a plain
+ * port record that the engine annotates with `value`, `changedAt`, `pulse`, `rate`.
  */
 export function createPort(owner, { key, label, type = 'any', dir = 'in', multi = false, optional = false }) {
   const sign = dir === 'in' ? -1 : 1;
@@ -30,42 +51,99 @@ export function createPort(owner, { key, label, type = 'any', dir = 'in', multi 
   const stem = new THREE.Mesh(stemGeo, materials.portStem());
   stem.rotation.z = Math.PI / 2;
   stem.position.x = sign * sizes.port.stem * 0.5;
-  const ball = new THREE.Mesh(ballGeo, materials.port(type));
-  ball.position.x = sign * sizes.port.stem;
-  if (multi) ball.scale.set(1.15, 1.15, 1.15);
-  group.add(stem, ball);
+  const shape = portShapeFor(type);
+  const geo = shape === 'chevron' ? pinGeo : ballGeo;
+  const mesh = new THREE.Mesh(geo, materials.port(type));
+  mesh.position.x = sign * sizes.port.stem;
+  const shell = new THREE.Mesh(geo, materials.portShell(type));
+  shell.position.copy(mesh.position);
+  shell.renderOrder = 1;
+  group.add(stem, mesh, shell);
+  const baseScale = (multi ? 1.15 : 1) * (optional ? sizes.port.optionalScale : 1);
   const port = {
-    id: portSeq++, owner, key, label: label || key, name: label || key, type, dir, multi, optional, group, mesh: ball, stem,
+    kind: 'port',
+    id: portSeq++, owner, key, label: label || key, name: label || key, type, dir, multi, optional, shape, group, mesh, shell, stem,
     color: (portTypes[type] || portTypes.any).color,
-    baseEmissive: 0.35,
+    baseScale,
     value: undefined, changedAt: -1, lastPulseAt: -1, pulse: null, rate: 0, changes: 0,
-    disabled: false, hovered: false,
+    disabled: false, hovered: false, connected: false, emphasis: null, pulsePhase: 0,
     proxy: null,   // set while the owner sits in a collapsed group: connections attach to the proxy
+    labelMesh: null, glyphMesh: null,
     getWorldPosition(target = new THREE.Vector3()) {
       if (port.proxy) return port.proxy.getWorldPosition(target);
-      return ball.getWorldPosition(target);
+      return mesh.getWorldPosition(target);
     },
-    setHover(on) {
-      port.hovered = on;
-      const s = (on ? sizes.port.hoverScale : 1) * (multi ? 1.15 : 1);
-      ball.scale.setScalar(s);
-      ball.material.emissiveIntensity = on ? 1.2 : port.baseEmissive;
+    /** Direction the cable leaves / enters in world space (+X for outputs, −X for inputs, rotated with the owner). */
+    getWorldDirection(target = new THREE.Vector3()) {
+      target.set(sign, 0, 0);
+      const o = port.proxy ? port.proxy.owner : owner;
+      if (o && o.isObject3D) target.applyQuaternion(o.getWorldQuaternion(new THREE.Quaternion()));
+      return target;
     },
-    setDisabled(on) {
-      port.disabled = on;
-      const c = on ? states.disabled : port.color;
-      ball.material.color.setHex(c);
-      ball.material.emissive.setHex(c);
-      ball.material.emissiveIntensity = on ? 0.05 : port.baseEmissive;
+    setHover(on) { port.hovered = on; port.applyLook(); },
+    setConnected(on) { on = !!on; if (port.connected !== on) { port.connected = on; port.applyLook(); } },
+    /** null | 'glow' | 'dim' | 'reject' */
+    setEmphasis(mode) { mode = mode || null; if (port.emphasis !== mode) { port.emphasis = mode; port.applyLook(); } },
+    setDisabled(on) { port.disabled = on; port.applyLook(); },
+    /** Per-frame pulse for 'glow' emphasis (called by the interaction layer). */
+    pulseTick(t) {
+      if (port.emphasis !== 'glow') return;
+      const k = 0.5 + 0.5 * Math.sin(t * 6 + port.pulsePhase);
+      shell.material.opacity = 0.45 + 0.5 * k;
+      shell.scale.setScalar(port.baseScale * (sizes.port.shellScale + 0.22 * k));
+      mesh.material.emissiveIntensity = 0.7 + 0.6 * k;
+    },
+    /** Derive every material property from the state flags. */
+    applyLook() {
+      const c = port.color;
+      const m = mesh.material, sm = shell.material;
+      const s = port.baseScale * (port.hovered ? sizes.port.hoverScale : 1);
+      mesh.scale.setScalar(s);
+      shell.scale.setScalar(s * sizes.port.shellScale);
+      m.opacity = 1; sm.opacity = 0.95;
+      stem.material.opacity = 1;
+      if (port.disabled) {
+        m.color.setHex(states.disabled); m.emissive.setHex(states.disabled); m.emissiveIntensity = 0.05;
+        shell.visible = false;
+        return;
+      }
+      if (port.connected || port.hovered) {
+        // filled and bright
+        m.color.setHex(c); m.emissive.setHex(c); m.emissiveIntensity = port.hovered ? 1.2 : 0.6;
+        shell.visible = false;
+      } else {
+        // hollow: dark core with a coloured outline
+        m.color.setHex(palette.body); m.emissive.setHex(c); m.emissiveIntensity = 0.1;
+        shell.visible = true; sm.color.setHex(c); sm.opacity = 0.95;
+      }
+      switch (port.emphasis) {
+        case 'glow':
+          shell.visible = true; sm.color.setHex(c); sm.opacity = 0.7;
+          m.color.setHex(c); m.emissive.setHex(c); m.emissiveIntensity = 0.9;
+          shell.scale.setScalar(port.baseScale * (sizes.port.shellScale + 0.1));
+          break;
+        case 'dim':
+          m.opacity = 0.35; sm.opacity = 0.3; stem.material.opacity = 0.5;
+          break;
+        case 'reject':
+          shell.visible = true; sm.color.setHex(states.error); sm.opacity = 1;
+          shell.scale.setScalar(port.baseScale * (sizes.port.shellScale + 0.3));
+          m.color.setHex(states.error); m.emissive.setHex(states.error); m.emissiveIntensity = 0.8;
+          break;
+        default: break;
+      }
     },
     refreshTheme() {
       port.color = (portTypes[type] || portTypes.any).color;
       stem.material.color.setHex(palette.portStem);
-      port.setDisabled(port.disabled);
+      port.applyLook();
     },
   };
-  ball.userData.port = port;
+  stem.material.transparent = true;
+  mesh.userData.port = port;
+  shell.userData.port = port;
   stem.userData.port = port;
+  port.applyLook();
   return port;
 }
 
@@ -99,6 +177,9 @@ export class Block3D extends THREE.Group {
     this.faceDirty = true;
     this.subSelection = null;  // { kind, id } — a child pickable (card, column, item) the panel edits
     this.world = null;
+    this.portLabelSide = 'inside';   // 'outside' for devices (labels would cover the screen)
+    this.sideCaptions = null;        // { in, out } small "IN" / "OUT" captions above the port columns
+    this._captionAnchor = { in: new THREE.Vector3(NaN, 0, 0), out: new THREE.Vector3(NaN, 0, 0) };
     this._offTheme = onThemeChange(() => this.refreshTheme());
   }
 
@@ -110,7 +191,52 @@ export class Block3D extends THREE.Group {
     port.group.position.set(x, y, z);
     this.add(port.group);
     (spec.dir === 'in' ? this.inputs : this.outputs).push(port);
+    if (spec.multi) {
+      // stack glyph: a small "+" above the pin says "accepts many links"
+      const g = makeLabel('+', { size: 0.15, color: 'text', weight: 700 });
+      g.position.set(port.mesh.position.x, 0.19, 0.1);
+      port.group.add(g); this.labels.push(g); this.detailLabels.push(g);
+      port.glyphMesh = g;
+    }
     return port;
+  }
+  /**
+   * A port with its name label beside it (inside the body by default; outside for devices).
+   * `zFront` is where labels sit (the front face of the body).
+   */
+  _addLabelledPort(spec, x, y, z = 0, zFront = this.depth / 2 + 0.01) {
+    const port = this._addPort(spec, x, y, z);
+    const label = makeLabel(spec.label, { size: sizes.label.port, color: 'textDim', weight: 500 });
+    const inset = 0.22 + label.userData.worldW / 2;
+    const inside = this.portLabelSide === 'inside';
+    const lx = spec.dir === 'in' ? (inside ? x + inset : x - inset - sizes.port.stem) : (inside ? x - inset : x + inset + sizes.port.stem);
+    label.position.set(lx, y, inside ? zFront : z + 0.02);
+    this.add(label); this.labels.push(label); this.detailLabels.push(label);
+    port.labelMesh = label;
+    return port;
+  }
+  /** Position (or create) the "IN" / "OUT" captions above the first port of each side. Cheap; called per frame. */
+  positionSideCaptions() {
+    const zFront = this.depth / 2 + 0.01;
+    const inside = this.portLabelSide === 'inside';
+    for (const dir of ['in', 'out']) {
+      const first = (dir === 'in' ? this.inputs : this.outputs)[0];
+      if (!first) continue;
+      const p = first.group.position;
+      const anchor = this._captionAnchor[dir];
+      if (anchor.equals(p)) continue;
+      anchor.copy(p);
+      if (!this.sideCaptions) this.sideCaptions = {};
+      let cap = this.sideCaptions[dir];
+      if (!cap) {
+        cap = makeLabel(dir === 'in' ? 'IN' : 'OUT', { size: 0.13, color: 'textDim', weight: 700 });
+        this.add(cap); this.labels.push(cap); this.detailLabels.push(cap);
+        this.sideCaptions[dir] = cap;
+      }
+      const w = cap.userData.worldW;
+      const x = dir === 'in' ? (inside ? p.x + 0.22 + w / 2 : p.x - 0.22 - sizes.port.stem - w / 2) : (inside ? p.x - 0.22 - w / 2 : p.x + 0.22 + sizes.port.stem + w / 2);
+      cap.position.set(x, p.y + sizes.port.gap * 0.52, inside ? zFront : p.z + 0.02);
+    }
   }
 
   /* ---------- face: a live canvas on the body ---------- */
@@ -200,6 +326,7 @@ export class Block3D extends THREE.Group {
     const target = this.lod ? 1 : 0;
     if (Math.abs(this.lodBlend - target) >= 0.002) this.lodBlend += (target - this.lodBlend) * Math.min(1, dt * 6);
     else this.lodBlend = target;
+    this.positionSideCaptions();
     this._applyLOD();
   }
   _applyLOD() {
@@ -248,6 +375,7 @@ export class Block3D extends THREE.Group {
     this.def.onDestroy?.(this);
     this.traverse((obj) => {
       if (obj === this) return;
+      if (obj.geometry === pinGeo || obj.geometry === ballGeo || obj.geometry === stemGeo) { obj.material?.dispose?.(); return; }  // shared geometries
       obj.geometry?.dispose?.();
       if (obj.material) {
         obj.material.map?.dispose?.();

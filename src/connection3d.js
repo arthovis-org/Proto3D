@@ -3,7 +3,13 @@
 // crest travelling along the tube at constant velocity (plus a faint stream of soft dashes).
 // Looks are derived from data: inactive (carries nothing) is thin and dim, active (value
 // changed within ~1.5 s) is thicker and brighter, invalid (type mismatch) is red and dashed.
-// Hovering another connection dims this one to ~25 % so a single path can be followed.
+// Hovering another connection dims this one to ~25 %; selecting a block dims every cable that
+// does not touch it to 40 %.
+//
+// Either end may be a free point instead of a port: that is the preview while a cable is being
+// dragged (from an output forwards, or from an input backwards). Both ends of a real link are
+// grab handles: the tube within `sizes.connection.grabReach` of an end (and the end ring) picks
+// as a "connection end" so the interaction layer can detach and re-route it.
 import * as THREE from 'three';
 import { portTypes, states, sizes, onThemeChange } from './theme.js';
 import { compatible } from './core/types.js';
@@ -50,26 +56,30 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3();
 const ringGeo = new THREE.TorusGeometry(1, 0.22, 8, 24);
 const burstGeo = new THREE.SphereGeometry(1, 12, 10);
 const MAX_BURSTS = 6;
+const isPort = (x) => !!(x && x.kind === 'port');
 
 export class Connection3D extends THREE.Group {
   /**
-   * @param {object} from  a port record (dir 'out')
-   * @param {object|THREE.Vector3} to  a port record (dir 'in') or a free point (preview)
+   * @param {object|THREE.Vector3} from  a port record (dir 'out') or a free point (preview dragged backwards)
+   * @param {object|THREE.Vector3} to    a port record (dir 'in') or a free point (preview)
    */
   constructor(from, to, opts = {}) {
     super();
     this.kind = 'connection';
     this.uid = opts.uid || `c${Math.random().toString(36).slice(2, 8)}`;
-    this.from = from;
-    this.to = to && to.isVector3 ? null : to;
-    this.toPoint = to && to.isVector3 ? to.clone() : null;
-    this.type = from.type;
-    this.compat = this.to ? compatible(from.type, this.to.type) : 'ok';
+    this.from = isPort(from) ? from : null;
+    this.fromPoint = isPort(from) ? null : from.clone();
+    this.to = isPort(to) ? to : null;
+    this.toPoint = isPort(to) ? null : to.clone();
+    this.type = (this.from || this.to).type;
+    this.compat = this.from && this.to ? compatible(this.from.type, this.to.type) : 'ok';
     this.valid = this.compat !== 'invalid';
     this.derivedState = this.valid ? 'inactive' : 'invalid';
     this.hovered = false;
+    this.hoveredEnd = null;   // 'from' | 'to' while the pointer is over a grab handle
     this.selected = false;
-    this.dimmed = false;
+    this.dimHover = false;    // another connection is hovered
+    this.dimSelect = false;   // a block that this link does not touch is selected
     this.far = false;
     this.value = undefined;
     this.velocity = 1.2;
@@ -91,19 +101,29 @@ export class Connection3D extends THREE.Group {
     this.tube.userData.connection = this;
     this.add(this.tube);
 
+    // a fat invisible tube makes the thin cable easy to hover and grab (raycast ignores visibility)
+    this.pickTube = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ visible: false }));
+    this.pickTube.userData.connection = this;
+    this.pickTube.visible = false;
+    this.add(this.pickTube);
+
     this.outline = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
       color: states.selected, transparent: true, opacity: 0.45, side: THREE.BackSide, depthWrite: false,
     }));
     this.outline.visible = false;
     this.add(this.outline);
 
-    const ringMat = new THREE.MeshBasicMaterial({ color: this.color, transparent: true, opacity: 0.9 });
-    this.rings = [new THREE.Mesh(ringGeo, ringMat), new THREE.Mesh(ringGeo, ringMat)];
-    this.rings.forEach((r) => { r.userData.connection = this; this.add(r); });
+    // end caps: rings at both ends double as grab handles
+    this.rings = [0, 1].map((end) => {
+      const r = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: this.color, transparent: true, opacity: 0.9 }));
+      r.userData.connection = this; r.userData.end = end === 0 ? 'from' : 'to';
+      this.add(r);
+      return r;
+    });
 
     // token bursts: a bright bead runs the length of an event link whenever a pulse passes
     this.bursts = [];
-    this._seenPulseAt = from.lastPulseAt ?? -1;
+    this._seenPulseAt = this.from?.lastPulseAt ?? -1;
     this._p0 = new THREE.Vector3(); this._p3 = new THREE.Vector3();
     this._radius = 0;
     this._layoutVersion = -1;
@@ -112,19 +132,44 @@ export class Connection3D extends THREE.Group {
     this._offTheme = onThemeChange(() => this.refreshTheme());
   }
 
+  /** True for a real link (both ends are ports). */
+  get complete() { return !!(this.from && this.to); }
+  get dimmed() { return this.dimHover || this.dimSelect; }
+
   _typeColor() {
     // a coerced link (number → text) is drawn in the destination's colour: that is what arrives
     const t = this.compat === 'coerce' && this.to ? this.to.type : this.type;
     return (portTypes[t] || portTypes.any).color;
   }
 
-  setPreviewTarget(point) { this.toPoint = point.clone(); this.to = null; this.compat = 'ok'; this.rebuild(true); }
-  setTargetPort(port) { this.to = port; this.toPoint = null; this.compat = compatible(this.from.type, port.type); this.rebuild(true); }
+  /* ---------- preview endpoints ---------- */
+  /** Move the free end (`side` = 'from' | 'to') to a point. */
+  setPreviewPoint(side, point) {
+    if (side === 'from') { this.fromPoint = point.clone(); this.from = null; } else { this.toPoint = point.clone(); this.to = null; }
+    this.compat = 'ok'; this.rebuild(true);
+  }
+  /** Attach the free end to a port (snap). */
+  setPreviewPort(side, port) {
+    if (side === 'from') { this.from = port; this.fromPoint = null; } else { this.to = port; this.toPoint = null; }
+    this.compat = this.from && this.to ? compatible(this.from.type, this.to.type) : 'ok';
+    this.rebuild(true);
+  }
+  /** Legacy helpers (forward preview). */
+  setPreviewTarget(point) { this.setPreviewPoint('to', point); }
+  setTargetPort(port) { this.setPreviewPort('to', port); }
 
   _endpoints() {
-    this.from.getWorldPosition(_a);
+    if (this.from) this.from.getWorldPosition(_a); else _a.copy(this.fromPoint);
     if (this.to) this.to.getWorldPosition(_b); else _b.copy(this.toPoint);
     return [_a, _b];
+  }
+  /** World position of one end ('from' | 'to'). */
+  endPosition(side, target = new THREE.Vector3()) { return target.copy(side === 'from' ? this._p0 : this._p3); }
+  /** Which end (if any) a world point is close enough to grab; null in the middle of the cable. */
+  endNear(point, reach = sizes.connection.grabReach) {
+    const d0 = point.distanceTo(this._p0), d3 = point.distanceTo(this._p3);
+    if (d0 > reach && d3 > reach) return null;
+    return d0 <= d3 ? 'from' : 'to';
   }
 
   /** Rebuild the tube when endpoints moved, the world layout changed or when forced. */
@@ -137,9 +182,9 @@ export class Connection3D extends THREE.Group {
     this._p0.copy(p0); this._p3.copy(p3); this._layoutVersion = lv; this._radius = r;
 
     const world = this.world;
-    const skip = new Set([this.from.owner, this.to?.owner].filter(Boolean));
+    const skip = new Set([this.from?.owner, this.to?.owner].filter(Boolean));
     const curve = routeCurve(p0, p3, {
-      lanes: world && this.to ? laneInfo(this, world.connections) : null,
+      lanes: world && this.complete ? laneInfo(this, world.connections) : null,
       obstacles: world ? world.nodes : [],
       skip,
     });
@@ -148,15 +193,20 @@ export class Connection3D extends THREE.Group {
     const segs = Math.max(24, Math.min(110, Math.round(dist * 4)));
     this.tube.geometry.dispose();
     this.tube.geometry = new THREE.TubeGeometry(curve, segs, r, 8, false);
+    this.pickTube.geometry.dispose();
+    this.pickTube.geometry = new THREE.TubeGeometry(curve, Math.max(12, Math.round(segs / 2)), Math.max(r * 3, 0.16), 6, false);
     this.outline.geometry.dispose();
     this.outline.geometry = new THREE.TubeGeometry(curve, segs, r + 0.04, 8, false);
     this.uniforms.tubeLen.value = curve.getLength();
 
-    const rs = r * sizes.connection.ringScale;
     const z = new THREE.Vector3(0, 0, 1);
     this.rings[0].position.copy(p0); this.rings[0].quaternion.setFromUnitVectors(z, curve.getTangent(0));
     this.rings[1].position.copy(p3); this.rings[1].quaternion.setFromUnitVectors(z, curve.getTangent(1));
-    this.rings.forEach((rg) => rg.scale.setScalar(rs));
+    this._scaleRings();
+  }
+  _scaleRings() {
+    const rs = this._radius * sizes.connection.ringScale;
+    this.rings.forEach((rg) => rg.scale.setScalar(rs * (this.hoveredEnd === rg.userData.end ? 1.7 : 1)));
   }
 
   /** Point at the middle of the path (hover label anchor). */
@@ -174,13 +224,22 @@ export class Connection3D extends THREE.Group {
     if (this.derivedState === s) return;
     this.derivedState = s;
     this.valid = s !== 'invalid';
-    this.velocity = s === 'active' ? 1.2 + Math.min(this.from.rate || 0, 10) * 0.45 : s === 'idle' ? 1.2 : 0.3;
+    this.velocity = s === 'active' ? 1.2 + Math.min(this.from?.rate || 0, 10) * 0.45 : s === 'idle' ? 1.2 : 0.3;
     this._applyLook();
   }
   setSelected(on) { this.selected = on; this._applyLook(); }
-  setHover(on) { this.hovered = on; this._applyLook(); }
-  /** Hover isolation: other connections drop to ~25 %. */
-  setDim(on) { this.dimmed = on; this.uniforms.dim.value = on ? 0.25 : 1; this.rings.forEach((rg) => { rg.material.opacity = on ? 0.2 : 0.9; }); }
+  setHover(on) { this.hovered = on; if (!on) this.hoveredEnd = null; this._applyLook(); this._scaleRings(); }
+  /** Pointer over a grab handle: enlarge that end's ring. */
+  setEndHover(end) { if (this.hoveredEnd !== end) { this.hoveredEnd = end; this._scaleRings(); this._applyLook(); } }
+  /** Hover isolation: other connections drop to ~25 % (legacy signature kept). */
+  setDim(on) { this.dimHover = !!on; this._applyDim(); }
+  /** Selection focus: cables not touching the selected block drop to 40 %. */
+  setDimSelect(on) { this.dimSelect = !!on; this._applyDim(); }
+  _applyDim() {
+    const dim = this.dimHover ? 0.25 : this.dimSelect ? 0.4 : 1;
+    this.uniforms.dim.value = dim;
+    this.rings.forEach((rg) => { rg.material.opacity = (this.derivedState === 'inactive' ? 0.4 : 0.9) * (dim === 1 ? 1 : dim * 0.9); });
+  }
   setFar(on) { if (this.far !== on) { this.far = on; } }
 
   _applyLook() {
@@ -194,10 +253,11 @@ export class Connection3D extends THREE.Group {
       case 'inactive': u.baseAlpha.value = 0.3; u.glow.value = 0.25; break;
       default:         u.baseAlpha.value = 0.7; u.glow.value = 0.9;
     }
-    if (this.selected) u.baseAlpha.value = Math.max(u.baseAlpha.value, 0.6);
+    if (this.selected || this.hovered) u.baseAlpha.value = Math.max(u.baseAlpha.value, 0.75);
     this.outline.visible = this.selected || this.hovered;
     this.outline.material.color.setHex(this.selected ? states.selected : states.hover);
-    this.rings.forEach((rg) => { rg.material.color.copy(u.color.value); rg.material.opacity = this.dimmed ? 0.2 : this.derivedState === 'inactive' ? 0.4 : 0.9; });
+    this.rings.forEach((rg) => { rg.material.color.copy(this.hoveredEnd === rg.userData.end ? new THREE.Color(states.hover) : u.color.value); });
+    this._applyDim();
   }
 
   refreshTheme() { this._applyLook(); }
@@ -209,7 +269,7 @@ export class Connection3D extends THREE.Group {
   }
   /** Spawn a bead when the source port pulsed since we last looked; advance the beads along the curve. */
   _updateBursts(dt) {
-    if (this.type === 'event' && this.to && this.valid) {
+    if (this.type === 'event' && this.complete && this.valid) {
       const lp = this.from.lastPulseAt ?? -1;
       if (lp > this._seenPulseAt) { this._seenPulseAt = lp; if (this.visible) this.burst(); }
     }
@@ -223,7 +283,8 @@ export class Connection3D extends THREE.Group {
       const fade = b.k < 0.15 ? b.k / 0.15 : b.k > 0.8 ? (1 - b.k) / 0.2 : 1;
       const r = this._radius * 3.2;
       b.core.scale.setScalar(r); b.halo.scale.setScalar(r * 2.2 * (0.8 + 0.2 * Math.sin(b.k * 20)));
-      b.core.material.opacity = 0.95 * fade * (this.dimmed ? 0.3 : 1); b.halo.material.opacity = 0.28 * fade * (this.dimmed ? 0.3 : 1);
+      const dimK = this.dimmed ? 0.3 : 1;
+      b.core.material.opacity = 0.95 * fade * dimK; b.halo.material.opacity = 0.28 * fade * dimK;
     }
   }
   /** Visible token: white-hot core + type-coloured halo travelling from `from` to `to`. */
@@ -237,14 +298,14 @@ export class Connection3D extends THREE.Group {
   }
 
   serialize() {
-    return { uid: this.uid, from: { node: this.from.owner.uid, port: this.from.key }, to: this.to ? { node: this.to.owner.uid, port: this.to.key } : null };
+    return { uid: this.uid, from: this.from ? { node: this.from.owner.uid, port: this.from.key } : null, to: this.to ? { node: this.to.owner.uid, port: this.to.key } : null };
   }
 
   dispose() {
     this._offTheme?.();
     this.bursts.forEach((b) => { b.core.material.dispose(); b.halo.material.dispose(); }); this.bursts = [];
-    this.tube.geometry.dispose(); this.outline.geometry.dispose();
-    this.material.dispose(); this.outline.material.dispose();
-    this.rings[0].material.dispose();
+    this.tube.geometry.dispose(); this.outline.geometry.dispose(); this.pickTube.geometry.dispose();
+    this.material.dispose(); this.outline.material.dispose(); this.pickTube.material.dispose();
+    this.rings.forEach((r) => r.material.dispose());
   }
 }

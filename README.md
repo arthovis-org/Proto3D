@@ -1,26 +1,27 @@
-# Proto3D — a 3D component platform for building real systems
+# Proto3D — a 3D project-management platform that runs
 
-Proto3D is a browser-based workspace where **components** (media, text, data, inputs, logic,
-actions, transforms, layouts, outputs and devices) live as blocks in a calm 3D room, connected
-by typed, animated links, and **actually run**: a dataflow engine evaluates the graph every
-frame, events propagate from a tapped phone screen to a laptop display, a Media Grid arranges
-whatever media you plug into it, and a Layout node physically arranges its neighbours in space.
+Proto3D is a browser-based workspace where **components** live as blocks in a calm 3D room,
+connected by typed, animated cables, and **actually run**: a dataflow engine evaluates the graph
+every frame. The scene you land in is a **project-management system**: a standing 3D Kanban
+board with draggable cards, executable flowchart shapes, a 3D Gantt timeline, people,
+milestones, sticky notes, checklists and a dashboard — all ordinary components in the same
+registry (see [Project management](#project-management)), so a board's `done` event can run a
+flow that writes a message on a laptop.
 
-This round rebuilt the prototype as a **platform**: one component schema, a registry that drives
-the toolbar / panel / engine / serialization, six port types with strict compatibility, an
-event bus, groups that collapse into a single slab, level-of-detail for large systems, undo /
-redo, save / load and a left **Add** toolbar with search and drag-and-drop.
+Underneath is a **platform**: one component schema, a registry that drives the toolbar / panel /
+engine / serialization, six port types with strict compatibility, an event bus, groups that
+collapse into a single slab, level-of-detail for large systems, undo / redo, save / load and a
+left **Add** toolbar with search and drag-and-drop. Media, text, data, logic, action, transform,
+layout, output and device components are all still in the toolbar.
 
-On top of it sits a **project-management layer** (see [Project management](#project-management)):
-a standing 3D Kanban board with draggable cards, executable flowchart shapes, a 3D Gantt
-timeline, people, milestones, sticky notes, checklists and a dashboard — all ordinary
-components in the same registry, so a board's `done` event can run a flow that writes to a laptop.
+This round is about **making the wiring self-explanatory** (see [Wiring](#wiring)): ports have
+shapes (chevron = event, circle = data) and states (filled = connected, hollow = free), hovering a
+port tells you what it is and lights every port it can connect to, cables snap while you drag
+them, either end of an existing cable can be **grabbed and moved** to another port or dropped on
+empty space to disconnect, a selected block labels where each of its cables goes, and a
+first-run tour points at the real things on screen.
 
-![Demo 2: the phone's taps are counted, compared, branched and turned into the laptop's screen text; the Add toolbar shows the Logic category](docs/shots/demo-phone-laptop.png)
-
-![Demo 1: five Media nodes feed a Media Grid whose live face shows the gallery; the same layout is mirrored on a monitor](docs/shots/demo-media-grid.png)
-
-More shots: [`overview-lod.png`](docs/shots/overview-lod.png) (zoomed out: far LOD, a collapsed
+Shots: [`overview-lod.png`](docs/shots/overview-lod.png) (zoomed out: far LOD, a collapsed
 group), [`connection-hover.png`](docs/shots/connection-hover.png) (hovered link isolated with its
 type / value label), [`light-theme.png`](docs/shots/light-theme.png).
 
@@ -34,23 +35,28 @@ Static files, no build step.
 
 Three.js r160 comes from `https://unpkg.com/three@0.160.0/` through the import map in
 `index.html`; to run offline, copy `node_modules/three` next to the page and point the two
-import-map entries at it. The first load shows the *Phone → Logic → Laptop* example; after that
-the workspace restores your autosaved world from `localStorage` (**File → New** clears it).
+import-map entries at it. The first load shows the *Project management* scene and starts a short
+four-step tour (once; **? → Show tour** replays it); after that the workspace restores your
+autosaved world from `localStorage` (**File → New** clears it and shows an empty-scene hint).
 
 ## Try it in one minute
 
-1. **Tap the phone** (click its screen) four times: `Count taps` → `More than 3?` → `Unlocked?` →
-   `Say Unlocked` → the laptop screen reads **Unlocked**. Change `b` on the Compare node in the
-   properties panel and watch the logic re-decide.
-2. **File → Examples → Media → Media Grid → Monitor**. Click a Media node and switch its `mode`
-   or `source`; the gallery and the monitor follow.
-3. Open the left **Add** toolbar, drag a **Layout** into the scene, connect a few nodes into its
+1. **Drag a card** on the board into **Done**: a token runs through the flow below and the laptop
+   reads *Urgent item shipped: …* (for urgent cards) or the Log records it. Click a card to edit
+   it in the panel on the right; the timeline, the people and the dashboard follow.
+2. **Hover a pin.** The tooltip names it, its type and value and where it is connected; every pin
+   it could connect to lights up, the rest dim. Chevrons are events, circles carry values;
+   hollow pins are free.
+3. **Wire something.** Drag from `Launch checklist.done` (chevron, right side) to a lit chevron
+   such as `Card done.trigger`: the cable snaps when you are close. Try dragging onto a circle:
+   the red ring says no. Dragging *from* an empty input backwards to an output works too.
+4. **Move a cable.** Grab the end of any cable (the tube near a pin, cursor turns to a hand),
+   drop it on another lit pin to re-route it, or on empty space to disconnect. `Ctrl+Z` undoes
+   either. Click a block: its cables stay bright and their far ends are labelled.
+5. Open the left **Add** toolbar, drag a **Layout** into the scene, connect a few nodes into its
    `items` input and switch its `mode` between row / column / grid / circle: the nodes move.
-4. Select two nodes, `Ctrl+G`, then `C`: the group folds into one slab whose ports are the
+   Select two nodes, `Ctrl+G`, then `C`: the group folds into one slab whose ports are the
    connections that cross its boundary. `F` frames the selection, `Home` frames everything.
-5. **File → Examples → Project management**. Drag a card on the board into **Done**: a token
-   runs through the flow below and the laptop reads *Urgent item shipped: …* (for urgent cards)
-   or the Log records it. Click a card to edit it in the panel; the timeline and dashboard follow.
 
 ## Architecture
 
@@ -58,7 +64,7 @@ the workspace restores your autosaved world from `localStorage` (**File → New*
 src/
   core/         component schema, registry, port types, engine, world model, commands, history
   components/   one file per component type, grouped by category; index.js registers them all
-  block3d.js    Block3D: what nodes and devices share (ports, rim, shadow, face, LOD, serialize)
+  block3d.js    Block3D: what nodes and devices share (typed port pins, rim, shadow, face, LOD, serialize)
   node3d.js     Node3D: rounded slab with header, port rows, optional face, footer
   device3d.js   Device3D: phone / tablet / laptop / monitor whose screen is the component face
   shape3d.js    Shape3D: custom 3D bodies from def.body3d (boards, flow shapes, timeline…) + child pickables
@@ -66,9 +72,10 @@ src/
   faces.js      2D drawing helpers for faces and screens (text, JSON, media, grids)
   connection3d.js + routing.js   typed tubes with flow sheen; lanes, lift, obstacle avoidance
   groups.js     Group3D: frame on the floor, collapse to a slab with proxy ports
-  selection.js, lod.js, serialize.js, interaction.js, gizmo.js, panel.js, workspace.js, theme.js
-  ui/           toolbar-left.js (Add toolbar), file-menu.js
-  examples/     the three demos + the tiny builder API
+  interaction.js  pointer model: hover guidance, cable drags (forward / backward), cable-end re-route, selection emphasis
+  selection.js, lod.js, serialize.js, gizmo.js, panel.js, workspace.js, theme.js
+  ui/           toolbar-left.js (Add toolbar), file-menu.js, overlays.js (tooltips, drag label, toast, end labels, empty hint), tour.js
+  examples/     the project scene + the tiny builder API
 ```
 
 The full design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The short version:
@@ -82,7 +89,7 @@ The full design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The short 
 | **World** | `core/world.js` | `nodes`, `connections`, `groups` and the low-level mutations; `layoutVersion` bumps when anything moves so connections re-route. |
 | **Commands / History** | `core/commands.js`, `core/history.js` | Every edit (add, remove, move, param, connect, group, collapse, duplicate, rename, enable) is a command; `History` gives undo / redo and coalesces rapid param edits. |
 | **Serialization** | `serialize.js` | World ↔ JSON (`version 2`): components (type, params, serializable state, transform), connections (node uid + port key), groups, camera. Debounced autosave to `localStorage`. |
-| **UI** | `ui/toolbar-left.js`, `panel.js`, `ui/file-menu.js`, `interaction.js` | Add toolbar, properties panel, File menu, and the pointer / keyboard model (selection, marquee, drag, connect, face clicks). |
+| **UI** | `ui/toolbar-left.js`, `panel.js`, `ui/file-menu.js`, `interaction.js`, `ui/overlays.js`, `ui/tour.js` | Add toolbar, properties panel, File / help menus, the pointer / keyboard model (selection, marquee, drag, cable drags and re-routing, face clicks), the HTML guidance layers and the first-run tour. |
 
 ### Component schema, worked example
 
@@ -203,24 +210,70 @@ edits (event inputs) are not undoable but still autosave.
 | Focus | `F` frames the selection · double-click a block · `Home` or **Frame all** frames everything (camera flights are smooth) |
 | Add | left toolbar → category → click a component (adds at the camera target on a free slot) or **drag it into the scene** (ghost footprint, drops where the ray hits the floor) · `Shift+A` opens search |
 | Move | drag a block (all selected blocks move together; `Shift` for height) · gizmo `G`, `W` / `E` / `R` · Transform fields in the panel |
-| Connect | drag from an output port to an input port; the preview turns red-dashed on a type mismatch |
+| Connect | drag from an **OUT** pin to a lit **IN** pin on another node (or backwards from an empty input to an output); the cable snaps within ~1.2 units; a red ring + not-allowed cursor mark an incompatible pin; dropping on empty space cancels |
+| Re-route | grab a cable near either end (hand cursor) and drop it on another compatible pin · drop on empty space to **disconnect** · `Esc` puts it back · pressing a connected single input picks up its cable · dragging from a connected output adds a second cable |
+| Inspect | hover a pin: tooltip with name, type, value and links; compatible pins glow, others dim · hover a block: label + description · click a block: its cables stay bright with far-end labels · click a cable: midpoint label, both pins pulse, panel shows from → to |
 | Select | click · `Shift`+click adds / toggles · `Shift`+drag on the floor draws a marquee · `Ctrl+A` all · click empty space clears |
 | Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the top bar has ↶ ↷ |
 | Group | `Ctrl+G` group the selection · `C` collapse / expand · `Ctrl+Shift+G` ungroup · drag the frame to move the whole group · rename in the panel |
 | Interact | click a device screen (`tap`), an Input face (button, toggle, slider) or press the configured key · click / drag a **card** on a Kanban board, click the **+** tile, click a checklist row, press the **Run** disc on a Flow Terminal, drag a Timeline bar's end handle |
 | File | **File** → New · Save JSON · Load JSON · Examples; autosave to `localStorage` on every change |
-| View | `T` theme · `N` properties panel · `H` help & legend · `Esc` cancel |
+| View | `T` theme · `N` properties panel · `H` help & legend · **?** → Show tour · `Esc` cancel |
 
 Shortcuts are ignored while typing in a panel field.
 
-## Connection semantics
+## Wiring
+
+**Port anatomy.** Every port is a short stem out of the side face plus a typed pin: **event**
+ports are chevron pins pointing in the flow direction (into the body on the left for inputs, away
+from it on the right for outputs, like exec pins in a node editor); **data** ports (number, text,
+boolean, data, media, any) are spheres. A **connected** pin is filled and bright in its type
+colour; an **unconnected** pin is a hollow ring (dark core, coloured outline). Optional ports are
+slightly smaller; multi inputs carry a small **+**. Port names sit beside the pins at working zoom
+(outside the slab on devices) and a tiny **IN** / **OUT** caption tops each side of a block.
+
+**Hover.** Over a pin (crosshair cursor) an HTML tooltip follows it with the name, type label,
+current value and one line per link (`→ Notify team.in`); every compatible port on other blocks
+glows with a pulsing rim in the type colour, incompatible ones dim to 35 %, the hovered pin grows.
+Over a block body (hand cursor) a small tooltip gives the component label and description after
+half a second. Over a cable end (grab cursor) the end ring enlarges and the tooltip reads *drag
+to re-route · drop on empty space to disconnect*.
+
+**Creating a cable.** Drag from an output (or backwards from an empty input): the preview tube
+follows the pointer, compatible targets glow and the cable **snaps** to the nearest one within
+~1.2 units, an incompatible pin under the pointer shows a red ring and a not-allowed cursor, and a
+label beside the pointer reads `type · from Node.port` (or `into Node.port` when dragging
+backwards) plus the target it will connect to. Dropping on a compatible pin connects (undoable
+*Connect*); dropping on empty space or an incompatible pin creates nothing and the preview fades.
+Dragging from an already connected output adds another cable (fan-out); pressing a connected
+single input picks up its existing cable instead (multi inputs start a new one).
+
+**Moving and removing a cable.** Either end of an existing cable — the tube within ~0.9 units of a
+pin and the end ring — is a grab handle. Drag it: the cable detaches (the pin goes hollow) and
+follows the pointer with the same snapping and red-ring feedback. Drop on a compatible pin →
+*Re-route connection* (one undo step); drop on empty space → *Disconnect* with a short toast;
+`Esc` while dragging puts it back. Clicking a cable still selects it (`Delete` removes it; the
+panel shows from → to, type, value and a **Disconnect** button).
+
+**Selection.** A selected block keeps its cables bright and dims every other cable to 40 %; each
+of its cables shows a label at the far end (`→ Release plan.tasks`, `Card done.out →`). A selected
+cable makes both pins pulse, dims the others and shows the midpoint label
+`Card done.out → Notify team.in · event · value`.
+
+**Onboarding.** A four-step tour (toolbar → a real output pin with a ghost cable running to a
+compatible input → a card on the board → cable ends) runs once and is replayable from **? → Show
+tour**; an empty scene shows *Add a component from the left to start*; every toolbar button has a
+tooltip with its key; the help panel's legend shows the pin shapes, the type colours and the three
+wiring rules.
+
+### Connection semantics
 
 - **Type** = the output port's type; a link is **valid** when `compatible(from, to)` is not
   `invalid`: same type, either side `any`, or `number → text` (coerced, drawn in the
   destination colour). Invalid links are red and dashed, carry nothing and flag both ends as
   `error` — they are created on purpose so the mismatch is visible and fixable.
-- **Direction** is left → right (inputs face −X, outputs +X) and shown by the continuous flow
-  sheen; the hover label reads `type · from → to · value`.
+- **Direction** is left → right (inputs face −X, outputs +X), shown by the chevron pins and the
+  continuous flow sheen; the hover label reads `type · From.port → To.port · value`.
 - **Active** = the source changed or pulsed within 1.5 s (thicker, brighter, faster sheen);
   **idle** = carries a stable value; **inactive** = carries nothing (thin, dim).
 - **Routing** (`routing.js`): cubic Bezier with horizontal tangents; connections sharing a
@@ -243,7 +296,8 @@ exponential fog (which now thins as the camera pulls back), hemisphere + key + f
 fake contact shadows, `1 unit = 10 cm`, a 10 × 6.5 unit layout pitch, flow left to right.
 
 **Node anatomy**: header band tinted by category (eleven low-saturation hues) with the title,
-port rows just under the header (in left, out right, multi ports slightly larger), an optional
+port rows just under the header (in left, out right; chevron pins for events, spheres for data;
+filled when connected, hollow when free; multi ports slightly larger with a "+"), an optional
 live canvas **face** below the rows (size M or L), a dim footer with the output value, a rim for
 hover / selected / error, and a contact shadow. Devices share ports, rim, shadow and states;
 their screen is the face. **Groups** are translucent rounded frames on the floor with a title

@@ -1,7 +1,16 @@
 // interaction.js — pointer + keyboard model for the 3D workspace.
-//   hover: ports > faces > bodies > connections > group frames
+//   hover: ports > sub pickables > faces > bodies > connections (ends first) > group frames
 //   click: select (Shift adds / toggles) · click empty: clear · double-click: focus
-//   drag body: move every selected node (Shift: vertically) · drag from an out-port: connect
+//   drag body: move every selected node (Shift: vertically)
+//   ports: hovering one explains it (tooltip: name, type, value, links) and lights every
+//          compatible port on other blocks while the rest dim; dragging from an output (or
+//          backwards from an empty input) pulls a preview cable that snaps to compatible ports,
+//          shows a red ring on incompatible ones and fades out when dropped on empty space
+//   cable ends: the tube near either end (and the end ring) is a grab handle — drag it to
+//          re-route the link onto another compatible port, drop on empty space to disconnect,
+//          Esc to put it back; a connected single input picks up its existing cable the same way
+//   selection: a selected block brightens its cables (others dim to 40 %) and labels their far
+//          ends; a selected cable makes both ports pulse
 //   sub pickables (cards, tiles, handles owned by a Shape3D body) are picked right after ports:
 //   the owning block gets down / drag / drop / click through body3d.onSubPointer
 //   Shift+drag on empty floor: marquee select · drag on a live face: the component handles it
@@ -12,6 +21,8 @@ import * as THREE from 'three';
 import { Connection3D } from './connection3d.js';
 import { Group3D } from './groups.js';
 import * as cmd from './core/commands.js';
+import { formatValue, typeInfo, compatible } from './core/types.js';
+import { hex, sizes } from './theme.js';
 
 /** True when the key event comes from a text field (panel) — ignore shortcuts then. */
 export const isTyping = (e) => {
@@ -19,21 +30,30 @@ export const isTyping = (e) => {
   return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 };
 const _v = new THREE.Vector3();
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const portName = (p) => `${p.owner.title}.${p.label}`;
+const FADE = 0.28;
 
 export class Interaction {
-  constructor({ camera, renderer, controls, world, selection, history, gizmo = null, createInstance, onHoverConnection = () => {}, onFocus = () => {}, onFrameAll = () => {} }) {
-    Object.assign(this, { camera, renderer, controls, world, selection, history, gizmo, createInstance, onHoverConnection, onFocus, onFrameAll });
+  constructor({ camera, renderer, controls, world, selection, history, gizmo = null, createInstance, overlays = null, onHoverConnection = () => {}, onFocus = () => {}, onFrameAll = () => {} }) {
+    Object.assign(this, { camera, renderer, controls, world, selection, history, gizmo, createInstance, overlays, onHoverConnection, onFocus, onFrameAll });
     this.ray = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.hovered = null;
+    this.hoveredEnd = null;  // 'from' | 'to' while over a cable's grab handle
     this.drag = null;        // { nodes, plane, offsets, before, moved }
-    this.connect = null;     // { from, preview, plane }
+    this.connect = null;     // cable drag: { need, fixed, side, preview, plane, detached, origin, snapped, reject }
+    this.pendingDetach = null; // { conn, end } pressed but not yet moved
     this.marquee = null;     // { x0, y0, el }
     this.faceDrag = null;    // { block, mesh }
     this.pressFace = null;   // { block, u, v } for click detection
     this.subDrag = null;     // { block, sub } while a child pickable is pressed
     this.hoveredSub = null;
+    this.fading = [];        // preview cables fading out after a cancelled drag
+    this.glowPorts = [];     // ports pulsing this frame
+    this.cursor = '';
     this.downPos = new THREE.Vector2();
+    this.lastPointer = { x: 0, y: 0 };
     this.shift = false;
     this.marqueeEl = document.getElementById('marquee');
 
@@ -41,34 +61,39 @@ export class Interaction {
     el.addEventListener('pointermove', (e) => this.onMove(e));
     el.addEventListener('pointerdown', (e) => this.onDown(e));
     window.addEventListener('pointerup', (e) => this.onUp(e));
+    el.addEventListener('pointerleave', () => { if (!this.connect && !this.drag) { this._setHover(null); this._setHoverSub(null); } });
     el.addEventListener('dblclick', (e) => this.onDblClick(e));
     window.addEventListener('keydown', (e) => this.onKey(e));
     window.addEventListener('keyup', (e) => { if (e.key === 'Shift') this.shift = false; });
-    selection.onChange(() => { if (this.gizmo) this.gizmo.setTarget(selection.nodes[selection.nodes.length - 1] || null); });
+    selection.onChange(() => { if (this.gizmo) this.gizmo.setTarget(selection.nodes[selection.nodes.length - 1] || null); this.applySelectionEmphasis(); });
+    world.onChange(() => this.applySelectionEmphasis());
   }
 
   get gizmoBusy() { return !!(this.gizmo && (this.gizmo.dragging || this.gizmo.hot)); }
+  _cursor(name) { if (this.cursor !== name) { this.cursor = name; this.renderer.domElement.style.cursor = name; } }
 
   /* ---------- picking ---------- */
   _setPointer(e) {
     const r = this.renderer.domElement.getBoundingClientRect();
+    this.lastPointer = { x: e.clientX, y: e.clientY };
     this.pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     this.ray.setFromCamera(this.pointer, this.camera);
   }
   _visibleNodes() { return this.world.nodes.filter((n) => n.visible); }
-  _portMeshes() {
+  _allPorts() {
     const out = [];
-    for (const n of this._visibleNodes()) for (const p of n.ports) out.push(p.mesh);
-    for (const g of this.world.groups) if (g.collapsed) for (const p of g.ports) out.push(p.mesh);
+    for (const n of this._visibleNodes()) for (const p of n.ports) out.push(p);
+    for (const g of this.world.groups) if (g.collapsed) for (const p of g.ports) out.push(p);
     return out;
   }
+  _portMeshes() { return this._allPorts().flatMap((p) => [p.mesh, p.shell]); }
   _faceMeshes() { return this._visibleNodes().filter((n) => n.face?.mesh).map((n) => n.face.mesh); }
   _subMeshes() { return this._visibleNodes().flatMap((n) => (n.subMeshes ? n.subMeshes() : [])); }
   _bodyMeshes() { return this._visibleNodes().flatMap((n) => (n.meshes ? n.meshes.filter((m) => m !== n.face?.mesh) : [n.body, n.header])); }
-  _tubeMeshes() { return this.world.connections.filter((c) => c.visible).map((c) => c.tube); }
+  _tubeMeshes() { return this.world.connections.filter((c) => c.visible).flatMap((c) => [c.pickTube, ...c.rings]); }
   _groupMeshes() { return this.world.groups.flatMap((g) => (g.collapsed && g.slab ? [g.slab.body, g.slab.header] : [g.fill, g.edge])); }
 
-  /** { kind: 'port'|'sub'|'face'|'block'|'connection'|'group', target, point, uv, sub } or null. */
+  /** { kind: 'port'|'sub'|'face'|'block'|'connection'|'group', target, point, uv, sub, end } or null. */
   pick() {
     let hits = this.ray.intersectObjects(this._portMeshes(), false);
     if (hits.length) return { kind: 'port', target: hits[0].object.userData.port, point: hits[0].point };
@@ -79,7 +104,11 @@ export class Interaction {
     hits = this.ray.intersectObjects(this._bodyMeshes(), false);
     if (hits.length) return { kind: 'block', target: hits[0].object.userData.block, point: hits[0].point };
     hits = this.ray.intersectObjects(this._tubeMeshes(), false);
-    if (hits.length) return { kind: 'connection', target: hits[0].object.userData.connection, point: hits[0].point };
+    if (hits.length) {
+      const c = hits[0].object.userData.connection;
+      const end = hits[0].object.userData.end || c.endNear(hits[0].point);
+      return { kind: 'connection', target: c, point: hits[0].point, end };
+    }
     hits = this.ray.intersectObjects(this._groupMeshes(), false);
     if (hits.length) return { kind: 'group', target: hits[0].object.userData.group, point: hits[0].point };
     return null;
@@ -102,18 +131,34 @@ export class Interaction {
     return { u: hit.x / w + 0.5, v: 0.5 - hit.y / h };
   }
 
-  _setHover(item) {
-    if (this.hovered === item) return;
+  /* ---------- hover ---------- */
+  _setHover(item, end = null) {
+    if (this.hovered === item && this.hoveredEnd === end) return;
     if (this.hovered) {
       this.hovered.setHover(false);
       if (this.hovered.kind === 'connection') { this.world.connections.forEach((c) => c.setDim(false)); this.onHoverConnection(null); }
     }
-    this.hovered = item;
+    this.hovered = item; this.hoveredEnd = end;
+    this.overlays?.hideTip();
     if (item) {
       item.setHover(true);
-      if (item.kind === 'connection') { this.world.connections.forEach((c) => c.setDim(c !== item)); this.onHoverConnection(item); }
+      if (item.kind === 'connection') {
+        this.world.connections.forEach((c) => c.setDim(c !== item));
+        item.setEndHover(end);
+        if (end) this.overlays?.tip('<b>Cable end</b><span class="d">drag to re-route · drop on empty space to disconnect</span>', { anchor: item.endPosition(end), offset: [16, -34] });
+        this.onHoverConnection(end ? null : item);
+      } else if (item.kind === 'port') this._tipPort(item);
+      else if (item.kind === 'node' || item.kind === 'device') this._tipBlock(item);
     }
-    this.renderer.domElement.style.cursor = item ? (item.mesh && item.dir ? 'crosshair' : 'pointer') : this.hoveredSub ? 'pointer' : '';
+    this._recomputeEmphasis();
+    this._cursor(this._hoverCursor(item, end));
+  }
+  _hoverCursor(item, end) {
+    if (!item) return this.hoveredSub ? 'pointer' : '';
+    if (item.kind === 'port') return 'crosshair';
+    if (item.kind === 'connection') return end ? 'grab' : 'pointer';
+    if (item.kind === 'group') return 'grab';
+    return 'grab';
   }
   _setHoverSub(sub) {
     if (this.hoveredSub === sub) return;
@@ -122,6 +167,61 @@ export class Interaction {
     if (sub) sub.block.setSubHover(sub);
   }
   _subEvent(type, extra = {}) { return { type, sub: this.subDrag?.sub, ray: this.ray.ray, history: this.history, selection: this.selection, shift: this.shift, ...extra }; }
+
+  /** Tooltip for a port: name, type, value, links and what dragging will do. */
+  _tipPort(p) {
+    if (!this.overlays) return;
+    const links = this.world.connectionsOf(p);
+    const other = (c) => (p.dir === 'out' ? c.to : c.from);
+    const t = typeInfo[p.type] || { label: p.type };
+    const rows = links.filter((c) => other(c)).map((c) => `<span class="c">${p.dir === 'out' ? '→' : '←'} ${esc(portName(other(c)))}</span>`).join('');
+    const hint = p.owner.kind === 'group' ? '' : p.dir === 'out' ? 'drag to connect' + (links.length ? ' another' : '') : links.length && !p.multi ? 'drag to re-route this cable' : 'drag to connect' + (p.multi ? ' (accepts many)' : '');
+    const html = `<b style="color:${hex(p.color)}">${esc(p.label)}</b><span class="t">${t.label} · ${p.dir === 'in' ? 'input' : 'output'}${p.multi ? ' · many' : ''}${p.optional ? ' · optional' : ''}</span>`
+      + `<span class="v">${esc(formatValue(p.value, 40))}</span>${rows}${hint ? `<span class="d">${hint}</span>` : ''}`;
+    this.overlays.tip(html, { anchor: p.getWorldPosition(new THREE.Vector3()), offset: [16, -12], cls: 'port-tip' });
+  }
+  _tipBlock(b) {
+    if (!this.overlays) return;
+    const top = b.position.clone(); top.y += (b.kind === 'device' ? b.height : b.height / 2) + 0.2;
+    this.overlays.tip(`<b>${esc(b.def.label)}</b><span class="t">${esc(b.title)}</span><span class="d">${esc(b.def.description)}</span>`, { anchor: top, offset: [0, -56], cls: 'block-tip', delay: 500 });
+  }
+
+  /** Port emphasis from scratch: selected cable → both ports glow; hovered / dragged port → compatible glow, others dim, rejected red. */
+  _recomputeEmphasis() {
+    const map = new Map();
+    for (const c of this.selection.connections) { if (c.from) map.set(c.from, 'glow'); if (c.to) map.set(c.to, 'glow'); }
+    const src = this.connect ? this.connect.fixed : this.hovered?.kind === 'port' ? this.hovered : null;
+    if (src && src.owner.kind !== 'group') {
+      const compat = new Set(this.world.compatiblePorts(src));
+      for (const n of this._visibleNodes()) {
+        if (n === src.owner) continue;
+        for (const p of n.ports) map.set(p, compat.has(p) ? 'glow' : map.get(p) === 'glow' ? 'glow' : 'dim');
+      }
+      if (this.connect?.reject) map.set(this.connect.reject, 'reject');
+    }
+    const glow = [];
+    for (const p of this._allPorts()) { const m = map.get(p) || null; p.setEmphasis(m); if (m === 'glow') glow.push(p); }
+    this.glowPorts = glow;
+  }
+  /** Selection focus: a selected block's cables stay bright with far-end labels, the rest dim; a selected cable lights its ports. */
+  applySelectionEmphasis() {
+    const S = new Set(this._movableNodes());
+    const selConns = this.selection.connections;
+    const labels = [];
+    for (const c of this.world.connections) {
+      if (!c.complete) continue;
+      const a = S.has(c.from.owner), b = S.has(c.to.owner);
+      let dim = false;
+      if (S.size) {
+        dim = !(a || b);
+        if (a && !b) labels.push({ conn: c, end: 'to', text: `→ ${portName(c.to)}`, color: hex(c.color.getHex()) });
+        else if (b && !a) labels.push({ conn: c, end: 'from', text: `${portName(c.from)} →`, color: hex(c.color.getHex()) });
+      } else if (selConns.length) dim = !selConns.includes(c);
+      c.setDimSelect(dim);
+    }
+    this.overlays?.setEndLabels(labels);
+    this._recomputeEmphasis();
+  }
 
   /* ---------- selection helpers ---------- */
   select(item, { toggle = false } = {}) {
@@ -138,7 +238,7 @@ export class Interaction {
   /* ---------- pointer ---------- */
   onMove(e) {
     this._setPointer(e);
-    if (this.gizmo && this.gizmo.dragging) return;
+    if (this.gizmo && this.gizmo.dragging) { this._cursor('move'); return; }
     if (this.marquee) { this._updateMarquee(e); return; }
     if (this.faceDrag) {
       const uv = this._faceUV(this.faceDrag.mesh);
@@ -162,26 +262,16 @@ export class Interaction {
         });
         this.world.bumpLayout();
       }
+      this._cursor('grabbing');
       return;
     }
-    if (this.connect) {
-      const hit = this.pick();
-      if (hit && hit.kind === 'port' && hit.target.dir === 'in' && hit.target.owner !== this.connect.from.owner && !hit.target.proxy) {
-        this._setHover(hit.target);
-        this.connect.preview.setTargetPort(hit.target);
-        this.connect.preview.setDerivedState(this.world.canConnect(this.connect.from, hit.target) ? 'idle' : 'invalid');
-      } else {
-        this._setHover(null);
-        const p = new THREE.Vector3();
-        if (this.ray.ray.intersectPlane(this.connect.plane, p)) this.connect.preview.setPreviewTarget(p);
-        this.connect.preview.setDerivedState('idle');
-      }
-      return;
-    }
-    if (this.gizmo && this.gizmo.hot) { this._setHover(null); this._setHoverSub(null); return; }
+    if (this.pendingDetach && Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4) this._beginDetach(this.pendingDetach);
+    if (this.connect) { this._updateConnect(e); return; }
+    if (this.gizmo && this.gizmo.hot) { this._setHover(null); this._setHoverSub(null); this._cursor('move'); return; }
     const hit = this.pick();
     this._setHoverSub(hit && hit.kind === 'sub' ? hit.sub : null);
-    this._setHover(hit && hit.kind !== 'sub' ? hit.target : null);
+    this._setHover(hit && hit.kind !== 'sub' ? hit.target : null, hit?.kind === 'connection' ? hit.end : null);
+    if (hit?.kind === 'face' && hit.target.def.face?.onPointer) this._cursor('pointer');
   }
 
   onDown(e) {
@@ -190,7 +280,7 @@ export class Interaction {
     this.shift = e.shiftKey;
     this._setPointer(e);
     this.downPos.set(e.clientX, e.clientY);
-    this.pressFace = null;
+    this.pressFace = null; this.pendingDetach = null;
     const hit = this.pick();
 
     if (!hit) {
@@ -199,14 +289,11 @@ export class Interaction {
     }
     if (hit.kind === 'port') {
       const port = hit.target;
-      if (port.dir !== 'out' || port.owner.kind === 'group') return;
-      const start = port.getWorldPosition(new THREE.Vector3());
-      const normal = this.camera.getWorldDirection(new THREE.Vector3()).negate();
-      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, start);
-      const preview = new Connection3D(port, start.clone());
-      this.world.scene.add(preview);
-      this.connect = { from: port, preview, plane };
-      this.controls.enabled = false;
+      if (port.owner.kind === 'group') return;
+      if (port.dir === 'out') { this._beginConnect(port); return; }
+      const links = this.world.connectionsOf(port);
+      if (links.length && !port.multi) { this.pendingDetach = { conn: links[links.length - 1], end: 'to' }; this.controls.enabled = false; return; }
+      this._beginConnect(port);   // empty (or multi) input: drag backwards to an output
       return;
     }
     if (hit.kind === 'sub') {
@@ -238,7 +325,10 @@ export class Interaction {
       this._beginMove(this._movableNodes(), hit.point, e);
       return;
     }
-    if (hit.kind === 'connection') this.select(hit.target, { toggle: e.shiftKey });
+    if (hit.kind === 'connection') {
+      this.select(hit.target, { toggle: e.shiftKey });
+      if (hit.end && hit.target.complete) { this.pendingDetach = { conn: hit.target, end: hit.end }; this.controls.enabled = false; }
+    }
   }
   _beginBlockDrag(block, point, e) {
     if (block.subSelection) { block.subSelection = null; block.faceDirty = true; if (this.selection.has(block)) this.selection.refresh(); }
@@ -260,11 +350,121 @@ export class Interaction {
     nodes.forEach((n) => { n.dragging = true; });
     this.drag = { nodes, plane, offsets, before: nodes.map(cmd.snapshot), moved: false };
     this.controls.enabled = false;
+    this.overlays?.hideTip();
+    this._cursor('grabbing');
+  }
+
+  /* ---------- cables ---------- */
+  _cameraPlaneAt(point) {
+    const normal = this.camera.getWorldDirection(new THREE.Vector3()).negate();
+    return new THREE.Plane().setFromNormalAndCoplanarPoint(normal, point);
+  }
+  /** Start a new cable from a port: forwards from an output, backwards from an input. */
+  _beginConnect(port) {
+    const start = port.getWorldPosition(new THREE.Vector3());
+    const need = port.dir === 'out' ? 'in' : 'out';
+    const preview = need === 'in' ? new Connection3D(port, start.clone()) : new Connection3D(start.clone(), port);
+    this.world.scene.add(preview);
+    this.connect = { need, fixed: port, side: need === 'in' ? 'to' : 'from', preview, plane: this._cameraPlaneAt(start), detached: null, origin: null, snapped: null, reject: null };
+    this.controls.enabled = false;
+    this._setHover(null);
+    this._recomputeEmphasis();
+    this._cursor('grabbing');
+  }
+  /** Lift one end of an existing link off its port; the cable follows the pointer until dropped. */
+  _beginDetach({ conn, end }) {
+    this.pendingDetach = null;
+    if (!this.world.connections.includes(conn)) return;
+    this._setHover(null);
+    this.world.removeConnection(conn);          // no history yet: the drop decides (re-route / disconnect / put back)
+    this.selection.prune(this.world);
+    const fixed = end === 'to' ? conn.from : conn.to;
+    const origin = end === 'to' ? conn.to : conn.from;
+    const start = origin.getWorldPosition(new THREE.Vector3());
+    const preview = end === 'to' ? new Connection3D(fixed, start.clone()) : new Connection3D(start.clone(), fixed);
+    preview.setDerivedState(conn.derivedState === 'invalid' ? 'idle' : conn.derivedState);
+    this.world.scene.add(preview);
+    this.connect = { need: end === 'to' ? 'in' : 'out', fixed, side: end, preview, plane: this._cameraPlaneAt(start), detached: conn, origin, snapped: null, reject: null };
+    this.controls.enabled = false;
+    this._recomputeEmphasis();
+    this._cursor('grabbing');
+  }
+  _canLink(C, p) { return C.need === 'in' ? this.world.canConnect(C.fixed, p) : this.world.canConnect(p, C.fixed); }
+  _updateConnect(e) {
+    const C = this.connect;
+    const hit = this.pick();
+    let snapped = null, reject = null;
+    if (hit?.kind === 'port') {
+      const p = hit.target;
+      if (p !== C.fixed && p.owner.kind !== 'group' && !p.proxy) {
+        if (p.dir === C.need && this._canLink(C, p)) snapped = p;
+        else reject = p;   // wrong side, same block or a type mismatch
+      }
+    }
+    if (!snapped && !reject) {
+      // magnetic snap: the nearest compatible port close to the pointer ray
+      let bd = sizes.connection.snapReach;
+      for (const p of this.world.compatiblePorts(C.fixed)) {
+        const d = this.ray.ray.distanceToPoint(p.getWorldPosition(_v));
+        if (d < bd) { bd = d; snapped = p; }
+      }
+    }
+    if (C.snapped !== snapped) { C.snapped?.setHover(false); snapped?.setHover(true); C.snapped = snapped; }
+    C.reject = reject;
+    if (snapped) { C.preview.setPreviewPort(C.side, snapped); C.preview.setDerivedState('idle'); }
+    else {
+      const p = new THREE.Vector3();
+      if (this.ray.ray.intersectPlane(C.plane, p)) C.preview.setPreviewPoint(C.side, p);
+      C.preview.setDerivedState(reject ? 'invalid' : 'idle');
+    }
+    this._recomputeEmphasis();
+    this._cursor(reject ? 'not-allowed' : snapped ? 'crosshair' : 'grabbing');
+    if (this.overlays) {
+      const t = typeInfo[C.fixed.type]?.label || C.fixed.type;
+      let html = `<b style="color:${hex(C.fixed.color)}">${t}</b> · ${C.need === 'in' ? 'from' : 'into'} ${esc(portName(C.fixed))}`;
+      if (reject) html += `<br><em>${reject.dir !== C.need ? (reject.owner === C.fixed.owner ? 'same block' : `needs an ${C.need === 'in' ? 'input' : 'output'}`) : `${esc(reject.type)} does not fit ${esc(C.fixed.type)}`}</em>`;
+      else if (snapped) html += `<br>→ ${esc(portName(snapped))}${compatible(C.need === 'in' ? C.fixed.type : snapped.type, C.need === 'in' ? snapped.type : C.fixed.type) === 'coerce' ? ' (converted)' : ''}`;
+      else html += `<br><span class="d">${C.detached ? 'drop on empty space to disconnect · Esc puts it back' : 'drop on a lit port'}</span>`;
+      this.overlays.dragLabel(html, e.clientX, e.clientY, reject ? 'bad' : '');
+    }
+  }
+  _endConnect(e) {
+    const C = this.connect; this.connect = null;
+    const { fixed, snapped, reject, detached, origin, preview, need } = C;
+    snapped?.setHover(false);
+    this.overlays?.dragLabel(null);
+    const drop = (fade) => { if (fade) this.fading.push({ preview, k: 0 }); else { this.world.scene.remove(preview); preview.dispose(); } };
+    const putBack = () => { this.world.addConnection(detached.from, detached.to, { instance: detached }); this.selection.set([detached]); };
+    if (snapped) {
+      const from = need === 'in' ? fixed : snapped, to = need === 'in' ? snapped : fixed;
+      if (detached) {
+        if (snapped === origin) putBack();
+        else {
+          const c = cmd.reroute(this.world, detached, from, to);
+          this.history.execute(c);
+          if (c.connection) this.selection.set([c.connection]);
+          this.overlays?.toast(`Re-routed to ${portName(to)}`);
+        }
+      } else {
+        this.history.execute(cmd.connect(this.world, from, to));
+        this.selection.set([this.world.connections.find((x) => x.from === from && x.to === to)].filter(Boolean));
+      }
+      drop(false);
+    } else if (detached) {
+      if (reject) { putBack(); this.overlays?.toast('Not connected: incompatible port'); drop(false); }
+      else { this.history.execute(cmd.disconnect(this.world, detached)); this.overlays?.toast('Disconnected · Ctrl+Z to undo'); drop(true); }
+    } else {
+      if (reject) this.overlays?.toast(reject.dir !== need ? 'Connect an output to an input' : `${reject.type} does not fit ${fixed.type}`);
+      drop(true);
+    }
+    this._recomputeEmphasis();
+    this._cursor('');
   }
 
   onUp(e) {
     if (this.gizmo && this.gizmo.dragging) return;
     this.controls.enabled = true;
+    this.pendingDetach = null;
     const moved = Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4;
     if (this.marquee) { this._endMarquee(e); return; }
     if (this.subDrag) {
@@ -281,27 +481,14 @@ export class Interaction {
       this.faceDrag = null; this.pressFace = null;
       return;
     }
-    if (this.connect) {
-      const { from, preview } = this.connect;
-      const target = this.hovered && this.hovered.dir === 'in' ? this.hovered : null;
-      this.world.scene.remove(preview); preview.dispose();
-      this.connect = null;
-      if (target && this.world.canConnect(from, target)) {
-        const c = this.history.execute(cmd.connect(this.world, from, target));
-        this.selection.set([this.world.connections.find((x) => x.from === from && x.to === target)].filter(Boolean));
-      } else if (target) {
-        // an incompatible drop still creates the link so the mismatch is visible (red, dashed) and fixable
-        this.history.execute(cmd.connect(this.world, from, target));
-        this.selection.set([this.world.connections.find((x) => x.from === from && x.to === target)].filter(Boolean));
-      }
-      return;
-    }
+    if (this.connect) { this._endConnect(e); return; }
     if (this.drag) {
       const d = this.drag; this.drag = null;
       d.nodes.forEach((n) => { n.dragging = false; });
       if (d.moved && moved) this.history.execute(cmd.transform(this.world, d.nodes, d.before, d.nodes.map(cmd.snapshot)));
       else if (this.pressFace && !moved) this.pressFace.block.onFacePointer({ type: 'click', u: this.pressFace.u, v: this.pressFace.v, button: 0 });
       this.pressFace = null;
+      this._cursor(this._hoverCursor(this.hovered, this.hoveredEnd));
       return;
     }
     // Click on empty space (no orbit movement) clears the selection
@@ -313,6 +500,20 @@ export class Interaction {
     const hit = this.pick();
     if (hit && (hit.kind === 'block' || hit.kind === 'face')) this.onFocus([hit.target]);
     else if (hit && hit.kind === 'group') this.onFocus(hit.target.collapsed ? [hit.target] : hit.target.members);
+  }
+
+  /** Per frame: pulsing compatible ports, fading previews. */
+  update(time, dt) {
+    for (const p of this.glowPorts) p.pulseTick(time);
+    if (this.fading.length) {
+      for (const f of [...this.fading]) {
+        f.k += dt / FADE;
+        const a = Math.max(0, 1 - f.k);
+        f.preview.uniforms.dim.value = a;
+        f.preview.rings.forEach((r) => { r.material.opacity = 0.9 * a; });
+        if (f.k >= 1) { this.world.scene.remove(f.preview); f.preview.dispose(); this.fading.splice(this.fading.indexOf(f), 1); }
+      }
+    }
   }
 
   /* ---------- marquee ---------- */
@@ -352,7 +553,7 @@ export class Interaction {
     const all = [...new Set([...nodes, ...groupNodes])];
     if (all.length) cmds.push(cmd.removeNodes(this.world, all));
     this.selection.clear();
-    if (this.hovered) { this.hovered = null; this.onHoverConnection(null); }
+    if (this.hovered) { this._setHover(null); }
     this.history.execute(cmd.composite('Delete', cmds));
   }
   duplicateSelection() {
@@ -385,16 +586,26 @@ export class Interaction {
   }
   focusSelection() {
     const items = this.selection.items.length ? this.selection.items : this.world.nodes;
-    const targets = items.flatMap((i) => (i.kind === 'group' ? (i.collapsed ? [i] : i.members) : i.kind === 'connection' ? [i.from.owner, i.to?.owner].filter(Boolean) : [i]));
+    const targets = items.flatMap((i) => (i.kind === 'group' ? (i.collapsed ? [i] : i.members) : i.kind === 'connection' ? [i.from?.owner, i.to?.owner].filter(Boolean) : [i]));
     if (targets.length) this.onFocus(targets);
   }
+  /** Esc: abandon whatever is in flight. A detached cable goes back where it was. */
   cancel() {
-    if (this.connect) { this.world.scene.remove(this.connect.preview); this.connect.preview.dispose(); this.connect = null; }
+    this.pendingDetach = null;
+    if (this.connect) {
+      const C = this.connect; this.connect = null;
+      C.snapped?.setHover(false);
+      this.world.scene.remove(C.preview); C.preview.dispose();
+      if (C.detached && !this.world.connections.includes(C.detached)) this.world.addConnection(C.detached.from, C.detached.to, { instance: C.detached });
+      this.overlays?.dragLabel(null);
+      this._recomputeEmphasis();
+    }
     if (this.drag) { this.drag.nodes.forEach((n, i) => { n.dragging = false; n.position.fromArray(this.drag.before[i].p); }); this.drag = null; }
     if (this.marquee) { this.marquee = null; if (this.marqueeEl) this.marqueeEl.hidden = true; }
     if (this.subDrag) { this.subDrag.block.onSubPointer(this._subEvent('cancel')); this.subDrag = null; }
     this.faceDrag = null; this.pressFace = null;
     this.controls.enabled = true;
+    this._cursor('');
   }
 
   /* ---------- keyboard ---------- */
@@ -410,7 +621,7 @@ export class Interaction {
     if (mod && k === 'a') { e.preventDefault(); this.selection.set(this._visibleNodes()); return; }
     if (mod) return;
     switch (e.key) {
-      case 'Escape': this.cancel(); this.selection.clear(); break;
+      case 'Escape': { const wasDragging = !!this.connect; this.cancel(); if (!wasDragging) this.selection.clear(); break; }
       case 'Delete': case 'Backspace': this.deleteSelection(); break;
       case 'f': case 'F': this.focusSelection(); break;
       case 'Home': this.onFrameAll(); break;

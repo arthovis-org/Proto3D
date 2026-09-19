@@ -116,15 +116,7 @@ export class Shape3D extends Block3D {
       rim(geo) { node.rim = new THREE.Mesh(geo, materials.rim()); node.rim.visible = false; node.add(node.rim); return node.rim; },
     };
   }
-  _addLabelledPort(spec, x, y, z) {
-    const port = this._addPort(spec, x, y, z);
-    const label = makeLabel(spec.label, { size: sizes.label.port, color: 'textDim', weight: 500 });
-    const inset = 0.22 + label.userData.worldW / 2;
-    label.position.set(spec.dir === 'in' ? x + inset : x - inset, y, Math.max(z, 0) + this.depth / 2 + 0.01);
-    this.add(label); this.labels.push(label); this.detailLabels.push(label);
-    port.labelMesh = label;
-    return port;
-  }
+  _addLabelledPort(spec, x, y, z) { return super._addLabelledPort(spec, x, y, z, Math.max(z, 0) + this.depth / 2 + 0.01); }
   /** Drop every data-driven child (subs, labels inside children3d) before a rebuild. */
   clearChildren() {
     const kept = new Set();
