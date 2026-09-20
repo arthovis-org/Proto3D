@@ -34,6 +34,19 @@ export function priceBand(pricing) {
   const t = ((+pricing?.prompt || 0) + (+pricing?.completion || 0)) * 1e6;
   if (t === 0) return 'free'; if (t < 1) return 'cheap'; if (t < 10) return 'mid'; return 'premium';
 }
+/**
+ * A hosted model that costs nothing: an OpenRouter id ending in ":free", or prompt and completion
+ * both priced 0 (a per-run price of 0 for media). The offline Demo provider is "offline", not a
+ * free tier, so its models are not counted here.
+ */
+export function isFreeModel(m) {
+  if (!m || m.provider === 'demo') return false;
+  if (/:free$/i.test(String(m.id || ''))) return true;
+  const p = m.pricing; if (!p) return false;
+  if (p.run !== undefined) return +p.run === 0;
+  if ('prompt' in p || 'completion' in p) return (+p.prompt || 0) === 0 && (+p.completion || 0) === 0;
+  return false;
+}
 
 class Spend {
   constructor() {

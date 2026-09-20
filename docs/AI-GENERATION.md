@@ -142,7 +142,35 @@ The app then calls `https://<worker>/<provider-host>/<path>` (`http.viaProxy`). 
   from tokens × price, else the estimate. It shows on the face's cost line, in `usage`, in the
   tray and in the Connections footer as the **session spend**.
 
-## 5. Component reference
+## 5. Testing for free
+
+Keys are only ever pasted into the **Connections** page of your own browser (encrypted there,
+never in a saved world), so trying a provider costs nothing but the key itself. What can be run
+without spending money:
+
+- **OpenRouter** publishes **free models**: ids ending in **`:free`** (Llama, Gemma, Mistral,
+  Qwen, DeepSeek variants come and go) whose `/models` pricing is `prompt: "0"`, `completion:
+  "0"`. They are rate-limited by OpenRouter (a small number of requests per minute and per day
+  on accounts without credits — the exact numbers are on OpenRouter's *Limits* page, which was
+  not reachable from the build environment), so a run may answer `429` under load: the face then
+  shows the error with **Retry**. In the **model browser** switch **Free only** on (the toggle is
+  remembered, the count next to it says how many free models the live list has); free rows and
+  the panel's model chip carry a green **Free** badge, and the *Free* price band lists them too
+  (together with the offline Demo). A fresh **Generate Text** on OpenRouter takes a **free model automatically** (a
+  well-known free chat model when one is listed, else the first `:free` id) — a paid model is
+  never picked silently; without a key the model stays empty and the face asks you to choose
+  one. The Showcase's text components stay on the offline **Demo** provider; once an OpenRouter
+  key exists their panel offers **Switch to OpenRouter (free model)** as one click.
+- **Demo** is always free and offline: every Generate component starts on it.
+- **fal.ai** and **kie.ai** are prepaid media services; whether a new account receives free
+  starter credits **was not verified from this environment** (their pricing and docs pages —
+  `fal.ai/pricing`, `docs.fal.ai`, `kie.ai/pricing`, `docs.kie.ai` — are blocked by the build
+  sandbox's egress proxy). Check the balance on their dashboards before running a media model;
+  **Test** on the Connections card shows the remaining balance (fal) or credits (kie) that the
+  provider reports, and *approve above $* (default $0.05) stops any run that would cost more
+  than you expect.
+
+## 6. Component reference
 
 | id | inputs | outputs | params | face |
 | --- | --- | --- | --- | --- |
@@ -172,7 +200,7 @@ could be fetched) or the provider's hosted URL, `hosted` keeps the original, `st
 IndexedDB key; `store.hydrate` gives stored records a fresh blob URL after a reload and
 `faces.bitmapFor` falls back to the store when an old blob URL fails.
 
-## 6. Adding a provider or a model
+## 7. Adding a provider or a model
 
 **A model** on fal or kie: add a row to `FAL_MODELS` / `KIE_MODELS` — `id` (the provider's
 endpoint id), `label`, `kind`, `price` (+ `perSecond`, `seconds`), `priceText`, `params` (each
@@ -194,7 +222,7 @@ and the job tray need nothing else.
 bad-request · server · network · cors · cancelled · timeout · parse` and `fix ∈ connections ·
 retry · null`; faces turn them into a sentence with a matching button.
 
-## 7. Verification
+## 8. Verification
 
 `shoot8.mjs` (scratchpad harness) drives the page headlessly with Playwright: mocked
 `https://openrouter.ai/api/v1/*` (auth/key, models, a streamed SSE completion with usage) and
@@ -204,4 +232,8 @@ entry points, key save / test, the encrypted vault and the passphrase round trip
 OpenRouter runs (streaming, usage, cost, JSON mode, approval), the fal job (queue → progress →
 image → Media Grid / Monitor / card cover), cancel, failures with their fix, Prompt variables, the
 tray, session spend, the Showcase zone, save / load and a reload with IndexedDB — with zero
-console errors. The earlier harnesses (shoot3–7) still pass.
+console errors. The earlier harnesses (shoot3–7) still pass. `shoot9.mjs` covers the free tier: a `/models`
+fixture with two `:free` ids and one zero-priced model, the **Free only** toggle (exactly those
+three, badges, count, remembered across a reload), the free default model when a key exists and
+none is chosen, the Showcase text components staying on Demo, and **Switch to OpenRouter (free
+model)**.

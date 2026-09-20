@@ -415,6 +415,14 @@ body.panel-hidden #empty-hint { left: calc(var(--rail-w) + (100% - var(--rail-w)
 .mb-main small { flex-basis: 100%; color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 7px; font-weight: 700; }
 .badge.dim { color: var(--dim); background: var(--field); }
+.badge.free { color: #34c99a; background: rgba(52, 201, 154, 0.16); }
+:root[data-theme="light"] .badge.free { color: #13906a; }
+.mb-free { padding: 0 8px; }
+.mb-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums; color: #34c99a; background: rgba(52, 201, 154, 0.16); }
+:root[data-theme="light"] .mb-count { color: #13906a; }
+.pc-hint { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 11.5px; line-height: 1.45; }
+.pc-hint .badge { flex: none; }
+.model-pick b .badge { margin-left: 4px; vertical-align: 1px; }
 .mb-meta { display: flex; gap: 10px; align-items: center; color: var(--dim); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mb-provider { text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; font-weight: 600; }
 .mb-price { color: var(--text); font-weight: 500; min-width: 90px; text-align: right; }

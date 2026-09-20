@@ -12,7 +12,8 @@ import { clear, drawCaps, drawDivider, drawTile, drawChip, drawBar, drawMedia, d
 import { providerRegistry, providerStatus, createJob } from '../../ai/providers/index.js';
 import { ProviderError, request } from '../../ai/http.js';
 import { store } from '../../ai/store.js';
-import { fmtUSD, fmtPerMillion } from '../../ai/pricing.js';
+import { fmtUSD, fmtPerMillion, isFreeModel } from '../../ai/pricing.js';
+import { vault } from '../../ai/vault.js';
 import { fmtElapsed } from '../../ai/jobs.js';
 import { ui } from '../../ai/ui-hooks.js';
 import { asText } from '../util.js';
@@ -27,24 +28,53 @@ const resultId = () => `r${Date.now().toString(36).slice(-5)}${(++idSeq).toStrin
 /* ------------------------------------------------------------------ */
 export const providersFor = (kind) => providerRegistry.forKind(kind);
 export const providerIdsFor = (kind) => providersFor(kind).map((p) => p.id);
-/** The provider's default model for a kind (OpenRouter has one default, media providers one per kind). */
+/**
+ * The provider's default model for a kind: media providers have one per kind, OpenRouter picks a
+ * free model from its fetched list at runtime (`pickDefaultModel`) and gives '' until the list is
+ * there — a paid model is never chosen silently.
+ */
 export function defaultModelFor(providerId, kind) {
   const p = providerRegistry.get(providerId); if (!p) return '';
+  if (typeof p.pickDefaultModel === 'function') return p.pickDefaultModel(kind) || '';
   const d = p.defaultModel; return typeof d === 'string' ? d : d?.[kind] || '';
 }
 export function modelInfo(providerId, modelId) { const p = providerRegistry.get(providerId); return p?.modelInfo?.(modelId) || null; }
-export function modelLabel(providerId, modelId) { return modelInfo(providerId, modelId)?.label || String(modelId || '').split('/').pop() || '—'; }
+export function modelLabel(providerId, modelId) { if (!modelId) return 'choose a model'; return modelInfo(providerId, modelId)?.label || String(modelId || '').split('/').pop() || '—'; }
+/** True for a free hosted model (":free" id or zero prices); Demo does not count. */
+export function modelIsFree(providerId, modelId) { const m = modelInfo(providerId, modelId); return m ? isFreeModel(m) : /:free$/i.test(String(modelId || '')) && providerId !== 'demo'; }
 /** One-line price for a model: "$0.15 / $0.60 per 1M" or "$0.003 / image". */
 export function modelPriceText(providerId, modelId) {
+  if (!modelId) return providerId === 'openrouter' ? (providerStatus('openrouter') === 'connected' ? 'finding a free model…' : 'connect OpenRouter, or pick one here') : '';
   const m = modelInfo(providerId, modelId); if (!m) return providerId === 'openrouter' ? 'price after the first model fetch' : '';
   if (m.pricing?.text) return m.pricing.text;
   if (m.pricing && ('prompt' in m.pricing)) return fmtPerMillion(m.pricing.prompt, m.pricing.completion);
   return '';
 }
-/** Ensure params.model is set (a fresh instance takes the provider's default). */
+/**
+ * Ensure params.model is set (a fresh instance takes the provider's default). When the provider
+ * chooses its default from a live list (OpenRouter) and the list is not fetched yet, fetch it
+ * once and fill the model in when it arrives — only while the component still has none.
+ */
 export function ensureModel(inst, kind) {
   if (!inst.params.provider || !providerRegistry.get(inst.params.provider)) inst.params.provider = providerIdsFor(kind).includes('demo') ? (providerIdsFor(kind).find((id) => id !== 'demo' && providerStatus(id) === 'connected') || 'demo') : providerIdsFor(kind)[0];
   if (!inst.params.model) inst.params.model = defaultModelFor(inst.params.provider, kind);
+  if (!inst.params.model) fetchDefaultModel(inst, kind);
+}
+function fetchDefaultModel(inst, kind) {
+  const providerId = inst.params.provider, p = providerRegistry.get(providerId);
+  if (!p || typeof p.pickDefaultModel !== 'function' || providerStatus(providerId) !== 'connected' || inst._defaultFetch) return;
+  inst._defaultFetch = p.listModels({ kind, key: vault.keyFor(providerId), proxy: vault.proxyFor(providerId) })
+    .then(() => { if (!inst.params.model && inst.params.provider === providerId) { inst.params.model = defaultModelFor(providerId, kind); if (inst.params.model) { inst.faceDirty = true; inst.world?.changed?.('param'); } } })
+    .catch(() => {}).finally(() => { inst._defaultFetch = null; });
+}
+/** Switch a component to OpenRouter on a free model (fetching the list when needed). Resolves to the model id or '' when none is free. */
+export async function switchToFreeOpenRouter(inst, kind) {
+  const p = providerRegistry.get('openrouter'); if (!p || providerStatus('openrouter') !== 'connected') return '';
+  try { if (!p.cachedModels?.()) await p.listModels({ kind, key: vault.keyFor('openrouter'), proxy: vault.proxyFor('openrouter') }); } catch (_) { /* fall through: no list, no free model */ }
+  const id = p.pickDefaultModel(kind) || '';
+  if (!id) return '';
+  inst.params.provider = 'openrouter'; inst.params.model = id; inst._err = null; inst.faceDirty = true; inst.world?.changed?.('param');
+  return id;
 }
 
 /* ------------------------------------------------------------------ */
@@ -56,6 +86,7 @@ export function startRun(inst, spec, { approved = false, kind } = {}) {
   inst._err = null; inst._approval = null;
   const provider = providerRegistry.get(inst.params.provider);
   if (!provider) { inst._err = { message: `Unknown provider "${inst.params.provider}"`, fix: null }; inst.faceDirty = true; return false; }
+  if (!spec.model && provider.needsKey) { inst._err = { code: 'no-model', message: providerStatus(inst.params.provider) === 'connected' ? `No model chosen yet — pick one (free models are marked) in the model browser` : `No ${provider.label} key yet — add one in Connections, then pick a model`, fix: providerStatus(inst.params.provider) === 'connected' ? 'model' : 'connections' }; inst.faceDirty = true; return false; }
   const estimate = provider.estimateCost(spec);
   const limit = +inst.params.approveAbove || 0;
   if (!approved && limit > 0 && typeof estimate === 'number' && estimate > limit) { inst._approval = { spec, estimate, kind, limit }; inst.faceDirty = true; return false; }
@@ -179,6 +210,7 @@ export function drawGenerateFace(g, w, h, ctx, { kind, body, promptText = '' }) 
   x += drawChip(g, providerTag(params.provider), x, y, { h: 26, bg: isDemo ? palette.faceCard : acc, color: isDemo ? dim : '#fff', size: 11, weight: 700, padX: 10 }) + 6;
   const ml = fitLine(g, modelLabel(params.provider, params.model), w * 0.42);
   x += drawChip(g, ml, x, y, { h: 26, bg: palette.faceCard, color: text, size: 12, weight: 600, padX: 10 }) + 6;
+  if (modelIsFree(params.provider, params.model)) x += drawChip(g, 'FREE', x, y, { h: 26, bg: palette.faceCard, color: palette.faceGood, size: 10, weight: 700, padX: 8 }) + 6;
   hits.push({ x: PAD, y, w: x - PAD, h: 26, action: 'model' });
   drawStatus(g, w - PAD, y + 13, { inst, job, rec, err, running, time });
 
@@ -258,11 +290,11 @@ function drawError(g, x, y, w, h, err, hits, inst) {
   g.fillStyle = palette.faceBad; roundRect(g, x, y, 5, h, 3); g.fill();
   drawCaps(g, 'could not run', x + 22, y + 22, { color: palette.faceBad, size: 11 });
   drawText(g, err.message || 'Something went wrong', x + 22, y + 38, w - 44, h - 38 - 54, { size: 17, weight: 500, align: 'left', valign: 'top', lineHeight: 1.35 });
-  const label = err.fix === 'connections' ? 'Open Connections' : err.fix === 'retry' ? 'Retry' : 'Dismiss';
+  const label = err.fix === 'connections' ? 'Open Connections' : err.fix === 'retry' ? 'Retry' : err.fix === 'model' ? 'Choose a model' : 'Dismiss';
   g.font = font(14, 600); const bw = g.measureText(label).width + 36, bh = 34, bx = x + 22, byy = y + h - bh - 16;
   g.fillStyle = err.fix ? palette.faceAccent : palette.faceLine; roundRect(g, bx, byy, bw, bh, bh / 2); g.fill();
   g.fillStyle = err.fix ? '#fff' : palette.faceText; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, bx + bw / 2, byy + bh / 2 + 1);
-  hits.push({ x: bx, y: byy, w: bw, h: bh, action: err.fix === 'connections' ? 'connections' : err.fix === 'retry' ? 'retry' : 'dismiss' });
+  hits.push({ x: bx, y: byy, w: bw, h: bh, action: err.fix === 'connections' ? 'connections' : err.fix === 'retry' ? 'retry' : err.fix === 'model' ? 'model' : 'dismiss' });
   if (err.fix) { const l2 = 'Dismiss'; const w2 = g.measureText(l2).width + 30; g.fillStyle = palette.faceDim; g.fillText(l2, bx + bw + 12 + w2 / 2, byy + bh / 2 + 1); hits.push({ x: bx + bw + 12, y: byy, w: w2, h: bh, action: 'dismiss' }); }
 }
 function drawApproval(g, x, y, w, h, appr, hits) {
@@ -362,9 +394,18 @@ export function buildGeneratePanel(api, b, kind, { extra = null } = {}) {
   // model row: a button that opens the model browser
   const r = api.row(s, 'model');
   const mb = api.h('button', 'model-pick'); mb.type = 'button'; mb.id = 'gen-model'; r.appendChild(mb);
-  const updModel = () => { mb.innerHTML = `<b>${escapeHTML(modelLabel(b.params.provider, b.params.model))}</b><small>${escapeHTML(modelPriceText(b.params.provider, b.params.model) || b.params.model || '')}</small>`; };
+  const updModel = () => { const free = modelIsFree(b.params.provider, b.params.model); const html = `<b>${escapeHTML(modelLabel(b.params.provider, b.params.model))}${free ? ' <span class="badge free">Free</span>' : ''}</b><small>${escapeHTML(modelPriceText(b.params.provider, b.params.model) || b.params.model || '')}</small>`; if (mb.innerHTML !== html) mb.innerHTML = html; };
   updModel(); api.live(updModel);
   mb.addEventListener('click', () => ui.openModelBrowser({ kind, providerId: b.params.provider, current: b.params.model, onPick: (id, providerId) => { if (providerId && providerId !== b.params.provider) api.setParam('provider', providerId); api.setParam('model', id); api.rebuild(); } }));
+  // a text component still on Demo while an OpenRouter key exists: one click to a free live model
+  if (kind === 'text' && b.params.provider === 'demo' && providerStatus('openrouter') === 'connected') {
+    api.action(s, 'Switch to OpenRouter (free model)', async () => {
+      const id = await switchToFreeOpenRouter(b, kind);
+      if (id) { api.world.overlays?.toast?.(`Now on OpenRouter · ${modelLabel('openrouter', id)} (free)`, 2200); api.rebuild(); }
+      else { api.world.overlays?.toast?.('No free model in the OpenRouter list right now — pick one in the model browser', 2600); ui.openModelBrowser({ kind, providerId: 'openrouter', current: '', onPick: (mid, providerId) => { api.setParam('provider', providerId || 'openrouter'); api.setParam('model', mid); api.rebuild(); } }); }
+    }, 'gen-switch-free');
+    s.appendChild(api.h('div', 'panel-note', 'Free OpenRouter models cost nothing but are rate-limited; the Demo provider stays offline and free.'));
+  }
   // connection status + fix
   const st = providerStatus(b.params.provider);
   if (st === 'missing' || st === 'locked') {

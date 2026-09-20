@@ -82,6 +82,7 @@ export class Connections {
     return `<section class="provider-card" data-provider="${p.id}">
       <div class="pc-head"><span class="pc-glyph">${p.glyph}</span><div><h3>${esc(p.label)}</h3><div class="pc-caps">${caps.map((c) => `<span>${c}</span>`).join('')}</div></div>${this._statusChip(p.id)}</div>
       <p class="pc-desc">${esc(p.description)} ${p.keyUrl ? `<a href="${esc(p.keyUrl)}" target="_blank" rel="noopener">Get a key ${icons.external}</a>` : ''}</p>
+      ${p.freeNote ? `<p class="pc-hint free" data-role="freenote"><span class="badge free">Free</span> ${esc(p.freeNote)}</p>` : ''}
       <label class="field"><span>API key</span>
         <span class="field-row"><input type="password" autocomplete="off" spellcheck="false" placeholder="${esc(p.keyHint || 'paste your key')}" value="${esc(key || '')}" ${vault.locked ? 'disabled' : ''} data-role="key" aria-label="${esc(p.label)} API key" />
         <button type="button" class="ghost" data-role="reveal" title="Show / hide">${icons.eye}</button>

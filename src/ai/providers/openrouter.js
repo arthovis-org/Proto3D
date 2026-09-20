@@ -14,7 +14,7 @@
 // re-reading the docs (see docs/AI-GENERATION.md).
 import { registerProvider } from './base.js';
 import { request, requestJSON, readSSE, ProviderError } from '../http.js';
-import { textCost, estimateTokens } from '../pricing.js';
+import { textCost, estimateTokens, isFreeModel } from '../pricing.js';
 
 const BASE = 'https://openrouter.ai/api/v1';
 const LABEL = 'OpenRouter';
@@ -26,7 +26,20 @@ const headers = (key) => ({
 
 /** A few good defaults that get a "recommended" badge in the model browser. */
 export const RECOMMENDED = new Set(['anthropic/claude-sonnet-4', 'anthropic/claude-3.5-haiku', 'openai/gpt-4o-mini', 'openai/gpt-4.1-mini', 'google/gemini-2.5-flash', 'meta-llama/llama-3.3-70b-instruct', 'deepseek/deepseek-chat-v3-0324', 'mistralai/mistral-small-3.2-24b-instruct']);
-export const DEFAULT_MODEL = 'openai/gpt-4o-mini';
+/**
+ * No paid default: a fresh Generate Text on OpenRouter takes a free model picked at runtime from
+ * the live list (`pickFreeModel`) — a well-known free chat model when one is listed, else the
+ * first ":free" id, else the first zero-priced one — and stays empty until the list has arrived.
+ */
+export const FREE_PREFERRED = ['meta-llama/llama-3.3-70b-instruct:free', 'meta-llama/llama-3.1-8b-instruct:free', 'meta-llama/llama-4-maverick:free', 'meta-llama/llama-4-scout:free', 'google/gemma-3-27b-it:free', 'google/gemma-3-12b-it:free', 'google/gemma-2-9b-it:free', 'mistralai/mistral-small-3.2-24b-instruct:free', 'qwen/qwen3-235b-a22b:free', 'deepseek/deepseek-chat-v3-0324:free'];
+export function pickFreeModel(list) {
+  const free = (list || []).filter((m) => m.kind === 'text' && isFreeModel(m));
+  if (!free.length) return null;
+  for (const id of FREE_PREFERRED) { const m = free.find((x) => x.id === id); if (m) return m; }
+  const known = free.find((m) => /^(meta-llama\/llama|google\/gemma|mistralai\/mistral|qwen\/qwen)/.test(m.id) && /:free$/.test(m.id) && /instruct|it\b|chat|:free$/.test(m.id) && !/vision|guard|embed/i.test(m.id));
+  if (known) return known;
+  return free.find((m) => /:free$/.test(m.id)) || free[0];
+}
 let modelCache = { at: 0, list: null };
 
 function toModelInfo(m) {
@@ -37,6 +50,7 @@ function toModelInfo(m) {
     context: m.context_length || m.top_provider?.context_length || 0,
     vision: inMods.includes('image'), json: true,   // every chat model takes response_format; models that ignore it still answer and the parser has a {…} fallback
     recommended: RECOMMENDED.has(m.id), created: m.created || 0, description: m.description || '',
+    free: isFreeModel({ id: m.id, pricing: m.pricing }),
   };
 }
 
@@ -46,7 +60,10 @@ export const openrouter = registerProvider({
   glyph: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4c3 0 3-5 6-5h2M3 12h4c3 0 3 5 6 5h2"/><path d="M15 4l4 3-4 3M15 14l4 3-4 3"/></svg>',
   capabilities: ['text', 'vision', 'json'], keyHint: 'sk-or-v1-…', needsKey: true,
   corsNote: 'OpenRouter answers browser requests directly (CORS enabled); a proxy is only needed on a locked-down network.',
-  defaultModel: DEFAULT_MODEL,
+  freeNote: "Free models available: filter with 'Free only' in the model browser",
+  defaultModel: '',
+  /** The runtime default: a free model from the fetched list, '' before the list exists (never a paid model). */
+  pickDefaultModel(kind) { return kind === 'text' ? pickFreeModel(modelCache.list)?.id || '' : ''; },
 
   async testKey({ key, proxy, signal }) {
     const t0 = performance.now();
