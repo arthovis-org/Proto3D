@@ -12,6 +12,8 @@
   --border-strong: rgba(160, 178, 206, 0.24);
   --field: rgba(255, 255, 255, 0.045);
   --field-hover: rgba(255, 255, 255, 0.08);
+  --field-solid: #1a2130;
+  --field-solid-hover: #212939;
   --text: #e8eef8;
   --dim: #8e9bb1;
   --accent: #5aa9ff;
@@ -32,6 +34,8 @@
   --border-strong: rgba(28, 33, 48, 0.2);
   --field: rgba(28, 33, 48, 0.045);
   --field-hover: rgba(28, 33, 48, 0.08);
+  --field-solid: #efece6;
+  --field-solid-hover: #e6e2da;
   --text: #1c2130;
   --dim: #6a7180;
   --accent: #2b7fe0;
@@ -481,3 +485,20 @@ body.panel-hidden #jobs-tray { right: 24px; }
 .cover-box img { width: 44px; height: 44px; object-fit: cover; border-radius: 7px; background: var(--field); flex: none; }
 .cover-box span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cover-box button { padding: 3px 8px; font-size: 11px; border-radius: 6px; }
+
+/* Native pickers follow the theme. The browser paints a select's option list, a date picker and a
+   colour picker from the control's own color-scheme and background, so both are set explicitly on
+   the controls (not only on :root) and the select background is opaque: a translucent field colour
+   composited by the browser onto its default light popup is what made dark-mode menus unreadable. */
+select, input, textarea, option, optgroup { color-scheme: dark; }
+:root[data-theme="light"] select, :root[data-theme="light"] input, :root[data-theme="light"] textarea,
+:root[data-theme="light"] option, :root[data-theme="light"] optgroup { color-scheme: light; }
+select, .row select, .mb-tools select { background: var(--field-solid); color: var(--text); }
+select:hover, .row select:hover, .mb-tools select:hover { background: var(--field-solid-hover); }
+option, optgroup { background: var(--panel-solid); color: var(--text); font-weight: 500; }
+option:checked { background: var(--accent-soft); color: var(--text); }
+option:disabled { color: var(--dim); }
+input::placeholder, textarea::placeholder { color: var(--dim); opacity: 1; }
+input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.7; }
+input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+input[type="color"] { background: var(--field-solid); }
