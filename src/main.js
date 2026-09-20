@@ -1,8 +1,9 @@
 // main.js — boots the platform: theme, workspace, registry (all core components), world model,
 // engine, history, selection, gizmo, interaction, guidance overlays, properties panel, Add
-// toolbar, File / help menus, the wiring switch, navigation presets, first-run tour, LOD, the AI
-// layer (providers, key vault, jobs) with its Connections page, model browser and job tray,
-// autosave, the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
+// toolbar, the menu bar (File · Edit · View · Add · Help) and the top-bar File / help menus, the
+// wiring switch, navigation presets, first-run tour, LOD, the AI layer (providers, key vault,
+// jobs) with its Connections page, model browser and job tray, the performance stats, autosave,
+// recent projects, the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
 import { createWorkspace } from './workspace.js';
 import { registry } from './components/index.js';
@@ -20,7 +21,10 @@ import { Overlays } from './ui/overlays.js';
 import { Tour, tourSeen } from './ui/tour.js';
 import { createInstance } from './instance.js';
 import { updateLOD } from './lod.js';
-import { serializeWorld, loadWorld, downloadJSON, pickJSONFile, AutoSave } from './serialize.js';
+import { serializeWorld, serializeSelection, importCommand, loadWorld, downloadJSON, pickJSONFile, safeFileName, AutoSave, RecentProjects } from './serialize.js';
+import { MenuBar, shortcutText } from './ui/menubar.js';
+import { ShortcutsSheet, AboutDialog, REPO_URL } from './ui/help-dialogs.js';
+import { StatsOverlay } from './ui/stats.js';
 import { examples, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
 import { portTypes, subtypes, states, sizes, hex, getTheme, setTheme, toggleTheme, onThemeChange, refreshLabel } from './theme.js';
@@ -100,23 +104,106 @@ function addComponent(def, position) {
 }
 const leftBar = new LeftToolbar({ el: $('left-bar'), ws, world, interaction, onAdd: addComponent });
 
-/* ---- File menu ---- */
-const autosave = new AutoSave(world, { extras: () => ({ camera: ws.camera, controls: ws.controls }) });
+/* ---- Project: name, autosave, recent projects, save / open / import / export ---- */
+const autosave = new AutoSave(world, { extras: () => ({ camera: ws.camera, controls: ws.controls, name: project.name || 'untitled' }) });
+const recent = new RecentProjects();
+const project = { name: null };
+const insetLeft = () => (leftBar?.isOpen ? 300 : 0);
+const dateStamp = () => new Date().toISOString().slice(0, 10);
+function setProjectName(name) { project.name = name ? String(name).trim() || null : null; document.title = `${project.name || 'Untitled'} — Proto3D`; }
+function currentDoc(name = project.name || 'untitled') { return serializeWorld(world, { camera: ws.camera, controls: ws.controls, name }); }
+/** Keep the scene on the recent list before it is replaced (New, Open, an example); untitled scenes get a timestamp for a name. */
+function rememberCurrent() {
+  if (!world.nodes.length) return;
+  const name = project.name || `Untitled · ${new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
+  recent.remember(name, currentDoc(name));
+}
 function loadExample(id) {
   const ex = exampleById(id); if (!ex) return null;
+  rememberCurrent();
   selection.clear(); history.clear();
   const named = buildExample(world, ex, { camera: ws.camera, controls: ws.controls });
   engine.evaluate();
+  setProjectName(null);
   const focus = ex.focus ? ex.focus(named).filter(Boolean) : [];
-  if (focus.length) ws.frameBlocks(focus, { instant: true, fill: 0.7, insetLeft: leftBar?.isOpen ? 300 : 0 }); else frameAll({ instant: true });
+  if (focus.length) ws.frameBlocks(focus, { instant: true, fill: 0.7, insetLeft: insetLeft() }); else frameAll({ instant: true });
   return named;
+}
+function newProject() { rememberCurrent(); selection.clear(); history.clear(); world.clear(); world.named = {}; setProjectName(null); }
+/** Save = download the project as JSON under its name (a dated name the first time); Save as… asks for the name. */
+function saveProject() {
+  const name = project.name || `proto3d-${dateStamp()}`;
+  const doc = currentDoc(name);
+  downloadJSON(doc, safeFileName(name));
+  recent.remember(name, doc);
+  setProjectName(name);
+  overlays.toast(`Saved ${safeFileName(name)}`, 1600);
+}
+function saveProjectAs() {
+  const name = window.prompt('Save project as', project.name || `proto3d-${dateStamp()}`);
+  if (name === null || !name.trim()) return;
+  setProjectName(name.trim().replace(/\.json$/i, ''));
+  saveProject();
+}
+/** Replace the scene with a document (Open…, Open recent). */
+function openDoc(doc, name) {
+  rememberCurrent();
+  selection.clear(); history.clear();
+  const r = loadWorld(world, doc, { camera: ws.camera, controls: ws.controls });
+  setProjectName(name || doc.name);
+  recent.remember(project.name || 'Untitled', doc);
+  if (!doc.camera) frameAll({ instant: true });
+  if (r.skipped.length) overlays.toast(`Opened · ${r.skipped.length} unknown component${r.skipped.length > 1 ? 's' : ''} skipped`, 2400);
+  else overlays.toast(`Opened ${project.name || 'project'} · ${r.nodes} components`, 1600);
+}
+function openProject() {
+  pickJSONFile({ withName: true }).then(({ doc, name }) => openDoc(doc, name)).catch((e) => { if (e.message !== 'cancelled') alert(`Could not open: ${e.message}`); });
+}
+function openRecent(id) { const e = recent.get(id); if (e) openDoc(e.doc, e.name); }
+/** Merge a document into the scene, undoable; the new blocks land to the right of everything and get selected and framed. */
+function importDoc(doc, label) {
+  const c = importCommand(world, doc, { label });
+  if (!c) { overlays.toast('Nothing to import: the document holds no known component', 2200); return null; }
+  history.execute(c);
+  selection.set(c.nodes);
+  ws.frameBlocks(c.nodes, { fill: 0.6, insetLeft: insetLeft() });
+  overlays.toast(`${label || 'Imported'} · ${c.nodes.length} component${c.nodes.length > 1 ? 's' : ''}${c.skipped.length ? ` · ${c.skipped.length} unknown skipped` : ''}`, 1800);
+  return c;
+}
+function importFile() { pickJSONFile().then((doc) => importDoc(doc)).catch((e) => { if (e.message !== 'cancelled') alert(`Could not import: ${e.message}`); }); }
+function exportSelection() {
+  const nodes = selectedNodes(); if (!nodes.length) return;
+  downloadJSON(serializeSelection(world, nodes, { name: `${project.name || 'proto3d'} selection` }), safeFileName(`${project.name || 'proto3d'}-selection`));
+}
+/** The viewport as a PNG: render once more and read the drawing buffer before the compositor clears it. */
+function exportScreenshot() {
+  ws.renderer.render(ws.scene, ws.camera);
+  const url = ws.renderer.domElement.toDataURL('image/png');
+  const a = document.createElement('a'); a.href = url; a.download = safeFileName(`${project.name || 'proto3d'}-${dateStamp()}`, '.png'); document.body.appendChild(a); a.click(); a.remove();
+  overlays.toast('Screenshot saved', 1400);
 }
 const fileMenu = new FileMenu({
   button: $('btn-file'), menu: $('file-menu'), examples,
-  onNew: () => { selection.clear(); history.clear(); world.clear(); world.named = {}; },
-  onSave: () => downloadJSON(serializeWorld(world, { camera: ws.camera, controls: ws.controls }), `proto3d-${new Date().toISOString().slice(0, 10)}.json`),
-  onLoad: () => pickJSONFile().then((doc) => { selection.clear(); history.clear(); loadWorld(world, doc, { camera: ws.camera, controls: ws.controls }); }).catch((e) => { if (e.message !== 'cancelled') alert(`Could not load: ${e.message}`); }),
-  onExample: (id) => loadExample(id),
+  onNew: newProject, onSave: saveProject, onLoad: openProject, onExample: (id) => loadExample(id),
+});
+
+/* ---- Clipboard: the selection as a Proto3D document, in memory and (best effort) on the system clipboard ---- */
+const clipboard = { doc: null };
+const selectedNodes = () => selection.items.flatMap((i) => (i.kind === 'group' ? i.members : i.kind === 'connection' ? [] : [i]));
+function copySelection() {
+  const nodes = selectedNodes(); if (!nodes.length) return false;
+  clipboard.doc = serializeSelection(world, nodes, { name: 'clipboard' });
+  navigator.clipboard?.writeText?.(JSON.stringify(clipboard.doc)).catch(() => {});
+  overlays.toast(`Copied ${nodes.length} component${nodes.length > 1 ? 's' : ''}`, 1200);
+  return true;
+}
+function cutSelection() { if (copySelection()) interaction.deleteSelection(); }
+function pasteClipboard(doc = clipboard.doc) { if (doc) importDoc(doc, 'Paste'); }
+document.addEventListener('paste', (e) => {
+  if (isTyping(e) || anyModalOpen()) return;
+  let doc = null;
+  try { const p = JSON.parse(e.clipboardData?.getData('text/plain') || ''); if (p && p.app === 'proto3d' && Array.isArray(p.nodes)) doc = p; } catch (_) { /* not ours */ }
+  if (doc || clipboard.doc) { e.preventDefault(); pasteClipboard(doc || clipboard.doc); }
 });
 
 /* ---- AI generation: Connections page, model browser, job tray; the components reach them through ui-hooks ---- */
@@ -130,6 +217,10 @@ setUIHooks({
   toast: (text, ms) => { overlays.toast(text, ms); return true; },
 });
 $('btn-connections').addEventListener('click', () => connections.toggle());
+const shortcutsSheet = new ShortcutsSheet();
+const aboutDialog = new AboutDialog();
+const stats = new StatsOverlay({ el: $('stats'), ws, world });
+const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen;
 // with an OpenRouter key present, fetch its model list once so estimates and the panel price are live
 vault.ready.then(() => { if (providerStatus('openrouter') === 'connected') providerRegistry.get('openrouter').listModels({ key: vault.keyFor('openrouter'), proxy: vault.proxyFor('openrouter') }).then(() => panel.refresh()).catch(() => {}); });
 
@@ -247,8 +338,22 @@ function toggleHelp() {
   if (help.open) { togglePanel(true); help.scrollIntoView({ block: 'nearest' }); }
 }
 window.addEventListener('keydown', (e) => {
+  if (isTyping(e) || anyModalOpen() || e.altKey) return;
+  const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+  if (mod) {
+    // Ctrl+V arrives as the paste event above, so the system clipboard can be read
+    if (k === 's') { e.preventDefault(); if (e.shiftKey) saveProjectAs(); else saveProject(); }
+    else if (k === 'o' && !e.shiftKey) { e.preventDefault(); openProject(); }
+    else if (k === 'c' && !e.shiftKey && selectedNodes().length && !window.getSelection()?.toString()) { e.preventDefault(); copySelection(); }
+    else if (k === 'x' && !e.shiftKey && selectedNodes().length) { e.preventDefault(); cutSelection(); }
+    return;
+  }
+  if (e.shiftKey && e.key === '?') { e.preventDefault(); shortcutsSheet.toggle(); return; }
+  if (!e.shiftKey && k === 'i' && !nav.keyAction(e)) { e.preventDefault(); stats.toggle(); }
+});
+window.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
-  if (connections.isOpen || modelBrowser.isOpen) return;   // modals own the keyboard
+  if (anyModalOpen()) return;   // modals own the keyboard
   if (nav.keyAction(e)) return;   // the navigation preset owns this key (interaction.js handles it)
   if (e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); leftBar.open('search'); return; }
   if (e.shiftKey) return;
@@ -266,6 +371,101 @@ window.addEventListener('keydown', (e) => {
 });
 syncToolbar();
 
+/* ---- Menu bar: File · Edit · View · Add · Help. Every item runs the same code as its button, key or panel control ---- */
+const sc = shortcutText;
+const toggleRail = () => { document.body.classList.toggle('rail-hidden'); ws.resize(); };
+const setPortsOnSelection = (v) => { selection.nodes.forEach((n) => n.setShowPorts(v)); panel.refresh(); };
+const timeAgo = (iso) => { const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
+const undoLabel = (stack, verb) => { const c = stack[stack.length - 1]; return c?.label ? `${verb} ${c.label}` : verb; };
+const menubar = new MenuBar({
+  el: $('menubar'),
+  menus: [
+    { id: 'file', label: 'File', items: () => [
+      { label: 'New project', hint: 'empty scene', run: newProject },
+      { label: 'Open…', shortcut: sc('Ctrl+O'), run: openProject },
+      { label: 'Open recent', items: () => {
+        const list = recent.list();
+        if (!list.length) return [{ label: 'No recent projects', disabled: true }];
+        return [...list.map((e) => ({ label: e.name, hint: `${e.nodes} components · ${timeAgo(e.savedAt)}`, run: () => openRecent(e.id) })), { sep: true }, { label: 'Clear recent', run: () => recent.clear() }];
+      } },
+      { sep: true },
+      { label: 'Save', shortcut: sc('Ctrl+S'), hint: project.name ? `${safeFileName(project.name)}` : 'downloads JSON', run: saveProject },
+      { label: 'Save as…', shortcut: sc('Ctrl+Shift+S'), run: saveProjectAs },
+      { sep: true },
+      { label: 'Import…', hint: 'merge a JSON file into this scene', run: importFile },
+      { label: 'Export', items: () => [
+        { label: 'Selection as JSON…', hint: 'the selected components and their links', disabled: !selectedNodes().length, run: exportSelection },
+        { label: 'Screenshot (PNG)', hint: 'the viewport as an image', run: exportScreenshot },
+      ] },
+      { sep: true },
+      { label: 'Examples', items: () => examples.map((ex) => ({ label: ex.label, run: () => loadExample(ex.id) })) },
+      { sep: true },
+      { label: 'Connections…', hint: 'AI providers and API keys', run: () => connections.open() },
+    ] },
+    { id: 'edit', label: 'Edit', items: () => [
+      { label: undoLabel(history.undoStack, 'Undo'), shortcut: sc('Ctrl+Z'), disabled: !history.canUndo, run: () => { history.undo(); selection.prune(world); } },
+      { label: undoLabel(history.redoStack, 'Redo'), shortcut: sc('Ctrl+Shift+Z'), disabled: !history.canRedo, run: () => { history.redo(); selection.prune(world); } },
+      { sep: true },
+      { label: 'Cut', shortcut: sc('Ctrl+X'), disabled: !selectedNodes().length, run: cutSelection },
+      { label: 'Copy', shortcut: sc('Ctrl+C'), disabled: !selectedNodes().length, run: copySelection },
+      { label: 'Paste', shortcut: sc('Ctrl+V'), disabled: !clipboard.doc, run: () => pasteClipboard() },
+      { label: 'Duplicate', shortcut: sc('Ctrl+D'), disabled: !selection.nodes.length, run: () => interaction.duplicateSelection() },
+      { label: 'Delete', shortcut: 'Del', disabled: !selection.size, run: () => interaction.deleteSelection() },
+      { sep: true },
+      { label: 'Select all', shortcut: sc('Ctrl+A'), disabled: !world.nodes.length, run: () => selection.set(world.nodes.filter((n) => n.visible)) },
+      { label: 'Deselect', shortcut: 'Esc', disabled: !selection.size, run: () => selection.clear() },
+      { sep: true },
+      { label: 'Group', shortcut: sc('Ctrl+G'), disabled: !selection.nodes.some((n) => !n.group), run: () => interaction.groupSelection() },
+      { label: 'Ungroup', shortcut: sc('Ctrl+Shift+G'), disabled: !(selection.groups.length || selection.nodes.some((n) => n.group)), run: () => interaction.ungroupSelection() },
+      { label: 'Collapse / expand group', shortcut: 'C', disabled: !(selection.groups.length || selection.nodes.some((n) => n.group)), run: () => interaction.toggleCollapseSelection() },
+    ] },
+    { id: 'view', label: 'View', items: () => [
+      { label: 'Light theme', shortcut: 'T', checked: getTheme() === 'light', run: () => toggleTheme() },
+      { label: 'Grid', checked: ws.isGridVisible(), run: () => { ws.setGridVisible(!ws.isGridVisible()); panel.refresh(); } },
+      { label: 'Wiring', hint: 'ports and cables', shortcut: 'P', checked: isWiringOn(), run: () => { toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on · ports and cables shown' : 'Wiring off · drop a component onto another to link them', 1800); } },
+      { label: 'Ports on selection', disabled: !selection.nodes.length, items: () => {
+        const v = selection.nodes.length ? selection.nodes[selection.nodes.length - 1].showPorts : null;
+        return [
+          { label: 'Follow the Wiring switch', radio: true, checked: v === null, run: () => setPortsOnSelection(null) },
+          { label: 'Always show', radio: true, checked: v === true, run: () => setPortsOnSelection(true) },
+          { label: 'Always hide', radio: true, checked: v === false, run: () => setPortsOnSelection(false) },
+        ];
+      } },
+      { label: 'Flow animation', hint: 'on cables', checked: isFlowEnabled(), run: () => { setFlowEnabled(!isFlowEnabled()); syncToolbar(); panel.refresh(); } },
+      { sep: true },
+      { label: 'Gizmo', shortcut: 'G', checked: gizmo.enabled, run: () => setGizmo(!gizmo.enabled) },
+      { label: 'Gizmo mode', items: () => [['translate', 'Move', 'W'], ['rotate', 'Rotate', 'E'], ['scale', 'Scale', 'R']].map(([m, l, k]) => ({ label: l, shortcut: k, radio: true, checked: gizmo.mode === m, run: () => { if (!gizmo.enabled) setGizmo(true); gizmo.setMode(m); syncToolbar(); } })) },
+      { sep: true },
+      { label: 'Properties panel', shortcut: 'N', checked: !document.body.classList.contains('panel-hidden'), run: () => togglePanel() },
+      { label: 'Add toolbar', checked: !document.body.classList.contains('rail-hidden'), run: toggleRail },
+      { label: 'Performance stats', shortcut: 'I', checked: stats.on, run: () => stats.toggle() },
+      { sep: true },
+      { label: 'Frame selection', shortcut: 'F', disabled: !selection.size, run: () => interaction.focusSelection() },
+      { label: 'Frame all', shortcut: 'Home', run: () => frameAll() },
+      { label: 'Reset view', hint: 'home camera', run: () => ws.flyTo(ws.HOME.position, ws.HOME.target) },
+      { label: 'Orthographic view', shortcut: 'Numpad 5', checked: ws.controls.isOrtho, run: () => { ws.controls.setOrtho(!ws.controls.isOrtho); overlays.toast(ws.controls.isOrtho ? 'Orthographic view' : 'Perspective view', 1200); } },
+      { sep: true },
+      { label: 'Navigation', hint: nav.preset.label, items: () => PRESET_IDS.map((id) => ({ label: nav.presets[id].label, hint: nav.presets[id].description, radio: true, checked: nav.presetId === id, run: () => { nav.setPreset(id); overlays.toast(`${nav.preset.label} controls · ${nav.binding('orbit')} orbits`, 2000); } })) },
+      { label: 'Level of detail', hint: `far at ${sizes.lod.far} units`, items: () => [['Close', 60], ['Default', 110], ['Far', 200]].map(([l, d]) => ({ label: l, hint: `${d} units`, radio: true, checked: sizes.lod.far === d, run: () => { sizes.lod.far = d; panel.refresh(); } })) },
+    ] },
+    { id: 'add', label: 'Add', items: () => [
+      { label: 'Search components…', shortcut: sc('Shift+A'), run: () => leftBar.open('search') },
+      { sep: true },
+      ...registry.categories().map((c) => ({ label: c.label, icon: icons[c.id] || icons.node, items: () => c.components.map((def) => ({ label: def.label, hint: def.description, icon: def.icon || icons.node, run: () => addComponent(def, null) })) })),
+    ] },
+    { id: 'help', label: 'Help', items: () => [
+      { label: 'Take the tour', run: () => tour.start() },
+      { label: 'Keyboard shortcuts…', shortcut: sc('Shift+?'), run: () => shortcutsSheet.open() },
+      { label: 'Help & legend', shortcut: 'H', checked: $('help').open && !document.body.classList.contains('panel-hidden'), run: () => toggleHelp() },
+      { sep: true },
+      { label: 'Documentation', hint: 'README on GitHub', run: () => window.open(`${REPO_URL}#readme`, '_blank', 'noopener') },
+      { label: 'Architecture', hint: 'how the platform fits together', run: () => window.open(`${REPO_URL}/blob/main/docs/ARCHITECTURE.md`, '_blank', 'noopener') },
+      { sep: true },
+      { label: 'About Proto3D', run: () => aboutDialog.open() },
+    ] },
+  ],
+});
+
 /* ---- First scene: the autosave if there is one, otherwise the Showcase ---- */
 const saved = autosave.load();
 let restored = false;
@@ -273,6 +473,7 @@ if (saved && saved.nodes && saved.nodes.length) {
   try { loadWorld(world, saved, { camera: ws.camera, controls: ws.controls }); restored = true; } catch (e) { console.warn('autosave ignored:', e.message); }
 }
 if (!restored) loadExample(DEFAULT_EXAMPLE);
+else setProjectName(saved.name && saved.name !== 'untitled' ? saved.name : null);
 autosave.enabled = true;
 overlays.setEmptyHint(world.nodes.length === 0);
 
@@ -319,14 +520,16 @@ function frame() {
   panelAcc += dt;
   if (panelAcc >= 0.1) { panel.refresh(); panelAcc = 0; }
   ws.renderer.render(ws.scene, ws.camera);
+  stats.frame(dt);   // after the render so renderer.info holds this frame's counts
   requestAnimationFrame(frame);
 }
 frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, fileMenu, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, fileMenu, menubar, stats, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd,
+  newProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },
   ai: { vault, jobs, spend, store, providers: providerRegistry, providerStatus, connections, modelBrowser, jobsTray },
   serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls }),

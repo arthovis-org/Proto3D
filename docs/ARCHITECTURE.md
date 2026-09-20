@@ -8,8 +8,8 @@ document describes the layers, the invariants each one keeps and how they fit to
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ UI          ui/toolbar-left.js  panel.js  ui/file-menu.js  interaction.js   │
-│             ui/overlays.js  ui/tour.js  selection.js  gizmo.js  lod.js      │
+│ UI          ui/menubar.js  ui/toolbar-left.js  panel.js  ui/file-menu.js  interaction.js │
+│             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
 │             controls/presets.js + controls/navigation.js (camera + bindings) │
 │             main.js (boot + render loop)                                     │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -509,6 +509,69 @@ input end. The backdrop does not capture pointer events. Seen state is
 interaction layer. `lod.js` computes camera distance per node / connection / group with
 hysteresis; the blocks animate the crossfade.
 
+## 9b. Menu bar (`ui/menubar.js`)
+
+A 32 px desktop-style bar along the top — *Proto3D · File · Edit · View · Add · Help* — above the
+Add rail, the viewport and the properties panel (all three start at `--menubar-h`, so nothing
+overlaps; the floating top toolbar keeps its quick buttons and moves down with it). `MenuBar` is
+presentation and keyboard model only: `main.js` hands it the menus as data, `[{ id, label,
+items: () => Item[] }]`, and **every item calls the same function as the button, key or panel
+control it mirrors** (undo goes through `History`, delete through
+`Interaction.deleteSelection`, wiring through `toggleWiring`, adding through `addComponent`), so
+each edit stays undoable and the toolbar, panel and menu never disagree. Items are rebuilt each
+time a menu opens, which is how disabled states (*Undo* with an empty history, *Delete* with
+nothing selected, *Paste* with an empty clipboard), check marks (theme, grid, wiring, gizmo,
+panel, rail, stats), radio groups (navigation preset, gizmo mode, LOD distance, ports on the
+selection) and labels such as *Undo Delete 2 items* stay current. An item is `{ label, hint?,
+shortcut?, icon?, checked?, radio?, disabled?, run }`, `{ label, items }` for a fly-out submenu
+(*Open recent*, *Export*, *Examples*, *Navigation*, one per component category under *Add*) or
+`{ sep: true }`. Mouse: click a title to open, hover another to switch, hover an item to open its
+submenu, Esc or a click outside closes, a leaf runs after the menus have closed. Keys while open
+(captured before the workspace sees them): ← → switch menus, ↑ ↓ move, → opens a submenu, ←
+closes it, Enter runs, a letter jumps to the next item starting with it. Below 720 px the titles
+fold into one ☰ button whose menu lists the five menus as submenus.
+
+What the menus add beyond the older controls, all in `main.js` and `serialize.js`:
+
+- **Project name and recent projects.** `project.name` (also in `document.title`) is set by *Save
+  as…*, *Open…* (the file name) and *Open recent*; *Save* downloads under it (`safeFileName`) and
+  a dated name the first time. `RecentProjects` (`localStorage["proto3d.recent.v1"]`, newest
+  first, eight entries, the whole document in each so it reopens without a file) is fed by Save,
+  Open and by `rememberCurrent()` before New, Open or an example replaces a non-empty scene —
+  untitled scenes get a timestamp for a name, so *File → New* never loses work.
+- **Import and clipboard.** `serializeSelection(world, nodes)` is a document holding only those
+  blocks plus the links and groups among them (Copy, *Export → Selection as JSON…*);
+  `importCommand(world, doc)` is one undoable command that builds fresh instances (new uids),
+  their connections and groups and places them to the right of the existing scene (*Import…*,
+  Paste, `Ctrl+V` through the `paste` event so the system clipboard can carry a document between
+  tabs). *Export → Screenshot* renders once more and reads the canvas as a PNG.
+- **Shortcuts** the menus bind: `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+O`, `Ctrl+X` / `Ctrl+C`
+  (with a selection), `Shift+?` for the shortcut sheet, `I` for the performance stats.
+- **Help pages** (`ui/help-dialogs.js`, on the Connections modal shell): the keyboard shortcut
+  sheet (fixed keys from `GLOBAL_SHORTCUTS` plus the active preset's `nav.sheet()`) and About.
+
+## 9c. Performance stats (`ui/stats.js`)
+
+*View → Performance stats* (`I`, persisted in `localStorage["proto3d.stats.v1"]`) shows a
+readout at the bottom right, stacked under the job tray in `#bottom-right` (a flex column, so
+either may grow without covering the other). Collapsed it is one line — fps · frame time · JS
+heap, colour-coded ok / warn / danger (`--ok`, `--warn`, `--danger`; fps ≥ 50 / ≥ 30, heap < 60 %
+/ < 85 % of the limit); hover expands it, a click pins it open. The render loop calls
+`stats.frame(dt)` after `renderer.render`; off, that is a single boolean test, on, it records the
+frame time and every 500 ms one `_collect()` pass reads the numbers and patches the DOM in place.
+What is measured versus estimated:
+
+| figure | source |
+| --- | --- |
+| fps, frame time, sparkline of the last 60 frames | measured from the render loop's `dt` (rolling 1 s) |
+| draw calls, triangles, geometry / texture counts | `renderer.info.render` / `renderer.info.memory` (measured by three.js) |
+| est. GPU memory | **estimated**: every unique geometry's attribute + index bytes and every unique texture's `width × height × bytes per pixel` (× 4⁄3 with mipmaps; PMREM half floats count 8 bytes) found by walking the scene — browsers do not expose VRAM |
+| GPU name | `WEBGL_debug_renderer_info` when the browser exposes it |
+| JS heap used / limit | `performance.memory` — Chromium only; Firefox and Safari show *n/a* |
+| device RAM | `navigator.deviceMemory` — a coarse class, Chromium only |
+| components, connections, groups, far-LOD blocks, faces above 1× (`faceScale` tiers) | the world and `lod.js` state |
+| browser storage | `navigator.storage.estimate()` (usage / quota, every 5 s) and the bytes held in `localStorage` |
+
 ## 10. Serialization (`serialize.js`)
 
 ```json
@@ -526,6 +589,9 @@ itself and is applied on load (an autosaved world keeps its setting).
 `loadWorld` clears the world, instantiates known types (unknown ids are reported in `skipped`),
 reconnects by uid + port key, rebuilds groups (collapsing after their members exist) and restores
 the camera. `AutoSave` debounces `world.onChange` into `localStorage["proto3d.world.v2"]`.
+
+Also in `serialize.js`: `serializeSelection`, `importCommand`, `RecentProjects`, `safeFileName`
+and `pickJSONFile({ withName })` (§9b).
 
 ## 11. Adding to the platform
 

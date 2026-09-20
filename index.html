@@ -26,12 +26,10 @@
 <body>
   <div id="viewport"></div>
 
-  <nav id="left-bar" aria-label="Add components"></nav>
+  <!-- Menu bar: File · Edit · View · Add · Help (ui/menubar.js fills it) -->
+  <header id="menubar" aria-label="Application menu"></header>
 
-  <div id="title" class="overlay">
-    <h1>Proto3D</h1>
-    <p>3D project management · live dataflow</p>
-  </div>
+  <nav id="left-bar" aria-label="Add components"></nav>
 
   <div id="toolbar" class="overlay" role="toolbar" aria-label="Workspace">
     <span class="tb-group">
@@ -122,7 +120,10 @@
   </aside>
 
   <div id="selection" class="overlay">Nothing selected</div>
-  <div id="jobs-tray" hidden></div>
+  <div id="bottom-right">
+    <div id="jobs-tray" hidden></div>
+    <div id="stats" hidden></div>
+  </div>
   <div id="conn-label" hidden></div>
   <div id="marquee" hidden></div>
 

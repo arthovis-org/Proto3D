@@ -14,7 +14,7 @@ export function tourSeen(key = TOUR_KEY) { try { return localStorage.getItem(key
 export function markTourSeen(key = TOUR_KEY) { try { localStorage.setItem(key, 'done'); } catch (_) { /* private mode */ } }
 
 /** Step 1 reads the active navigation preset so the hint matches the mouse bindings. */
-const navHint = () => `${nav.binding('orbit') || 'Drag'} orbits, ${nav.binding('pan') || 'right-drag'} pans, the wheel zooms (${nav.preset.label} controls; change them under ? → Controls).`;
+const navHint = () => `${nav.binding('orbit') || 'Drag'} orbits, ${nav.binding('pan') || 'right-drag'} pans, the wheel zooms (${nav.preset.label} controls; change them under View → Navigation).`;
 const STEPS = [
   { id: 'toolbar', title: 'Add and move around', text: () => `Add components from the left toolbar: pick a category, then click a component or drag it into the room. ${navHint()} You can build without cables: drop a component onto another to link them.` },
   { id: 'connect', title: 'Connect ports (optional)', text: 'With Wiring on (P) every block shows its pins. Connect an output on the right of a node to an input on the left of another. Matching colours fit; chevrons are events, circles carry data.', wiring: true },

@@ -74,5 +74,8 @@ export const icons = {
   workspace: svg('<path d="M3 20l9-16 9 16z"/><path d="M3 20h18"/>'),
   chevron: svg('<path d="M9 6l6 6-6 6"/>'),
   help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 015 0c0 1.8-2.5 2-2.5 4M12 17.5v.01"/>'),
+  menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
+  activity: svg('<path d="M3 12h4l3-7 4 14 3-7h4"/>'),
+  camera: svg('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.2"/>'),
 };
 export const icon = (name) => icons[name] || icons.node;

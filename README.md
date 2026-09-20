@@ -102,7 +102,7 @@ src/
   groups.js     Group3D: frame on the floor, collapse to a slab with proxy ports
   interaction.js  pointer model: hover guidance, cable drags (forward / backward), cable-end re-route, selection emphasis
   selection.js, lod.js, serialize.js, gizmo.js, panel.js, workspace.js, theme.js
-  ui/           toolbar-left.js (Add toolbar), file-menu.js, overlays.js (tooltips, drag label, toast, end labels, empty hint), tour.js
+  ui/           menubar.js (File · Edit · View · Add · Help), toolbar-left.js (Add toolbar), file-menu.js, overlays.js (tooltips, drag label, toast, end labels, empty hint), tour.js, help-dialogs.js (shortcuts, About), stats.js (performance readout)
                 connections.js (API keys), model-browser.js, jobs-tray.js
   ai/           providers/ (openrouter, fal, kie, demo + the adapter interface), vault.js (encrypted keys), jobs.js (queue), pricing.js, store.js (IndexedDB), http.js
   components/generate/  prompt.js, generate-text.js, generate-media.js (image / video / audio), common.js
@@ -365,8 +365,10 @@ Everything else is the same in every preset:
 | Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the top bar has undo / redo |
 | Group | `Ctrl+G` group the selection · `C` collapse / expand · `Ctrl+Shift+G` ungroup · drag the frame to move the whole group · rename in the panel |
 | Interact | click a device screen (`tap`), an Input face (button, toggle, slider) or press the configured key · click / drag a **card** on a Kanban board (drop it on a **Person** or into a lane to assign it), click the **+** tile, click a checklist row, press the **Run** disc on a Flow Terminal, drag a Timeline bar's end handle |
-| File | **File** → New · Save JSON · Load JSON · Examples; autosave to `localStorage` on every change |
-| View | `T` theme · `N` / `Tab` properties panel · `H` help & legend · **?** → Show tour · `Esc` cancel |
+| File | menu bar **File** → New project · Open… (`Ctrl+O`) · Open recent · Save (`Ctrl+S`) · Save as… (`Ctrl+Shift+S`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave to `localStorage` on every change; the top bar's **File** button keeps the short list |
+| Edit | menu bar **Edit** → Undo / Redo · Cut / Copy / Paste (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`, also between tabs) · Duplicate · Delete · Select all · Deselect · Group / Ungroup · Collapse |
+| View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
+| Help | menu bar **Help** → tour · keyboard shortcuts (`Shift+?`) · help & legend (`H`) · documentation · About |
 
 Shortcuts are ignored while typing in a panel field.
 
