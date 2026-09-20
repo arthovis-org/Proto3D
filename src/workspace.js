@@ -18,7 +18,7 @@ export function createWorkspace(container) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.2;
+  renderer.toneMappingExposure = palette.exposure ?? 1.2;   // the light theme lifts bodies and faces off its grey floor with a touch more light
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   setMaxAnisotropy(renderer.capabilities.getMaxAnisotropy());   // canvas faces and labels read it
   container.appendChild(renderer.domElement);
@@ -68,7 +68,7 @@ export function createWorkspace(container) {
   /* Lighting: soft sky/ground hemisphere + key light + cool fill. Calm, not dramatic. */
   const hemi = new THREE.HemisphereLight(palette.skyLight, palette.groundLight, 0.9);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xffffff, 2.0);
+  const key = new THREE.DirectionalLight(0xffffff, palette.keyLight ?? 2.0);
   key.position.set(12, 24, 14);
   scene.add(key);
   const fill = new THREE.DirectionalLight(0x7f9cff, 0.5);
@@ -129,6 +129,8 @@ export function createWorkspace(container) {
     scene.background.setHex(palette.bg);
     scene.fog.color.setHex(palette.fog);
     hemi.color.setHex(palette.skyLight); hemi.groundColor.setHex(palette.groundLight);
+    key.intensity = palette.keyLight ?? 2.0;
+    renderer.toneMappingExposure = palette.exposure ?? 1.2;
     floorMat.uniforms.inner.value.setHex(palette.ground);
     floorMat.uniforms.outer.value.setHex(palette.bg);
     floorMat.uniforms.minorColor.value.setHex(palette.gridMinor);
@@ -232,8 +234,8 @@ export function createWorkspace(container) {
   /** Fog thins as the camera pulls back so a far overview stays readable instead of fading out; the plan has none. */
   function updateFog() {
     const d = controls.camera.position.distanceTo(controls.target);
-    scene.fog.density = isPlanOn() ? 0 : 0.011 * THREE.MathUtils.clamp(45 / Math.max(d, 1), 0.28, 1);
-    floorMat.uniforms.fadeRadius.value = Math.max(40, d * (isPlanOn() ? 1.2 : 0.5)); // the lit pool grows with the overview
+    scene.fog.density = isPlanOn() ? 0 : 0.011 * (palette.fogScale ?? 1) * THREE.MathUtils.clamp(45 / Math.max(d, 1), 0.28, 1);
+    floorMat.uniforms.fadeRadius.value = Math.max(40, d * (isPlanOn() ? 1.2 : 0.5)) * (palette.poolScale ?? 1); // the lit pool grows with the overview
   }
 
   /* ---- 2D editing mode: a top-down orthographic pose over the blocks, and the flights in and out ---- */

@@ -175,7 +175,7 @@ export class Node3D extends Block3D {
     this.accent.material.color.setHex(disabled ? states.disabled : this.accentColor());
     this.titleLabel.material.opacity = disabled ? 0.45 : 1;
     this.footerLabel.material.opacity = disabled ? 0.4 : 1 - this.lodBlend;
-    if (this.face?.mesh) this.face.mesh.material.emissiveIntensity = disabled ? 0.15 : 0.55;
+    if (this.face?.mesh) this.face.mesh.material.emissiveIntensity = (disabled ? 0.15 : 0.55) * (palette.faceBoost ?? 1);
     super.applyVisual();
   }
 
@@ -190,7 +190,7 @@ export class Node3D extends Block3D {
     this.titleLabel.position.y = this._titleY + (farY - this._titleY) * k;
     this.titleLabel.position.x = this._titleX * (1 - k);
     this.titleLabel.position.z = this.depth / 2 + 0.04 + 0.03 * k;
-    if (this.face?.mesh) this.face.mesh.material.emissiveIntensity = 0.55 + 0.2 * k;
+    if (this.face?.mesh) this.face.mesh.material.emissiveIntensity = (0.55 + 0.2 * k) * (palette.faceBoost ?? 1);   // the light theme's face boost
   }
 
   /** Per-frame: active pulse, LOD blend, shadow on the floor. */

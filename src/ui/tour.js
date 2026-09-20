@@ -1,5 +1,5 @@
 // ui/tour.js — first-run walkthrough: seven steps with a spotlight over the thing being
-// explained (the Add toolbar, a real output port with a ghost cable running to a compatible
+// explained (the Start panel while it is open, else the Add toolbar; a real output port with a ghost cable running to a compatible
 // input, the board's people slot, a card on the board, a cable end, the 2D editing mode toggle,
 // the File menu that holds Connections) and a small card with
 // Next / Skip. Shown once
@@ -16,8 +16,11 @@ export function markTourSeen(key = TOUR_KEY) { try { localStorage.setItem(key, '
 
 /** Step 1 reads the active navigation preset so the hint matches the mouse bindings. */
 const navHint = () => `${nav.binding('orbit') || 'Drag'} orbits, ${nav.binding('pan') || 'right-drag'} pans, the wheel zooms (${nav.preset.label} controls; change them under View → Navigation).`;
+const startOpen = () => { const el = document.getElementById('start'); return !!el && !el.hidden; };
 const STEPS = [
-  { id: 'toolbar', title: 'Add and move around', text: () => `Add components from the left toolbar: pick a category, then click a component or drag it into the room. ${navHint()} You can build without cables: drop a component onto another to link them.` },
+  { id: 'toolbar', title: () => (startOpen() ? 'Start with a template' : 'Add and move around'), text: () => (startOpen()
+    ? `Pick a starter template from this card — a project board, an AI content pipeline or an interactive device flow — or a blank project. Each template opens in its own tab with a hint about what to try first. ${navHint()}`
+    : `Add components from the left toolbar: pick a category, then click a component or drag it into the room. ${navHint()} You can build without cables: drop a component onto another to link them.`) },
   { id: 'connect', title: 'Connect ports (optional)', text: 'With Wiring on (P) every block shows its pins. Connect an output on the right of a node to an input on the left of another. Matching colours fit; chevrons are events, circles carry data.', wiring: true },
   { id: 'people', title: 'Plug people into the board', text: 'Plug a person into the board\'s people slot to see their tasks: the rectangle grows one slot per person, the board draws a lane per person and each Person card lists their tasks. Without wiring: drop the Person onto the board.', wiring: true },
   { id: 'card', title: 'Edit in place, or on the right', text: 'Double-click a card\'s title — or any text on a face: a note, a prompt, a name, a date — to edit it right there (Enter saves, Esc cancels, Tab moves on). Click a card to edit everything else in the properties panel on the right. Drag a card to move it between columns, or drop it on a Person to assign it.' },
@@ -47,7 +50,7 @@ export class Tour {
   get active() { return this.index >= 0; }
   get steps() { return STEPS; }
 
-  start() { this.index = -1; this.el.hidden = false; this._wiringBefore = isWiringOn(); this.next(); }
+  start() { this.index = -1; this.el.hidden = false; document.body.classList.add('touring'); this._wiringBefore = isWiringOn(); this.next(); }
   /** Re-render the current step's text (the navigation preset changed). */
   refreshText() { if (this.active) { const t = STEPS[this.index].text; this.textEl.textContent = typeof t === 'function' ? t() : t; } }
   next() {
@@ -61,6 +64,7 @@ export class Tour {
     this.index = -1;
     this._clearGhost();
     this.el.hidden = true;
+    document.body.classList.remove('touring');   // the hint bar comes back
     if (this._wiringBefore !== undefined) { setWiring(this._wiringBefore); this._wiringBefore = undefined; }   // restore the wiring switch the tour turned on
     markTourSeen();
     this.onDone();
@@ -70,7 +74,7 @@ export class Tour {
     this._clearGhost();
     this.anchor = null;
     this.stepEl.textContent = `${this.index + 1} / ${STEPS.length}`;
-    this.titleEl.textContent = step.title;
+    this.titleEl.textContent = typeof step.title === 'function' ? step.title() : step.title;
     this.textEl.textContent = typeof step.text === 'function' ? step.text() : step.text;
     // the wiring steps need visible pins and cables; the switch goes back to what it was when the tour ends
     setWiring(step.wiring ? true : this._wiringBefore);
@@ -79,8 +83,9 @@ export class Tour {
     const nodes = this.world.nodes.filter((n) => n.visible);
     switch (step.id) {
       case 'toolbar': {
+        const card = startOpen() ? document.querySelector('#start .start-card') : null;   // the Start panel when it is open, else the Add rail
         const rail = document.querySelector('#left-bar .rail');
-        this.anchor = () => rail?.getBoundingClientRect() || null;
+        this.anchor = () => (card && startOpen() ? card.getBoundingClientRect() : rail?.getBoundingClientRect()) || null;
         break;
       }
       case 'connect': {

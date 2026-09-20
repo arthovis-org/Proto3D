@@ -1,10 +1,18 @@
-// examples/index.js — example scenes and the small builder API they use.
+// examples/index.js — example scenes (the Showcase), the three starter templates the Start panel
+// offers, and the small builder API they use. A template is an example flagged `template: true`
+// with a one-line `hint` (what to try first); it opens in a tab named after it.
 import showcase from './showcase.js';
+import projectBoard from './project-board.js';
+import aiPipeline from './ai-pipeline.js';
+import deviceFlow from './device-flow.js';
 import { createInstance } from '../instance.js';
 import { Group3D } from '../groups.js';
 
-export const examples = [showcase];
-/** The scene shown on first load and whenever the autosave is empty. */
+/** Starter templates, in the order the Start panel shows them. */
+export const templates = [projectBoard, aiPipeline, deviceFlow];
+/** Everything File → Examples lists: the templates first, then the Showcase. */
+export const examples = [...templates, showcase];
+/** The full example scene (File → Examples → Showcase, the Start panel's "More examples"). */
 export const DEFAULT_EXAMPLE = showcase.id;
 export const exampleById = (id) => examples.find((e) => e.id === id) || null;
 

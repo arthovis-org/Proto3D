@@ -94,6 +94,8 @@ export function clear(g, w, h, bg = palette.faceBg, radius = RADIUS) {
   g.fillStyle = bg;
   if (!radius || bg === 'rgba(0,0,0,0)') { if (bg !== 'rgba(0,0,0,0)') g.fillRect(0, 0, w, h); return; }
   roundRect(g, 0, 0, w, h, radius); g.fill();
+  // the light theme draws a hairline around the face so a white face has an edge on a near-white body
+  if (palette.faceEdge && bg === palette.faceBg) { g.strokeStyle = palette.faceEdge; g.lineWidth = 2; roundRect(g, 1, 1, w - 2, h - 2, Math.max(0, radius - 1)); g.stroke(); }
 }
 export const font = (px, weight = 500, mono = false) => `${weight} ${px}px ${mono ? typography.mono : typography.family}`;
 /** Tabular figures (numbers align in columns). */

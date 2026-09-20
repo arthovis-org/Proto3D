@@ -12,6 +12,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 │             ui/mini-toolbar.js (above the selection)  ui/command-palette.js (Ctrl+K)          │
 │             ui/tab-strip.js (project tabs + autosave indicator)  ui/version-history.js  ui/confirm.js │
 │             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
+│             ui/start-panel.js (first run, File → New, Help → Start panel)  ui/hint-bar.js       │
 │             ui/guides.js (snap guides)  layout.js (Auto-layout)  plan.js (2D mode + snap settings) │
 │             controls/presets.js + controls/navigation.js (camera + bindings) │
 │             main.js (boot + render loop)                                     │
@@ -28,7 +29,8 @@ document describes the layers, the invariants each one keeps and how they fit to
 │ PM layer    pm/model.js (data)  pm/relations.js (links → meaning)  pm/board-ops.js  pm/panel-pm.js │
 │ AI layer    ai/providers/* (openrouter, fal, kie, demo)  ai/vault.js  ai/jobs.js  ai/pricing.js  ai/store.js  ai/http.js │
 │             ui/connections.js  ui/model-browser.js  ui/jobs-tray.js  (reached through ai/ui-hooks.js) │
-│ Examples    examples/showcase.js (the default scene) + examples/index.js     │
+│ Examples    examples/showcase.js (the full scene)  examples/project-board.js · ai-pipeline.js · │
+│             device-flow.js (the starter templates)  examples/index.js (builder API)               │
 │ Persistence serialize.js                                                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -472,12 +474,32 @@ redraw per frame so a camera sweep never hitches. Texture anisotropy comes from
 | token | dark | light | use |
 | --- | --- | --- | --- |
 | `faceBg` | `#161d2a` | `#ffffff` | the face card (`clear`, rounded corners `RADIUS` 18 px, transparent outside) |
-| `faceCard` | `#1f2838` | `#f1efe9` | inner tiles, chips, tracks |
-| `faceLine` | `rgba(255,255,255,.08)` | `rgba(28,33,48,.10)` | 1 px dividers, bar tracks, ring tracks |
-| `faceText` / `faceDim` | `#eaf1ff` / `#8b9ab5` | `#1c2130` / `#6a7180` | primary / secondary text |
+| `faceCard` | `#1f2838` | `#eef0f3` | inner tiles, chips, tracks |
+| `faceLine` | `rgba(255,255,255,.08)` | `rgba(28,33,48,.12)` | 1 px dividers, bar tracks, ring tracks |
+| `faceEdge` | — | `rgba(28,33,48,.16)` | hairline `clear()` strokes around the face card (a white face on a near-white body needs an edge) |
+| `faceText` / `faceDim` | `#eaf1ff` / `#8b9ab5` | `#1c2130` / `#5f6675` | primary / secondary text (≥ 4.5 : 1 on the face in both themes) |
 | `faceAccent` | `#5aa9ff` | `#2b7fe0` | the one accent (bars, rings, links) |
 | `faceGood` / `faceWarn` / `faceBad` | `#34c99a` / `#f5b942` / `#ff5c6c` | `#13906a` / `#b8830c` / `#d93848` | meaning only: done, soon, overdue / over WIP |
 | `categories.*` | saturated hues | darker hues | the accent line on a node, flow shape tint, LOD bars |
+
+**Why the light palette is layered the way it is.** The floor is an unlit shader (its colour is
+the token, no tone mapping), while bodies and faces are lit and go through ACES filmic tone
+mapping, which compresses whites: a white body under the dark theme's lights renders around
+`#e0` and a white face at emissive 0.55 around `#d4` — darker than the body — so in round 6 the
+light room read as one wash of near-identical greys (body vs floor 1.06 : 1, face vs body 1.11 : 1
+with the face the darker one). The fix keeps the three surfaces in a fixed order — **floor pool
+(mid grey `ground` 0xc6ccd4, fading to `bg` 0xdfe3e8) < body (near white) < face (white with a
+hairline)** — and gives the light palette render tokens that leave the dark theme pixel-identical
+(`exposure` 1.2 / `keyLight` 2.0 / `faceBoost` 1 / `fogScale` 1 / `poolScale` 1 there):
+`exposure` 1.5 and `keyLight` 2.6 lift the lit surfaces (`workspace.js` reads them on boot and on
+theme change), `faceBoost` 2.4 multiplies every face material's emissive (`materials.face` records
+the base value, `retuneFace` re-applies it in `Block3D.refreshTheme`, `Node3D` scales its state
+and LOD intensities by it), `faceEdge` strokes the face card, `fogScale` 0.55 thins the fog and
+`poolScale` 1.7 widens the floor pool so far blocks stay on the grey mat. Sampled on the Showcase
+after the change: node body vs floor 1.31 : 1, board vs floor 1.49 : 1, face brighter than the body
+with the hairline drawing the edge, grid line vs floor 1.85 : 1, face text 14 : 1. The CSS tokens
+(`--bg`, `--panel-solid`, `--field-solid`, `--dim`) follow the same cooler greys so the shell and
+the room agree.
 
 Type: `typography.family` (Inter → SF Pro Text → Segoe UI → system-ui), `typography.scale` (title
 30 / subtitle 18 / label 17 / value 17 / small 14 / caps 12 / big 44 px), weights 600 / 500 / 400,
@@ -633,13 +655,16 @@ selected cable dims the others, its chip carries the endpoint line and the DOM l
 re-projected per frame, optional delay), drag label beside the pointer, toast, cable end labels
 (DOM rebuilt only when the label set changes), empty-scene hint (driven by `world.onChange`).
 **Overlays** also own the **chooser** popover (`chooser(items, { x, y, title }, onPick)`, §7d).
-**Tour** (`ui/tour.js`): five steps with a spotlight (`.tour-spot`, a box-shadow cut-out that
-follows a DOM rect or a projected world point) and a card; step 2 picks a real output port with
+**Tour** (`ui/tour.js`): seven steps with a spotlight (`.tour-spot`, a box-shadow cut-out that
+follows a DOM rect or a projected world point) and a card; step 1 spots the Start panel's card
+while it is open (and talks about picking a template), else the Add rail; step 2 picks a real output port with
 a compatible, preferably unconnected, input on another block, frames both and animates a ghost
 `Connection3D` from the output to the input; step 3 frames the board with its people and spots
 the `people` slot; step 4 frames the board and spots its first card; step 5 spots a cable's
 input end. The backdrop does not capture pointer events. Seen state is
-`localStorage["proto3d.tour.v1"]`; **? → Show tour** replays it.
+`localStorage["proto3d.tour.v1"]`; **Help → Take the tour** replays it. A new visitor lands on the
+Start panel, so the tour starts after the first template they open (`main.js → loadExample`)
+rather than over an empty room.
 
 `Selection` holds nodes, groups and connections and notifies the panel, the gizmo and the
 interaction layer. `lod.js` computes camera distance per node / connection / group with
@@ -674,8 +699,9 @@ fold into one ☰ button whose menu lists the five menus as submenus.
 
 What the menus add beyond the older controls, all in `main.js` and `serialize.js`:
 
-- **Projects.** Every open project is a tab (§10b): *New project* opens one, *Open…* / *Open
-  recent* / *Examples* open in a new tab unless the active tab is an untouched empty project,
+- **Projects.** Every open project is a tab (§10b): *New project* opens one and shows the Start
+  panel over it (§9g), *Open…* / *Open recent* / *Examples* open in a new tab unless the active
+  tab is an untouched empty project (a starter template names its tab after itself),
   *Save* downloads under the tab's name (`safeFileName`, a dated name the first time) and marks
   it saved, *Save as…* and *Rename project…* ask in a themed prompt, *Version history…* opens the
   drawer, *Close tab* asks about unsaved changes. *Open recent* lists every project in the
@@ -861,6 +887,49 @@ is untouched. `layoutCommand` is one undoable command whose `do` / `undo` glide 
 `tweenTo` (0.25 s, `updateTweens` in the render loop; a dragged block is left alone), so the same
 positions read as rows of standing cards in 3D and as a diagram in 2D.
 
+## 9g. Start panel, starter templates and the hint bar (`ui/start-panel.js`, `examples/*`, `ui/hint-bar.js`)
+
+**First run.** With no stored projects (`tabs.init()` restored nothing) `main.js` opens one empty
+tab and the **Start panel** over it; the same happens on a reload that lands on an untouched empty
+tab and on **File → New**. The panel is a centred card in the viewport (`#start`, `z-index` 4,
+`pointer-events: none` outside the card), not a modal: the room behind it stays live. It offers
+**Blank project**, the three **starter templates** with a thumbnail, **Open recent** (the closed
+projects from `tabs.recent()`, patched into the card when the IndexedDB read resolves), **Open
+file…** and **More examples · Showcase**, plus a **Show this panel on startup** checkbox persisted
+as `localStorage["proto3d.start.v1"]` (`'0'` = off; `startOnLaunch()` / `setStartOnLaunch()`). It
+closes on any pick, on Esc, on ×, when a tab with content becomes active and when anything lands
+in the room (`world.onChange` in `main.js`); **Help → Start panel** reopens it (also in the
+command palette). While it is open the empty-scene arrow is hidden (`syncEmptyHint`).
+
+**Templates** live beside the Showcase in `src/examples/` and use the same builder API
+(`add`, `connect`, `group`): an example object with `template: true`, a `label` (the tab name),
+a `description` (the tile), a one-line `hint` (what to try first) and `focus(named)` (what the
+camera frames). `examples/index.js` exports `templates` (panel order) and `examples` (templates
+then the Showcase, what *File → Examples* lists).
+
+| id | contents | hint |
+| --- | --- | --- |
+| `project-board` | *Website relaunch* board (3 columns, 5 cards) with two People in its `people` slot (swimlanes), a Milestone into the board, a Timeline and a Dashboard fed by the board's `tasks` / `progress`, the people and the milestone — 6 components, 9 cables | drag a card into Done |
+| `ai-pipeline` | a Data source (`{Product.name}`, tagline, audience, colour) feeding two Prompts, Generate Text → Display and Generate Image → Media Grid on the Demo provider, one Run button into both `run` inputs — 8 components, 8 cables | press Run |
+| `device-flow` | Input button and Phone `tap` → Action (count) → Compare (≥ 3) → Gate (NOT) → Display; the count's `done` and Compare's result into a flow decision whose *yes* triggers an Action that writes *Unlocked* on the Laptop and whose *no* feeds a Log; the Phone shows the count — 10 components, 12 cables | press the button three times |
+
+`main.js → loadExample(id)` builds the scene through `tabs.replaceActive` (into the untouched empty
+tab, else a new one), names the tab after a template, frames `focus`, hides the Start panel and
+puts `{ text, dismissed }` on the tab for the **hint bar** (`#hint-bar`, `ui/hint-bar.js`): a
+dismissible pill at the top of the viewport that `syncHint(tab)` shows or hides on every tab
+switch, so a dismissal sticks per tab and never persists. The first template a new visitor opens
+starts the tour.
+
+**Thumbnails** are `assets/templates/<id>-<dark|light>.png` (320 × 200), rendered headless once
+by the round's verification script (`scratchpad/tools/shoot17.mjs`: a 640 × 400 viewport with
+the rail and panel hidden, `frameAll({ fill: 1.08 })`, downscaled in a canvas) and committed;
+the panel picks the file for the active theme and re-renders on theme change, and a missing file
+falls back to the category icon (`<img onerror>`). Re-render them when a template changes.
+
+**Adding a template**: a file under `src/examples/` built like the three above, an import and a
+row in `templates` in `examples/index.js`, its icon in `TEMPLATE_ICON` (`ui/start-panel.js`), a
+thumbnail pair and a row in this table.
+
 ## 10. Serialization (`serialize.js`)
 
 ```json
@@ -983,6 +1052,8 @@ captured element in the DOM would drop its capture), ← → move focus, Delete 
   pair up without a row.
 - **A navigation preset**: an entry in `PRESETS` (`controls/presets.js`); the panel select, the
   ? menu, the help sheet and the tour hint pick it up.
+- **A starter template**: an example object with `template: true`, `hint` and `focus` under
+  `src/examples/`, listed in `templates` (`examples/index.js`), plus its thumbnails (§9g).
 - **An AI provider or model**: `registerProvider({...})` in a file under `ai/providers/` (import it
   in `providers/index.js`), or a row in `FAL_MODELS` / `KIE_MODELS` — see `AI-GENERATION.md` §6.
 - **A body**: build it from `panelGeometry` / `slabGeometry` (`h.panelGeometry` inside `body3d`)

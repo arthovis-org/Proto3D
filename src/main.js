@@ -5,6 +5,7 @@
 // navigation presets, first-run tour, LOD, the AI layer (providers, key vault, jobs) with its
 // Connections page, model browser and job tray, the performance stats, the project tabs (each with
 // its own scene, history and view), autosave into IndexedDB with its indicator, version history, recent projects,
+// the Start panel (blank project, three starter templates with a hint bar, recent projects, open a file),
 // the 2D editing mode (plan view, key 2) with grid snapping and Auto-layout (L), inline editing of
 // face fields (double-click text on a face), the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
@@ -39,7 +40,9 @@ import { Guides } from './ui/guides.js';
 import { FieldEditor } from './ui/field-editor.js';
 import { isPlanOn, setPlan, snap, GRID_SIZES, SNAP_KINDS } from './plan.js';
 import { layoutPlan, layoutCommand, updateTweens, tweening } from './layout.js';
-import { examples, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
+import { examples, templates, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
+import { StartPanel, startOnLaunch } from './ui/start-panel.js';
+import { HintBar } from './ui/hint-bar.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
 import { portTypes, subtypes, states, sizes, hex, getTheme, setTheme, toggleTheme, onThemeChange, refreshLabel } from './theme.js';
 import { formatValue, typeInfo, subtypeInfo, kindOf, portTypeName, mismatchReason } from './core/types.js';
@@ -173,7 +176,7 @@ const tabs = new Tabs({
       else frameAll({ instant: true });
     },
     beforeSwitch: () => { interaction.cancel(); fieldEditor.cancel(); menubar?.close(); hoveredConnection = null; connLabel.hidden = true; },
-    afterSwitch: (tab) => { syncTitle(tab); gizmo.setTarget(selection.nodes[selection.nodes.length - 1] || null); engine.evaluate(); overlays.setEmptyHint(world.nodes.length === 0); syncToolbar(); panel.build(); refreshRecent(); },
+    afterSwitch: (tab) => { syncTitle(tab); gizmo.setTarget(selection.nodes[selection.nodes.length - 1] || null); engine.evaluate(); syncEmptyHint(); syncToolbar(); panel.build(); refreshRecent(); syncHint(tab); if (world.nodes.length && start?.isOpen) start.hide('switch'); },
     thumbnail: () => requestThumb(),
     confirmClose: (tab) => confirmDialog({
       icon: icons.file, title: `Save changes to ${tabs.displayName(tab)}?`,
@@ -190,22 +193,33 @@ let recentCache = [], recentTimer = 0;
 function refreshRecent() { clearTimeout(recentTimer); recentTimer = setTimeout(() => tabs.recent().then((l) => { recentCache = l; }), 150); }
 tabs.onStatus((st) => { if (st.state === 'saved') refreshRecent(); });
 tabs.onChange(() => refreshRecent());
-/** An example scene: into the active tab when it is an untouched empty project, else a new tab; framed on its focus blocks. */
+/**
+ * An example scene or a starter template: into the active tab when it is an untouched empty
+ * project, else a new tab; framed on its focus blocks. A template names the tab after itself and
+ * shows its one-line hint bar (dismissible, remembered on the tab).
+ */
 function loadExample(id) {
   const ex = exampleById(id); if (!ex) return null;
   let named = null;
-  const tab = tabs.replaceActive(() => { named = buildExample(world, ex, { camera: ws.camera, controls: ws.controls }); engine.evaluate(); }, { name: null });
+  const tab = tabs.replaceActive(() => { named = buildExample(world, ex, { camera: ws.camera, controls: ws.controls }); engine.evaluate(); }, { name: ex.template ? ex.label : null });
   if (!tab) return null;
+  start.hide('load');
   const focus = ex.focus ? ex.focus(named).filter(Boolean) : [];
   if (isPlanOn()) frameAll({ instant: true });
-  else if (focus.length) ws.frameBlocks(focus, { instant: true, fill: 0.7, insetLeft: insetLeft() }); else frameAll({ instant: true });
+  else if (focus.length) ws.frameBlocks(focus, { instant: true, fill: ex.template ? 0.88 : 0.7, insetLeft: insetLeft() }); else frameAll({ instant: true });   // a template fills the view, the Showcase keeps its overview
+  tab.hint = ex.hint ? { text: ex.hint, dismissed: false } : null;
+  syncHint(tab);
+  if (ex.template && !tourSeen() && !tour.active) setTimeout(() => { if (!tour.active && tabs.active === tab) tour.start(); }, 700);   // the first template a new visitor opens starts the tour
   return named;
 }
-/** File → New: an empty project in a new tab (an untouched empty tab is already one). */
+/** The hint bar shows the active tab's template hint until it is dismissed (per tab). */
+function syncHint(tab = tabs.active) { if (tab?.hint && !tab.hint.dismissed && !tab.preview) hintBar.show(tab.hint.text); else hintBar.hide(); }
+/** File → New: an empty project in a new tab (an untouched empty tab is already one), with the Start panel over it. */
 function newProject() {
-  if (tabs.active && tabs.isUntouchedEmpty(tabs.active)) { overlays.toast('This tab is already an empty project', 1400); return tabs.active; }
-  const t = tabs.newTab();
-  if (t) overlays.toast('New project · Save as… names it, Alt+W closes the tab', 1600);
+  let t = tabs.active;
+  if (t && tabs.isUntouchedEmpty(t)) overlays.toast('This tab is already an empty project', 1400);
+  else { t = tabs.newTab(); if (t) overlays.toast('New project · Save as… names it, Alt+W closes the tab', 1600); }
+  if (t) start.open('new');
   return t;
 }
 function closeTab(id = tabs.activeId) { return tabs.close(id); }
@@ -298,6 +312,18 @@ document.addEventListener('paste', (e) => {
   try { const p = JSON.parse(e.clipboardData?.getData('text/plain') || ''); if (p && p.app === 'proto3d' && Array.isArray(p.nodes)) doc = p; } catch (_) { /* not ours */ }
   if (doc || clipboard.doc) { e.preventDefault(); pasteClipboard(doc || clipboard.doc); }
 });
+
+/* ---- Start panel and the template hint bar ---- */
+const hintBar = new HintBar({ el: $('hint-bar'), onDismiss: () => { if (tabs.active?.hint) tabs.active.hint.dismissed = true; } });
+/** The empty-scene arrow shows only while the room is empty and the Start panel is not over it. */
+const syncEmptyHint = () => overlays.setEmptyHint(world.nodes.length === 0 && !start?.isOpen);
+const start = new StartPanel({
+  el: $('start'), templates, showcase: exampleById(DEFAULT_EXAMPLE), recent: () => tabs.recent(),
+  onBlank: () => { if (!(tabs.active && tabs.isUntouchedEmpty(tabs.active))) tabs.newTab(); overlays.toast('Blank project · add a component from the left', 1600); },
+  onTemplate: (id) => loadExample(id), onExample: (id) => loadExample(id), onOpenFile: () => openProject(), onOpenRecent: (id) => openRecent(id),
+  onChange: () => { syncEmptyHint(); syncToolbar(); },
+});
+world.onChange(() => { if (start.isOpen && world.nodes.length) start.hide('added'); else syncEmptyHint(); });   // anything landing in the room dismisses the card
 
 /* ---- AI generation: Connections page, model browser, job tray; the components reach them through ui-hooks ---- */
 const connections = new Connections({ onChange: () => { syncToolbar(); panel.refresh(); } });
@@ -655,6 +681,7 @@ const menubar = new MenuBar({
     ] },
     { id: 'help', label: 'Help', items: () => [
       { label: 'Command palette…', hint: 'every command, component and block by name', shortcut: sc('Ctrl+K'), run: () => palette.open() },
+      { label: 'Start panel', hint: 'blank project, starter templates, recent projects', checked: start.isOpen, run: () => start.toggle() },
       { label: 'Take the tour', run: () => tour.start() },
       { label: 'Keyboard shortcuts…', shortcut: sc('Shift+?'), run: () => shortcutsSheet.open() },
       { label: 'Help & legend', shortcut: 'H', checked: $('help').open && !document.body.classList.contains('panel-hidden'), run: () => toggleHelp() },
@@ -695,17 +722,19 @@ const miniBar = new MiniToolbar({
   onMore: () => { togglePanel(true); const body = $('panel'); body.scrollTop = 0; const f = body.querySelector('#prop-name, #panel-body input, #panel-body select, #panel-body textarea'); f?.focus({ preventScroll: true }); },
 });
 
-/* ---- First scene: the saved tabs (IndexedDB; the round-5 localStorage autosave migrates once), otherwise the Showcase in a first tab ---- */
+/* ---- First scene: the saved tabs (IndexedDB; the round-5 localStorage autosave migrates once), otherwise an empty tab with the Start panel over it ---- */
 const tabStrip = new TabStrip({ el: $('tabstrip'), tabs, onNew: newProject, onDownload: saveProject, onVersions: () => versions.open() });
+const tour = new Tour({ ws, world, el: $('tour'), onDone: () => frameAll() });
 let restored = false;
 try { restored = await tabs.init(); } catch (e) { console.warn('project store unavailable:', e.message); }
-if (!restored) loadExample(DEFAULT_EXAMPLE);
+if (!restored && !tabs.tabs.length) tabs.newTab();
 refreshRecent();
-overlays.setEmptyHint(world.nodes.length === 0);
+syncEmptyHint();
+// the Start panel: first run, or a reload onto an untouched empty project, unless switched off on the panel
+if (startOnLaunch() && tabs.active && tabs.isUntouchedEmpty(tabs.active)) start.open('startup');
 
-/* ---- First-run tour: once per browser, re-openable from "?" → Show tour ---- */
-const tour = new Tour({ ws, world, el: $('tour'), onDone: () => frameAll() });
-if (!tourSeen()) setTimeout(() => { if (!tour.active) tour.start(); }, 600);
+/* ---- First-run tour: once per browser, re-openable from Help → Take the tour; a new visitor's first template starts it (loadExample) ---- */
+if (!tourSeen() && !start.isOpen && world.nodes.length) setTimeout(() => { if (!tour.active) tour.start(); }, 600);
 
 /* ---- Render loop ---- */
 const clock = new THREE.Clock();
@@ -763,7 +792,7 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
   plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS },
   layout: { arrange: autoLayoutSelection, plan: (nodes) => layoutPlan(world, nodes), tweening },

@@ -1,8 +1,10 @@
 # Proto3D — a 3D project-management platform that runs
 
 Proto3D is a browser-based workspace where **components** live as clean cards in a calm 3D room
-and **actually run**: a dataflow engine evaluates the graph every frame. The scene you land in
-is the **Showcase** — a product launch as a project-management system: a standing 3D Kanban board
+and **actually run**: a dataflow engine evaluates the graph every frame. The first visit opens the
+**Start panel**: a blank project, three **starter templates** (a project board, an AI content
+pipeline, an interactive device flow — see [Start panel and templates](#start-panel-and-templates))
+and the full **Showcase** — a product launch as a project-management system: a standing 3D Kanban board
 with draggable cards and a lane per person, a milestone, a Gantt timeline, a dashboard, a
 checklist, sticky notes, an executable Done flow that writes on a laptop, a phone that ships a
 hotfix, a button that adds a card and a media wall on a monitor, plus a **Generate** zone that
@@ -53,10 +55,29 @@ Static files, no build step.
 Three.js r160 comes from `https://unpkg.com/three@0.160.0/` through the import map in
 `index.html`; to run offline, copy `node_modules/three` next to the page and point the two
 import-map entries at it. Inter is loaded from Google Fonts when online; offline the type stack
-falls back to the system sans. The first load shows the **Showcase** with wiring off and starts a
-short five-step tour (once; **? → Show tour** replays it); after that the workspace restores your
-open **project tabs** from the browser's IndexedDB — every tab's scene, camera and 2D mode, with
-the active one in front (**File → New** opens an empty project in a new tab).
+falls back to the system sans. The first load opens an empty project with the **Start panel** over
+it — pick a starter template, the Showcase, a blank project or a file; the first template you open
+starts a short seven-step tour (once; **Help → Take the tour** replays it). After that the
+workspace restores your open **project tabs** from the browser's IndexedDB — every tab's scene,
+camera and 2D mode, with the active one in front (**File → New** opens an empty project in a new
+tab with the Start panel over it; **Help → Start panel** brings it back any time).
+
+## Start panel and templates
+
+The Start panel is a card over the live room, not a modal: **Esc**, ×, any pick or anything
+landing in the scene closes it, and *Show this panel on startup* switches it off for good (it
+stays under **Help → Start panel** and the command palette). The three starter templates are
+ordinary example scenes (`src/examples/`) built from registry components; each opens in a tab
+named after it, framed, with a one-line hint bar saying what to try first:
+
+| Template | What is in it | Try first |
+| --- | --- | --- |
+| **Project board** | a *Website relaunch* Kanban board with two People plugged into its people slot (a swimlane each), a Milestone, a Timeline fed by the board and a Dashboard fed by the board, the people and the milestone | drag a card into **Done** — the dashboard, the timeline and the people update at once |
+| **AI content pipeline** | a Data source (`{Product.name}`, tagline, audience, colour) → two Prompts → Generate Text → Display and Generate Image → Media Grid, all on the offline **Demo** provider, with one **Run** button into both generators | press **Run** (or the Run button on a Generate node); go live under **File → Connections…** |
+| **Interactive device flow** | an Input button and a Phone's tap → an Action that counts → Compare (≥ 3) and Gate (NOT) → a Display; the count's pulse through a decision: *yes* → an Action writes *Unlocked* on the Laptop, *no* → a Log; the Phone shows the count | press the button (or tap the phone) three times |
+
+The **Showcase** stays under **File → Examples** and behind *More examples* on the panel.
+Thumbnails are rendered headless and committed under `assets/templates/`.
 
 ## Try it in one minute
 
@@ -103,10 +124,12 @@ src/
   interaction.js  pointer model: hover guidance, cable drags (forward / backward), cable-end re-route, selection emphasis
   selection.js, lod.js, serialize.js, gizmo.js, panel.js, workspace.js, theme.js
   ui/           menubar.js (File · Edit · View · Add · Help + the quick toggles), toolbar-left.js (Add toolbar), overlays.js (tooltips, drag label, toast, end labels, empty hint), tour.js, help-dialogs.js (shortcuts, About), stats.js (performance readout)
+                start-panel.js (first run: blank / templates / recent / open), hint-bar.js (the template's one-line hint)
                 connections.js (API keys), model-browser.js, jobs-tray.js
   ai/           providers/ (openrouter, fal, kie, demo + the adapter interface), vault.js (encrypted keys), jobs.js (queue), pricing.js, store.js (IndexedDB), http.js
   components/generate/  prompt.js, generate-text.js, generate-media.js (image / video / audio), common.js
-  examples/     showcase.js (the default scene) + the tiny builder API
+  examples/     showcase.js (the full scene), project-board.js · ai-pipeline.js · device-flow.js (starter templates) + the tiny builder API
+assets/templates/  thumbnails for the Start panel (rendered headless, both themes)
 proxy/cloudflare-worker.js   optional CORS proxy (allow-listed provider hosts, injects nothing)
 ```
 
@@ -122,7 +145,7 @@ The full design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The short 
 | **Commands / History** | `core/commands.js`, `core/history.js` | Every edit (add, remove, move, param, connect, group, collapse, duplicate, rename, enable) is a command; `History` gives undo / redo and coalesces rapid param edits. |
 | **Serialization** | `serialize.js` | World ↔ JSON (`version 2`): components (type, params, serializable state, transform), connections (node uid + port key), groups, camera. |
 | **Persistence** | `tabs.js`, `project-store.js`, `ui/tab-strip.js`, `ui/version-history.js` | Project tabs over one World (detached scenes, per-tab history and view), debounced autosave into IndexedDB with an indicator, version snapshots with diff summaries, recent projects with thumbnails. |
-| **UI** | `ui/menubar.js`, `ui/toolbar-left.js`, `panel.js`, `interaction.js`, `ui/overlays.js`, `ui/tour.js` | Menu bar with its quick toggles, Add toolbar, properties panel, the pointer / keyboard model (selection, marquee, drag, cable drags and re-routing, face clicks), the HTML guidance layers and the first-run tour. |
+| **UI** | `ui/menubar.js`, `ui/toolbar-left.js`, `panel.js`, `interaction.js`, `ui/overlays.js`, `ui/tour.js`, `ui/start-panel.js` | Menu bar with its quick toggles, Add toolbar, properties panel, the pointer / keyboard model (selection, marquee, drag, cable drags and re-routing, face clicks), the HTML guidance layers, the Start panel with the starter templates and the first-run tour. |
 
 ### Component schema, worked example
 
@@ -389,7 +412,7 @@ Everything else is the same in every preset:
 | Tabs | one tab per open project under the menu bar · click / `Ctrl+Tab` (`Alt+]` where the browser keeps it) switch · `+` new · drag to reorder · middle-click or × closes (a dirty tab asks Save / Discard / Cancel) · double-click renames · dot = unsaved changes · the indicator at the right end shows Saved · just now / Saving… / Unsaved changes and offers Save now, Download JSON, Version history |
 | Edit | menu bar **Edit** → Undo / Redo · Cut / Copy / Paste (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`, also between tabs) · Duplicate · Delete · Select all · Deselect · Auto-layout (`L`) · Group / Ungroup · Collapse |
 | View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · 2D editing mode (`2`) · Snap ▸ (`M`, grid size, objects, ports, rotation, scale) · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
-| Help | menu bar **Help** → tour · keyboard shortcuts (`Shift+?`) · help & legend (`H`) · documentation · About |
+| Help | menu bar **Help** → Start panel · tour · keyboard shortcuts (`Shift+?`) · help & legend (`H`) · documentation · About |
 
 Shortcuts are ignored while typing in a panel field.
 
@@ -565,6 +588,13 @@ plain sides), and `slabGeometry` is the same shape lying flat. Materials are sat
 by a small procedural **environment map** (a sky / horizon / ground gradient with one soft
 highlight, run through PMREM, rebuilt per theme) so bevels read without gloss. Selection / hover
 / error is a **thin outline**: a back-face shell 0.04 wider than the body.
+
+**Two themes.** Dark is deep navy greys. Light is a cool, paper-like room layered so every surface
+stands off the next: a mid-grey **floor pool** (fading to the background, with a soft grid), **white
+bodies** lit a touch brighter (the light palette carries its own exposure, key-light and face
+emissive tokens; the dark theme's stay untouched) and **white faces with a hairline edge**. Measured
+on screen, a node body sits 1.3 : 1 off the floor and the board 1.5 : 1 (round 6 had both within
+1.1 : 1), face text reads at 14 : 1. `T` toggles.
 
 **Faces** are flat, modern UI drawn on canvas at 120 px / unit (`faces.js`): the type stack is
 *Inter → SF Pro Text → Segoe UI → system-ui* (Inter via Google Fonts when online), titles 600,

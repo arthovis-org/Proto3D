@@ -676,6 +676,7 @@ export class Block3D extends THREE.Group {
   refreshTheme() {
     this.ports.forEach((p) => p.refreshTheme());
     this.labels.forEach((l) => refreshLabel(l));
+    if (this.face?.mesh) materials.retuneFace(this.face.mesh.material);   // the light theme's face boost
     this.faceDirty = true;
     this.applyVisual();
   }

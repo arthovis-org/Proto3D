@@ -7,7 +7,8 @@
 // (geometry.js) in a satin MeshPhysicalMaterial lit by a soft procedural environment; faces are
 // flat, modern UI on canvas — a slim category accent line instead of a header band, Inter type,
 // 8-pt spacing, thin dividers, chips and thin rounded bars. Dark = deep navy greys, light =
-// warm off-white with soft shadows.
+// a cool, paper-like room: a mid-grey floor pool so white cards stand off it, a soft grid, white
+// faces with a hairline edge, and a touch more light (see `exposure`, `keyLight`, `faceBoost`).
 import * as THREE from 'three';
 
 /** Scale: 1 scene unit = 10 cm. A small node is 36 cm wide. */
@@ -37,6 +38,8 @@ export const palettes = {
     skyLight: 0xb8c7e0,
     groundLight: 0x141a26,
     shadowAlpha: 0.9,
+    /* render tuning: tone-mapping exposure, key light strength, face emissive multiplier, optional hairline on faces */
+    exposure: 1.2, keyLight: 2.0, faceBoost: 1, faceEdge: null, fogScale: 1, poolScale: 1,
     groupFill: 0x5aa9ff,
     groupFillAlpha: 0.06,
     groupEdge: 0x5aa9ff,
@@ -65,45 +68,53 @@ export const palettes = {
     states: { hover: 0x9fb3d1, selected: 0x5aa9ff, active: 0x5aa9ff, error: 0xff4d5e, disabled: 0x3a4252 },
   },
   light: {
-    bg: 0xf1eee8,
-    fog: 0xf1eee8,
-    gridMajor: 0xc8c3ba,
-    gridMinor: 0xdedad2,
-    ground: 0xe8e4dc,
-    body: 0xfbfaf7,
-    bodyDisabled: 0xe6e3dd,
-    headerDefault: 0xd9d4cb,
+    // The light room is cool and layered: floor pool (mid grey) < body (near white, lit) < face
+    // (white, hairline edge). Sampled on screen (round 7, Showcase): node body vs floor 1.31 : 1
+    // (was 1.06), board vs floor 1.49 : 1 (was 1.08), face #f2 over body #e9 plus the hairline
+    // (was a face darker than its body), grid line vs floor 1.85 : 1, face text 14 : 1. The floor is
+    // unlit (its shader skips tone mapping) while bodies and faces go through ACES, so `exposure`,
+    // `keyLight` and `faceBoost` lift only the lit surfaces; `fogScale` / `poolScale` keep far
+    // blocks on the grey mat instead of fading into the background.
+    bg: 0xdfe3e8,
+    fog: 0xdfe3e8,
+    gridMajor: 0x9ea6b2,
+    gridMinor: 0xb4bbc5,
+    ground: 0xc6ccd4,
+    body: 0xfdfdfb,
+    bodyDisabled: 0xdcdee2,
+    headerDefault: 0xcfd3d9,
     screen: 0x16223a,
     screenGlow: 0x4d7fe0,
-    deviceBody: 0xcfcac1,
-    deviceFrame: 0x6b727e,
-    keyboard: 0x8a909b,
-    portStem: 0x9a9fa8,
+    deviceBody: 0xc4c8ce,
+    deviceFrame: 0x5f6673,
+    keyboard: 0x7f8692,
+    portStem: 0x8b919c,
     skyLight: 0xffffff,
-    groundLight: 0x9a958c,
-    shadowAlpha: 0.5,
+    groundLight: 0x9a9da4,
+    shadowAlpha: 0.62,
+    exposure: 1.5, keyLight: 2.6, faceBoost: 2.4, faceEdge: 'rgba(28,33,48,0.16)', fogScale: 0.55, poolScale: 1.7,   // thinner fog and a wider floor pool: far blocks keep their grey mat
     groupFill: 0x2b7fe0,
-    groupFillAlpha: 0.07,
+    groupFillAlpha: 0.08,
     groupEdge: 0x2b7fe0,
     text: '#1c2130',
-    textDim: '#6a7180',
+    textDim: '#5f6675',
     textOnHeader: '#1c2130',
     faceBg: '#ffffff',
-    faceCard: '#f1efe9',
-    faceLine: 'rgba(28,33,48,0.10)',
+    faceCard: '#eef0f3',
+    faceLine: 'rgba(28,33,48,0.12)',
     faceText: '#1c2130',
-    faceDim: '#6a7180',
+    faceDim: '#5f6675',
     faceAccent: '#2b7fe0',
     faceGrid: 'rgba(0,0,0,0.06)',
     faceGood: '#13906a', faceWarn: '#b8830c', faceBad: '#d93848',
-    pmColumn: 0xe9e5dd, pmColumnAlpha: 0.75, pmCard: 0xffffff, pmCardText: '#1c2130', pmCardDim: '#6a7180', pmRail: 0xcfc9bf, pmToday: 0x2b7fe0,
+    pmColumn: 0xd6d9df, pmColumnAlpha: 0.82, pmCard: 0xffffff, pmCardText: '#1c2130', pmCardDim: '#5f6675', pmRail: 0xb9bfc8, pmToday: 0x2b7fe0,
     screenTop: '#26468a', screenBottom: '#172a55',
-    env: ['#ffffff', '#e3ded4', '#8f8a80'],
+    env: ['#ffffff', '#dfe2e7', '#8a8f98'],
     categories: {
       media: 0xd9633a, text: 0xc07f0c, data: 0x6a5cd6, input: 0x13906a, logic: 0x2b7fe0,
       action: 0xc2388a, transform: 0x4d6a94, layout: 0x7a5fd0, output: 0x6b7788, project: 0x0f9f8f, generate: 0x8e44d6, devices: 0x556a8a,
     },
-    portTypes: { number: 0x0f9f8f, text: 0xc07f0c, boolean: 0xc2388a, data: 0x6a5cd6, media: 0xd9633a, event: 0x48556b, any: 0x6b7788 },
+    portTypes: { number: 0x0f9f8f, text: 0xc07f0c, boolean: 0xc2388a, data: 0x6a5cd6, media: 0xd9633a, event: 0x3d4a60, any: 0x5f6b7c },
     subtypes: { person: 0xd6456a, task: 0x13906a, tasks: 0x13906a, board: 0x4655d6, milestone: 0xb88a12, stats: 0x4d6a94, layout: 0x7a5fd0 },
     states: { hover: 0x6f8bb0, selected: 0x2b7fe0, active: 0x2b7fe0, error: 0xd93848, disabled: 0xa2abb8 },
   },
@@ -255,12 +266,15 @@ export const materials = {
   /** Face / screen material driven by a canvas texture; `transparent` lets a canvas keep rounded corners. */
   face(texture, { emissive = 0.55, transparent = true } = {}) {
     const m = new THREE.MeshStandardMaterial({
-      color: 0x000000, emissive: 0xffffff, emissiveMap: texture, emissiveIntensity: emissive,
+      color: 0x000000, emissive: 0xffffff, emissiveMap: texture, emissiveIntensity: emissive * (palette.faceBoost ?? 1),
       roughness: 0.6, metalness: 0.0, envMapIntensity: 0.15,
     });
+    m.userData.faceEmissive = emissive;   // the base value; `retuneFace` re-applies the theme's boost
     if (transparent) { m.map = texture; m.transparent = true; m.alphaTest = 0.02; }
     return m;
   },
+  /** Re-apply the theme's face boost to a face material made by `face()` (called on theme change). */
+  retuneFace(m) { if (m?.userData?.faceEmissive !== undefined) m.emissiveIntensity = m.userData.faceEmissive * (palette.faceBoost ?? 1); return m; },
   device(color = palette.deviceBody) {
     return new THREE.MeshPhysicalMaterial({ color, roughness: 0.38, metalness: 0.15, clearcoat: 0.5, clearcoatRoughness: 0.25, envMapIntensity: 0.6 });
   },
