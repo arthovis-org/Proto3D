@@ -1,6 +1,6 @@
 // ui/tour.js — first-run walkthrough: six steps with a spotlight over the thing being
 // explained (the Add toolbar, a real output port with a ghost cable running to a compatible
-// input, the board's people slot, a card on the board, a cable end, the Connections button) and a small card with
+// input, the board's people slot, a card on the board, a cable end, the File menu that holds Connections) and a small card with
 // Next / Skip. Shown once
 // (localStorage flag) and re-openable from the "?" menu. The backdrop does not swallow pointer
 // events, so the person can try things while reading.
@@ -21,7 +21,7 @@ const STEPS = [
   { id: 'people', title: 'Plug people into the board', text: 'Plug a person into the board\'s people slot to see their tasks: the rectangle grows one slot per person, the board draws a lane per person and each Person card lists their tasks. Without wiring: drop the Person onto the board.', wiring: true },
   { id: 'card', title: 'Edit on the right', text: 'Click a card on the board to edit it in the properties panel on the right. Drag a card to move it between columns, or drop it on a Person to assign it.' },
   { id: 'reroute', title: 'Move or remove a cable', text: 'Grab a cable end to move it to another port; drop it on empty space to disconnect. Undo anything with Ctrl+Z.', wiring: true },
-  { id: 'connections', title: 'Generate content', text: 'The Generate zone writes a launch tweet and paints a key visual with the offline Demo provider. Add your own keys under Connections to go live with OpenRouter (text), fal.ai or kie.ai (images, video, audio) — keys stay encrypted in this browser.' },
+  { id: 'connections', title: 'Generate content', text: 'The Generate zone writes a launch tweet and paints a key visual with the offline Demo provider. Add your own keys under File → Connections… to go live with OpenRouter (text), fal.ai or kie.ai (images, video, audio) — keys stay encrypted in this browser.' },
 ];
 
 export class Tour {
@@ -119,7 +119,7 @@ export class Tour {
       case 'connections': {
         const gen = nodes.filter((n) => n.def.category === 'generate');
         if (gen.length) this.ws.frameBlocks(gen, { fill: 0.55 });
-        const btn = document.getElementById('btn-connections');
+        const btn = document.querySelector('#menubar .mnu-title[data-menu="file"]');
         this.spot.classList.remove('round');
         this.anchor = () => btn?.getBoundingClientRect() || null;
         break;

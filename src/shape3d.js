@@ -5,7 +5,8 @@
 //   body3d: {
 //     dims(defOrNode)                → { width, height, depth }  (toolbar ghost + this instance)
 //     build(node, h)                 → adds meshes through the helpers `h` (part, label, sub, face)
-//     ports?(node)                   → { in: [[x, y, z]], out: [[x, y, z]] }  (default: rows under the top)
+//     ports?(node)                   → { in: [[x, y, z]], out: [[x, y, z]] }  (default: stacked on the left /
+//                                      right edges, centred on the body — never above the content)
 //     refresh?(node)                 → rebuild data-driven children (called when faceDirty is set:
 //                                      param / state change, theme change, undo)
 //     update?(node, time, dt)        → per-frame animation
@@ -25,7 +26,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { palette, categories, states, sizes, materials, makeLabel, setLabelText, makeShadowBlob, refreshLabel, alignLabelLeft } from './theme.js';
 import { panelGeometry, slabGeometry, outlineGeometry } from './geometry.js';
-import { Block3D } from './block3d.js';
+import { Block3D, stackPorts } from './block3d.js';
 import { clear as clearFace } from './faces.js';
 import { createSurface } from './face-canvas.js';
 
@@ -78,11 +79,13 @@ export class Shape3D extends Block3D {
     this.add(this.titleLabel); this.labels.push(this.titleLabel);
     this._titleY = at[1]; this._titleZ = at[2];
 
-    // Ports: same anatomy as nodes (stem + typed sphere + label), positions from the body
+    // Ports: same anatomy as nodes (stem + typed pin + label), positions from the body, or stacked
+    // beside the content on the left / right edges (centred on the body, inset from the corners)
     const P = B.ports ? B.ports(this) : null;
-    const y0 = this.height / 2 - 1.1;
-    def.inputs.forEach((p, i) => this._addLabelledPort(p, ...(P?.in?.[i] || [-this.width / 2, y0 - i * sizes.port.gap, 0])));
-    def.outputs.forEach((p, i) => this._addLabelledPort(p, ...(P?.out?.[i] || [this.width / 2, y0 - i * sizes.port.gap, 0])));
+    const edgeTop = this.height / 2 - 0.45, edgeBottom = -this.height / 2 + 0.45;
+    const stacked = { in: stackPorts(def.inputs, edgeTop, edgeBottom).ys, out: stackPorts(def.outputs, edgeTop, edgeBottom).ys };
+    def.inputs.forEach((p, i) => this._addLabelledPort(p, ...(P?.in?.[i] || [-this.width / 2, stacked.in[i], 0])));
+    def.outputs.forEach((p, i) => this._addLabelledPort(p, ...(P?.out?.[i] || [this.width / 2, stacked.out[i], 0])));
 
     if (!this.rim) {
       this.rim = new THREE.Mesh(outlineGeometry(this.width, this.height, this.depth, sizes.outline.grow, { radius: 0.3 }), materials.rim());

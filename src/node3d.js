@@ -1,35 +1,40 @@
 // node3d.js — Node3D: a thin extruded card built from a component definition. A slim accent
 // line in the category colour runs along the top edge, the title sits left-aligned under it with
-// the component kind in small caps at the right, then (with wiring on) the port rows — in-ports
-// on the left edge, out-ports on the right — an optional live canvas face and a dim footer
-// line with the current output value(s). With wiring off the port rows disappear and the card
-// re-lays out around the face so it reads as a clean UI card.
+// the component kind in small caps at the right, then the content band — an optional live canvas
+// face — and a dim footer line with the current output value(s). The ports sit on the left and
+// right edges *beside* the content band (in-ports left, out-ports right), stacked and centred on
+// it, so the card is the same size with wiring on or off: the switch only shows and hides the
+// pins and their names, which ride the wire just outside the body.
 //
 //   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━  accent line (category colour)
 //   │ Title              KIND  │
-// ●─┤ in                  out  ├─●  port rows (wiring on)
-// ●─┤ in                       │
 //   │ ┌──────────────────────┐ │
-//   │ │        face          │ │  optional live canvas (size M / L)
+// ●─┤ │                      │ ├─●  ports beside the content (wiring on)
+// ●─┤ │        face          │ │    optional live canvas (size M / L)
+//   │ │                      │ ├─●
 //   │ └──────────────────────┘ │
 //   │ footer value             │
 //   └──────────────────────────┘
 import * as THREE from 'three';
 import { palette, categories, states, sizes, materials, makeLabel, setLabelText, makeShadowBlob, alignLabelLeft, alignLabelRight } from './theme.js';
 import { panelGeometry, outlineGeometry } from './geometry.js';
-import { Block3D } from './block3d.js';
+import { Block3D, stackPorts } from './block3d.js';
 
 /**
- * Footprint of a definition before it is instantiated (toolbar ghost, free-slot search).
- * `ports: false` gives the compact card (wiring off).
+ * Footprint of a definition before it is instantiated (toolbar ghost, free-slot search). The
+ * height is header + content band + footer: the band holds the face with its margins, or, on a
+ * card whose busier side has more pins than fit beside it at the compressed pitch, the pin stack.
+ * It does not depend on the wiring switch.
  */
-export function nodeDimensions(def, { ports = true } = {}) {
+export function nodeDimensions(def) {
   if (def.body3d) { const d = def.body3d.dims(def); return { width: d.width, height: d.height, depth: d.depth, faceH: 0, rows: 0 }; }
-  const n = sizes.node;
+  const n = sizes.node, P = sizes.port;
   const sz = sizes.nodeSize[def.size] || sizes.nodeSize.S;
-  const rows = ports ? Math.max(def.inputs.length, def.outputs.length, 0) : 0;
+  const rows = Math.max(def.inputs.length, def.outputs.length, 0);
   const faceH = def.face ? (sz.faceH || sizes.nodeSize.M.faceH) : 0;
-  const height = Math.max(n.minHeight, n.header + (rows ? n.portTop + rows * sizes.port.gap : 0) + (faceH ? faceH + n.faceGap * 2 : 0.1) + n.footer);
+  const faceBand = faceH ? faceH + n.faceGap * 2 : 0.1;
+  const portBand = rows ? (rows - 1) * P.minGap + 2 * P.pad : 0;
+  const height = Math.max(n.minHeight, n.header + Math.max(faceBand, portBand) + n.footer);
   return { width: sz.width, height, depth: n.depth, faceH, rows };
 }
 
@@ -37,10 +42,10 @@ export class Node3D extends Block3D {
   constructor(def, o = {}) {
     super(def, o);
     const n = sizes.node;
-    const full = nodeDimensions(def, { ports: true });
+    const full = nodeDimensions(def);
     this.width = full.width; this.height = full.height; this.depth = full.depth;
-    this._h0 = full.height;     // reference height (ports shown, no grown sockets): the origin is its centre
-    this._rows = full.rows; this._faceH = full.faceH;
+    this._h0 = full.height;     // reference height (no grown sockets): the origin is its centre
+    this._faceH = full.faceH;
     const { width: w, depth: d } = this;
     this.category = def.category;
     this.accentColor = () => (categories[this.category] || { header: palette.headerDefault }).header;
@@ -73,12 +78,11 @@ export class Node3D extends Block3D {
     this.rim.visible = false;
     this.add(this.rim);
 
-    // Ports: rows under the title, in on the left edge, out on the right
-    const y0 = this._h0 / 2 - n.header - n.portTop - sizes.port.gap / 2;
-    def.inputs.forEach((p, i) => this._addNodePort(p, -w / 2, y0 - i * sizes.port.gap));
-    def.outputs.forEach((p, i) => this._addNodePort(p, w / 2, y0 - i * sizes.port.gap));
+    // Ports: in on the left edge, out on the right; _layout stacks them beside the content band
+    def.inputs.forEach((p) => this._addNodePort(p, -w / 2, 0));
+    def.outputs.forEach((p) => this._addNodePort(p, w / 2, 0));
 
-    // Face: below the port rows, full width minus margins
+    // Face: the content band, full width minus margins
     if (def.face && full.faceH) {
       const plane = this._initFace(w - 2 * n.pad, full.faceH);
       this.add(plane);
@@ -95,25 +99,23 @@ export class Node3D extends Block3D {
   }
 
   _addNodePort(spec, x, y) { return this._addLabelledPort(spec, x, y, 0, this.depth / 2 + 0.01); }
-  /** Multi inputs grew: the card extends downward (header stays), face and footer move with it. */
-  _onPortsGrow() { this._layout(); }
-  /** Wiring toggled for this block: with ports hidden the card is laid out without the port rows. */
-  _onWiringChange() { this._layout(); }
+  /** A multi-input slot grew or shrank: re-stack that side along the edge (the card extends only when the stack no longer fits). */
+  relayoutPorts() { this._layout(); }
 
   /**
-   * Place everything for the current state. With ports shown the top edge stays at +h0/2 and
-   * grown sockets extend the card downward; with ports hidden the bottom edge stays at −h0/2 and
-   * the compact card is laid out from there. `bodyOffsetY` keeps `getAABB` honest either way.
+   * Place everything for the current state. The top edge stays at +h0/2; the ports of each side
+   * are stacked beside the content band (between header and footer) and only a stack that no
+   * longer fits extends the card downward (`stackPorts` → `overflow`). The wiring switch never
+   * changes the layout. `bodyOffsetY` keeps `getAABB` honest while the card is extended.
    */
   _layout() {
-    if (this._layingOut) return;
-    this._layingOut = true;
-    const n = sizes.node, w = this.width, d = this.depth;
-    const on = this.portsVisible;
-    const extra = on ? this._portsExtra || 0 : 0;
-    const dims = nodeDimensions(this.def, { ports: on });
-    const h = dims.height + extra;
-    const top = on ? this._h0 / 2 : -this._h0 / 2 + h;
+    const n = sizes.node, w = this.width, d = this.depth, h0 = this._h0;
+    const top = h0 / 2;
+    const bandTop = top - n.header, bandBottom = -h0 / 2 + n.footer;   // the content band of the reference card
+    const stacks = [stackPorts(this.inputs, bandTop, bandBottom), stackPorts(this.outputs, bandTop, bandBottom)];
+    const extra = Math.max(stacks[0].overflow, stacks[1].overflow);
+    this._portsExtra = extra;
+    const h = h0 + extra;
     const bottom = top - h;
     const centre = (top + bottom) / 2;
     if (Math.abs(h - (this._bodyH || 0)) > 1e-6) {
@@ -129,20 +131,15 @@ export class Node3D extends Block3D {
     alignLabelLeft(this.titleLabel, -w / 2 + n.pad, titleY, zf + 0.03);
     alignLabelRight(this.kindLabel, w / 2 - n.pad, titleY + 0.01, zf + 0.02);
     this._titleY = titleY; this._titleX = this.titleLabel.position.x;
-    // ports keep their rows under the header; the ports below a grown socket shift in relayoutPorts
-    const y0 = top - n.header - n.portTop - sizes.port.gap / 2;
-    this.inputs.forEach((p, i) => { p.basePos = [-w / 2, y0 - i * sizes.port.gap, 0]; });
-    this.outputs.forEach((p, i) => { p.basePos = [w / 2, y0 - i * sizes.port.gap, 0]; });
-    this.relayoutPorts();
-    if (this.face?.mesh) {
-      const rowsBottom = on && dims.rows ? y0 - (dims.rows - 1) * sizes.port.gap - sizes.port.gap / 2 - extra : top - n.header;
-      const faceTop = rowsBottom - n.faceGap;
-      this.face.mesh.position.set(0, faceTop - this.face.h / 2, zf);
-    }
+    [this.inputs, this.outputs].forEach((list, side) => list.forEach((p, i) => {
+      p.basePos = [side ? w / 2 : -w / 2, stacks[side].ys[i], 0];
+      p.group.position.set(...p.basePos);
+      this._placePortLabel(p);
+    }));
+    if (this.face?.mesh) this.face.mesh.position.set(0, (bandTop + bandBottom) / 2, zf);
     this.footerLabel.position.set(0, bottom + n.footer / 2 + 0.02, zf + 0.01);
     // never sink under the floor while growing
     if (this.world) { const worldBottom = this.position.y + bottom; if (worldBottom < 0.2) this.position.y += 0.2 - worldBottom; }
-    this._layingOut = false;
     this.world?.bumpLayout();
   }
 

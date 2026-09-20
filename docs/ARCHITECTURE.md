@@ -8,7 +8,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ UI          ui/menubar.js  ui/toolbar-left.js  panel.js  ui/file-menu.js  interaction.js │
+│ UI          ui/menubar.js (menus + quick toggles)  ui/toolbar-left.js  panel.js  interaction.js │
 │             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
 │             controls/presets.js + controls/navigation.js (camera + bindings) │
 │             main.js (boot + render loop)                                     │
@@ -137,9 +137,10 @@ hollow outline while empty, shows a filled bar per connected slot, and grows a s
 "+" while a cable hovers it (`setHover` / `'glow'` emphasis). `World.addConnection /
 removeConnection` call `port.setLinkCount(n)`; a change rebuilds the geometry and calls
 `owner.relayoutPorts()`, which re-places every port from its `basePos` so the ports (and labels)
-under a grown socket shift down; `Node3D._onPortsGrow(extra)` extends the slab downward (header
-stays, face and footer move, `bodyOffsetY` keeps `getAABB` honest). Event multi inputs stack
-chevrons the same way.
+under a grown socket shift down (shapes, devices); on a `Node3D` it re-stacks the side along the
+edge (`stackPorts`, §7c) and extends the card downward only for what no longer fits (top edge
+stays, footer moves, `bodyOffsetY` keeps `getAABB` honest). Event multi inputs stack chevrons the
+same way.
 
 ## 5. Engine (`core/engine.js`)
 
@@ -234,9 +235,9 @@ kept for add-ons).
 - `Block3D` subscribes in its constructor and keeps `showPorts: true | false | null` (the
   per-block override, set from the eye icon in the panel header through `setShowPorts`, saved as
   `showPorts` in the node record). `portsVisible` = override ?? global. `applyWiring()` sets
-  `visible` on every port group, port label and IN / OUT caption (tracked in `wiringLabels` so
-  `_applyLOD` never re-shows them) and calls `_onWiringChange()` once when the state flips —
-  `Node3D._layout()` then rebuilds the card without the port rows (see below);
+  `visible` on every port group and port label (tracked in `wiringLabels` so `_applyLOD` never
+  re-shows them) and calls `_onWiringChange()` once when the state flips. **No body changes size
+  with the switch**: ports sit beside the content, so a card is the same card with pins or without;
 - `Connection3D` defines `visible` as an accessor: what the owner set (collapsed groups hide
   internal links) AND `cableVisibleFor(conn)` — true when wiring is on or when both blocks show
   their ports; a preview with a free end is always visible. Tour ghosts and previews therefore
@@ -244,17 +245,21 @@ kept for add-ons).
 - `Group3D` hides its proxy ports and labels with the switch;
 - `Interaction._allPorts()` lists only ports on blocks whose `portsVisible` is true, so hidden pins
   are never picked, hovered, snapped to or emphasised; `_tubeMeshes()` already reads `c.visible`;
-- `main.js` owns the button (`#btn-wiring`), the `P` key, the toast and `syncToolbar`; the panel
+- `main.js` owns the quick toggle (`#btn-wiring` in the menu bar), the `P` key, the toast and `syncToolbar`; the panel
   shows the checkbox in the workspace section; the tour sets wiring on for steps flagged
   `wiring: true` and restores the previous value in `finish()`.
 
-**Node layout with and without ports** (`Node3D._layout`). The reference height `_h0` is the
-full layout (ports shown, no grown sockets) and the node origin is its centre. With ports shown
-the top edge stays at `+h0 / 2` and grown multi-input sockets extend the card downward (never
-under the floor); with ports hidden the **bottom edge stays at −h0 / 2** and the compact card
-(title row → face → footer) is laid out upward from it. `bodyOffsetY` = the body centre, so
-`getAABB` stays honest for routing and framing; `nodeDimensions(def, { ports })` gives both
-footprints to the toolbar ghost.
+**Node layout** (`Node3D._layout`, `stackPorts` in `block3d.js`). The card is header + content
+band + footer; the band holds the face with its margins (or a small spacer on a faceless card).
+The ports of each side are stacked on the left / right edge **beside the band**, centred on it at
+`sizes.port.gap` pitch and compressed down to `sizes.port.minGap` when the band is short; a
+definition whose busier side still does not fit gets a taller band from `nodeDimensions(def)`
+(computed once, independent of wiring). The reference height `_h0` is that card and the node
+origin is its centre; the top edge stays at `+h0 / 2`. Grown multi-input slots (`extraHeight`)
+push the ports below them down: the stack first slides up along the edge inside the band and
+only what still does not fit (`overflow`) extends the card downward (never under the floor) —
+`bodyOffsetY` = the body centre, so `getAABB` stays honest for routing and framing. The wiring
+switch never re-lays out anything.
 
 ## 7d. Drop-to-link (`pm/relations.js`, `interaction.js`)
 
@@ -285,17 +290,19 @@ drop point that closes on pick, Esc or a click outside.
   `connected` (filled, bright) vs not (dark core + coloured shell = hollow ring), `hovered`
   (×1.5), `disabled` (grey) and `emphasis` (`'glow'` pulsing rim for compatible targets,
   `'dim'` 35 % for incompatible ones, `'reject'` red ring under the pointer). Optional ports are
-  scaled 0.85, multi ports 1.15 with a "+" glyph. `_addLabelledPort` places the name beside the
-  pin (inside the body; outside on devices, `portLabelSide`), and `positionSideCaptions()` keeps
-  a tiny **IN** / **OUT** caption above the first port of each side (re-placed per frame from the
-  first port's position, so bodies that move their ports — the board when columns change — stay
-  correct). `proxy` redirects the world position while the owner sits in a collapsed group.
+  scaled 0.85, multi ports 1.15 with a "+" glyph. `_addLabelledPort` / `_placePortLabel` put
+  the name just **outside** the body: past the pin and lifted `sizes.port.labelLift` above the
+  wire's axis, so it reads like a net label and never covers face content (`portLabelSide`
+  'outside', the default; 'inside' is for plain slabs). Names are dim, ellipsised past
+  `sizes.port.labelMax` units, shown only with wiring on and hidden at the far LOD. There are no
+  IN / OUT captions: pins on the left are inputs, on the right outputs. `proxy` redirects the
+  world position while the owner sits in a collapsed group.
 - **`Node3D`**: an extruded card (`panelGeometry`, depth 0.16, radius 0.32) with a slim accent
   line in the category colour along the top edge (`accent`, also exposed as `header` for older
-  callers), a left-aligned title and a small-caps kind label, the port rows (wiring on), the face
-  and a footer. Height = header + port rows + face + footer, or header + face + footer when ports
-  are hidden (§7c); width by `size` (S 3.6, M 4.6, L 6.4 units). Far LOD: detail labels fade, the
-  title lifts above the card, centres and scales with distance.
+  callers), a left-aligned title and a small-caps kind label, the content band (the face) with
+  the ports stacked on its left / right edges, and a footer. Height = header + band + footer,
+  the same with wiring on or off (§7c); width by `size` (S 3.6, M 4.6, L 6.4 units). Far LOD:
+  detail labels fade, the title lifts above the card, centres and scales with distance.
 - **`Device3D`**: form factors from `sizes.device` (thin bezels, `radius`), slabs are panels, bases
   are flat slabs; the screen plane is the face (emissive canvas, full bleed).
 - **`Connection3D`** + **`routing.js`**: tube along the routed curve, one continuous flow sheen
@@ -334,7 +341,7 @@ hands geometry to the definition:
 | --- | --- | --- |
 | `dims(defOrNode)` | before build, and by the toolbar for the ghost footprint | `{ width, height, depth }`; may depend on params (a board grows with its columns) |
 | `build(node, h)` | once | static parts through helpers: `h.part(geo, mat, { theme })` (pickable body, recoloured on theme change), `h.label(text, opts, pos)`, `h.sub(mesh, { kind, id })`, `h.face(w, h, pos)` (the `def.face` canvas), `h.rim(geo)` |
-| `ports(node)` | once | `{ in: [[x, y, z]], out: [...] }` — same stem + sphere + label anatomy as nodes |
+| `ports(node)` | once | `{ in: [[x, y, z]], out: [...] }` — same stem + pin + label anatomy as nodes; without it the ports are stacked on the left / right edges, centred on the body (`stackPorts`) |
 | `refresh(node)` | whenever `faceDirty` is set: param / state change (any `setParam`, undo, redo, load), theme change, `setTitle` | rebuilds the **data-driven children** in `node.children3d` after `node.clearChildren()`: columns, cards, bars, ticks, arcs |
 | `update(node, time, dt)` | every frame | animation (flash, progress bar, ripple) |
 | `applyLOD(node, blend)` | every frame with the LOD blend | far look (the board hides cards and shows per-column count bars) |
@@ -423,7 +430,7 @@ people / checklist tile), board cards (`drawCard`: edge-to-edge on the extruded 
 priority stripe, title 600, assignee avatar, due, checklist bar, tag chips, estimate), timeline
 bar faces (title on the bar), device screens (`drawScreen`: flat gradient, slim status bar).
 Canvas labels (`makeLabel`) share the family and support `caps` + `spacing` for small caps (column
-titles, kind labels, IN / OUT captions).
+titles, kind labels).
 
 ## 9. Interaction model (`interaction.js`, `ui/overlays.js`, `ui/tour.js`, `selection.js`, `gizmo.js`, `lod.js`)
 
@@ -511,14 +518,19 @@ hysteresis; the blocks animate the crossfade.
 
 ## 9b. Menu bar (`ui/menubar.js`)
 
-A 32 px desktop-style bar along the top — *Proto3D · File · Edit · View · Add · Help* — above the
-Add rail, the viewport and the properties panel (all three start at `--menubar-h`, so nothing
-overlaps; the floating top toolbar keeps its quick buttons and moves down with it). `MenuBar` is
-presentation and keyboard model only: `main.js` hands it the menus as data, `[{ id, label,
-items: () => Item[] }]`, and **every item calls the same function as the button, key or panel
-control it mirrors** (undo goes through `History`, delete through
-`Interaction.deleteSelection`, wiring through `toggleWiring`, adding through `addComponent`), so
-each edit stays undoable and the toolbar, panel and menu never disagree. Items are rebuilt each
+A 32 px desktop-style bar along the top — *Proto3D · File · Edit · View · Add · Help* on the
+left and a row of **quick toggles** on the right — above the Add rail, the viewport and the
+properties panel (all three start at `--menubar-h`, so nothing overlaps and the viewport keeps
+the whole height under the bar; there is no floating toolbar). The toggles are icon buttons with
+tooltips built in `main.js` and handed to `MenuBar` as `tools` (appended after a flexible gap):
+undo · redo | wiring (`#btn-wiring`) · flow animation · gizmo | theme · frame all | help & legend
+· properties panel. `syncToolbar()` keeps their `on` / `off` / disabled / `aria-pressed` state
+current (history, wiring, theme, gizmo, panel and help changes all call it); Connections lives in
+the File and View menus. `MenuBar` is presentation and keyboard model only: `main.js` hands it
+the menus as data, `[{ id, label, items: () => Item[] }]`, and **every item calls the same
+function as the toggle, key or panel control it mirrors** (undo goes through `History`, delete
+through `Interaction.deleteSelection`, wiring through `toggleWiring`, adding through
+`addComponent`), so each edit stays undoable and the toggles, panel and menu never disagree. Items are rebuilt each
 time a menu opens, which is how disabled states (*Undo* with an empty history, *Delete* with
 nothing selected, *Paste* with an empty clipboard), check marks (theme, grid, wiring, gizmo,
 panel, rail, stats), radio groups (navigation preset, gizmo mode, LOD distance, ports on the

@@ -168,6 +168,9 @@ export const sizes = {
   node: { depth: 0.16, radius: 0.32, header: 0.78, footer: 0.44, portTop: 0.22, faceGap: 0.12, pad: 0.28, minHeight: 1.7, accent: 0.045, bevel: 0.02 },
   port: {
     radius: 0.095, stem: 0.24, gap: 0.55, hoverScale: 1.5,
+    minGap: 0.44,                        // a side's pins compress to this pitch before the body grows
+    pad: 0.17,                           // clearance between the first / last pin and the end of the content band
+    labelGap: 0.2, labelLift: 0.17, labelMax: 1.7,   // port names: past the pin, riding just above the wire, ellipsised beyond labelMax units
     pin: { w: 0.24, h: 0.18, d: 0.09 },   // event pins: pentagon chevron pointing in the flow direction (+X)
     shellScale: 1.3,                     // hollow outline around an unconnected / highlighted port
     optionalScale: 0.85,
@@ -184,7 +187,7 @@ export const sizes = {
     wavelength: 7,       // world units per brightness crest of the flow sheen
     lane: 0.2,           // vertical fan-out per lane for connections sharing a port
   },
-  label: { title: 0.4, small: 0.2, port: 0.165, caption: 0.15 },
+  label: { title: 0.4, small: 0.2, port: 0.16, caption: 0.15 },
   /** Layout rule: pitch between node origins on the loose grid. */
   spacing: { minGapFactor: 1.5, pitchX: 10, pitchZ: 6.5 },
   device: {

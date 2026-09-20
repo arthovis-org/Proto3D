@@ -93,7 +93,7 @@ src/
   wiring.js     the global Wiring switch (ports and cables optional), per-block overrides
   controls/     presets.js (Blender / Unreal / Maya / Simple bindings as data) + navigation.js (the camera controller)
   block3d.js    Block3D: what nodes and devices share (typed port pins, rim, shadow, face, LOD, serialize, portsVisible)
-  node3d.js     Node3D: thin extruded card with an accent line, title, optional port rows, face, footer
+  node3d.js     Node3D: thin extruded card with an accent line, title, face, footer; ports stacked beside the content on the left / right edges
   device3d.js   Device3D: phone / tablet / laptop / monitor whose screen is the component face
   shape3d.js    Shape3D: custom 3D bodies from def.body3d (boards, flow shapes, timeline…) + child pickables
   pm/           model.js (cards, columns, boards, stats, burndown — no Three.js), relations.js (who is plugged into whom + link sentences), board-ops.js, panel-pm.js
@@ -102,7 +102,7 @@ src/
   groups.js     Group3D: frame on the floor, collapse to a slab with proxy ports
   interaction.js  pointer model: hover guidance, cable drags (forward / backward), cable-end re-route, selection emphasis
   selection.js, lod.js, serialize.js, gizmo.js, panel.js, workspace.js, theme.js
-  ui/           menubar.js (File · Edit · View · Add · Help), toolbar-left.js (Add toolbar), file-menu.js, overlays.js (tooltips, drag label, toast, end labels, empty hint), tour.js, help-dialogs.js (shortcuts, About), stats.js (performance readout)
+  ui/           menubar.js (File · Edit · View · Add · Help + the quick toggles), toolbar-left.js (Add toolbar), overlays.js (tooltips, drag label, toast, end labels, empty hint), tour.js, help-dialogs.js (shortcuts, About), stats.js (performance readout)
                 connections.js (API keys), model-browser.js, jobs-tray.js
   ai/           providers/ (openrouter, fal, kie, demo + the adapter interface), vault.js (encrypted keys), jobs.js (queue), pricing.js, store.js (IndexedDB), http.js
   components/generate/  prompt.js, generate-text.js, generate-media.js (image / video / audio), common.js
@@ -121,7 +121,7 @@ The full design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The short 
 | **World** | `core/world.js` | `nodes`, `connections`, `groups` and the low-level mutations; `layoutVersion` bumps when anything moves so connections re-route. |
 | **Commands / History** | `core/commands.js`, `core/history.js` | Every edit (add, remove, move, param, connect, group, collapse, duplicate, rename, enable) is a command; `History` gives undo / redo and coalesces rapid param edits. |
 | **Serialization** | `serialize.js` | World ↔ JSON (`version 2`): components (type, params, serializable state, transform), connections (node uid + port key), groups, camera. Debounced autosave to `localStorage`. |
-| **UI** | `ui/toolbar-left.js`, `panel.js`, `ui/file-menu.js`, `interaction.js`, `ui/overlays.js`, `ui/tour.js` | Add toolbar, properties panel, File / help menus, the pointer / keyboard model (selection, marquee, drag, cable drags and re-routing, face clicks), the HTML guidance layers and the first-run tour. |
+| **UI** | `ui/menubar.js`, `ui/toolbar-left.js`, `panel.js`, `interaction.js`, `ui/overlays.js`, `ui/tour.js` | Menu bar with its quick toggles, Add toolbar, properties panel, the pointer / keyboard model (selection, marquee, drag, cable drags and re-routing, face clicks), the HTML guidance layers and the first-run tour. |
 
 ### Component schema, worked example
 
@@ -301,7 +301,7 @@ tweet is just `text` and a generated poster is just `media`.
 | `generate-text` | `prompt` text · `context` any\* · `image` media · `run` event | `text` · `data` · `when done` · `usage` | Asks a language model through **OpenRouter** (hundreds of models, live per-token pricing) or **Demo**. The answer streams onto the face and the `text` output as it arrives; `context` inputs become system context, `image` goes to vision models, **JSON mode** parses the answer into `data`, `when done` pulses with the text (→ a board's `add task` makes a card), `usage` carries tokens and cost. |
 | `generate-image` · `generate-video` · `generate-audio` | `prompt` text · `reference` media · `run` event | `image / video / audio` media · `all` data · `when done` · `usage` | Text (and an optional reference) to media through **fal.ai** (FLUX, Recraft, Ideogram, Kling, MiniMax, Luma, Stable Audio, Kokoro TTS…), **kie.ai** (Nano Banana, FLUX 2, Veo 3, Kling 2.1, Suno…) or **Demo**. Model options are schema-driven per model (size, aspect, duration, voice, steps, seed, count). The face shows queue position, progress with the provider's log line, the result preview and a history strip; Cancel and Retry work on the face, in the panel and in the job tray. |
 
-**Connections** (top bar plug icon, **? → Connections**, or the *Open Connections* action any
+**Connections** (**File → Connections…**, **View → Connections…**, or the *Open Connections* action any
 Generate component shows when it lacks a key) is a settings page with one card per provider:
 description, masked key field, **Test** (latency, balance where the API gives one), an optional
 **proxy URL**, and a status chip. Keys are encrypted with WebCrypto **AES-GCM** in this browser's
@@ -362,10 +362,10 @@ Everything else is the same in every preset:
 | Wiring | `P` or the **Wiring** button shows / hides every pin and cable · the eye icon in a block's panel header overrides it for that block |
 | Re-route | grab a cable near either end (hand cursor) and drop it on another compatible pin · drop on empty space to **disconnect** · `Esc` puts it back |
 | Inspect | hover a pin: tooltip with name, type, value and links; compatible pins glow, others dim · hover a block: label + description · click a block: its cables stay bright with far-end labels · click a cable: midpoint label, both pins pulse, panel shows from → to |
-| Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the top bar has undo / redo |
+| Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the menu bar's quick toggles have undo / redo |
 | Group | `Ctrl+G` group the selection · `C` collapse / expand · `Ctrl+Shift+G` ungroup · drag the frame to move the whole group · rename in the panel |
 | Interact | click a device screen (`tap`), an Input face (button, toggle, slider) or press the configured key · click / drag a **card** on a Kanban board (drop it on a **Person** or into a lane to assign it), click the **+** tile, click a checklist row, press the **Run** disc on a Flow Terminal, drag a Timeline bar's end handle |
-| File | menu bar **File** → New project · Open… (`Ctrl+O`) · Open recent · Save (`Ctrl+S`) · Save as… (`Ctrl+Shift+S`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave to `localStorage` on every change; the top bar's **File** button keeps the short list |
+| File | menu bar **File** → New project · Open… (`Ctrl+O`) · Open recent · Save (`Ctrl+S`) · Save as… (`Ctrl+Shift+S`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave to `localStorage` on every change |
 | Edit | menu bar **Edit** → Undo / Redo · Cut / Copy / Paste (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`, also between tabs) · Duplicate · Delete · Select all · Deselect · Group / Ungroup · Collapse |
 | View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
 | Help | menu bar **Help** → tour · keyboard shortcuts (`Shift+?`) · help & legend (`H`) · documentation · About |
@@ -374,8 +374,9 @@ Shortcuts are ignored while typing in a panel field.
 
 ## Wiring is optional
 
-A fresh workspace starts with **wiring off**: no pins, no port labels, no IN / OUT captions, no
-slot sockets and no cables — blocks read as clean cards and re-lay out without the port rows.
+A fresh workspace starts with **wiring off**: no pins, no port labels, no slot sockets and no
+cables — blocks read as clean cards. Turning wiring on only reveals the pins beside the content;
+no block changes size.
 The graph is still there and still runs; you build it by **dropping one component onto another**.
 While a single block is dragged over another, `pm/relations.js → dropLinkCandidates` looks up the
 pairs of ports that make sense (`DROP_LINKS`): Person → board `people` / dashboard `people` /
@@ -443,8 +444,8 @@ team.start · value`).
 
 **Onboarding.** A five-step tour (toolbar → a real output pin with a ghost cable running to a
 compatible input → the board's people slot → a card on the board → cable ends) runs once and is
-replayable from **? → Show tour**; an empty scene shows *Add a component from the left to start*;
-every toolbar button has a tooltip with its key; the help panel's legend shows the pin shapes
+replayable from **Help → Take the tour**; an empty scene shows *Add a component from the left to start*;
+every toolbar button and quick toggle has a tooltip with its key; the help panel's legend shows the pin shapes
 (including the multi-input rectangle), the type colours, the project types and the three wiring
 rules.
 
@@ -501,22 +502,23 @@ bevelled body. Colour is reserved for meaning — the category accent, type hues
 warm off-white (`#f1eee8` room, `#fbfaf7` bodies) with soft shadows.
 
 **Node anatomy**: a slim **accent line** in the category colour along the top edge, the title
-left-aligned under it with the component kind in small caps at the right, then — with wiring on —
-the port rows (in left, out right; chevron pins for events, spheres for data; filled when
-connected, hollow when free; multi inputs are slot rectangles that grow one slot per cable), an
-optional live canvas **face**, a dim footer with the output value. With wiring off the rows
-disappear and the card is laid out around the face. Ports sit just outside the edge with 11–12 px
-labels inside the margin. **Devices** have thin bezels and satin frames; their screen is the face.
+left-aligned under it with the component kind in small caps at the right, an optional live canvas
+**face**, and a dim footer with the output value. With wiring on the pins sit on the left (in)
+and right (out) edges *beside* the face, stacked and centred on it (chevron pins for events,
+spheres for data; filled when connected, hollow when free; multi inputs are slot rectangles that
+grow one slot per cable — the stack slides along the edge before the card grows); their names are
+small dim labels just outside the edge, riding above where the wire leaves. Wiring off hides the
+pins and names and changes nothing else. **Devices** have thin bezels and satin frames; their screen is the face.
 **Groups** are flat rounded frames on the floor with a title at the front edge; collapsed, a slab
 with the same accent line and proxy ports. **The board** is a bevelled back panel on a flat
 plinth: columns are frosted panels with a small-caps title and a count pill, cards are clean
 extruded cards with a 3-px priority stripe, swimlane labels are side tabs in the margin. **The
 timeline** has thin bars with rounded ends, light week gridlines and small labels. **The
 dashboard** has stat tiles, a ring, bars, a burndown and people / checklist bars in a restrained
-palette. The HTML shell (top bar, left rail, flyout, panel, tooltips, toasts, chooser, tour cards,
+palette. The HTML shell (menu bar, left rail, flyout, panel, tooltips, toasts, chooser, tour cards,
 menus) uses the same type stack, 8-pt spacing, 10–12 px radii, subtle borders, 18 px stroke icons,
-hover states and focus rings; the top bar groups *File · Undo/Redo | Wiring · Flow · Gizmo |
-Connections · Theme · Frame all | ? · Properties*.
+hover states and focus rings; the menu bar's right end groups the quick toggles *Undo/Redo |
+Wiring · Flow · Gizmo | Theme · Frame all | Help · Properties*.
 
 **States** are derived by the engine, never hard-coded: `disabled` (unchecked *enabled*) >
 `error` (invalid link attached or `evaluate` threw) > `active` (an output changed / pulsed within

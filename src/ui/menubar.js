@@ -11,14 +11,15 @@
 //           click outside or Esc closes; a leaf runs after the menus have closed
 //   keys:   ← → switch menus, ↑ ↓ move, → opens a submenu, ← closes it, Enter / Space runs, Home / End
 //   narrow: below `collapseBelow` px the titles fold into one ☰ button whose menu lists them as submenus
+//   tools:  an optional element (icon toggles) appended at the right end of the bar, after a flexible gap
 import { icons } from '../icons.js';
 
 const OPEN_DELAY = 90;   // ms before a hovered item opens its submenu
 
 export class MenuBar {
-  /** @param {object} o { el, menus, brand?, collapseBelow?, onOpenChange?(open) } */
-  constructor({ el, menus, brand = 'Proto3D', collapseBelow = 720, onOpenChange = () => {} }) {
-    Object.assign(this, { el, menus, brand, collapseBelow, onOpenChange });
+  /** @param {object} o { el, menus, brand?, tools?, collapseBelow?, onOpenChange?(open) } */
+  constructor({ el, menus, brand = 'Proto3D', tools = null, collapseBelow = 720, onOpenChange = () => {} }) {
+    Object.assign(this, { el, menus, brand, tools, collapseBelow, onOpenChange });
     this.openId = null;        // id of the open top-level menu (or 'all' for the ☰ menu)
     this.levels = [];          // open menu elements, root first: [{ el, items, parent }]
     this._timer = 0;
@@ -50,6 +51,8 @@ export class MenuBar {
     all.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.openId === 'all' ? this.close() : this.open('all'); });
     this.el.appendChild(all);
     this.titles.set('all', all);
+    const grow = document.createElement('span'); grow.className = 'mnu-grow'; this.el.appendChild(grow);
+    if (this.tools) this.el.appendChild(this.tools);
   }
   _syncCollapse() { this.el.classList.toggle('collapsed', window.innerWidth < this.collapseBelow); }
   get isOpen() { return this.openId !== null; }

@@ -2,7 +2,7 @@
 // (def.device names the form factor). Thin extruded slabs with a tiny bevel and slim bezels; the
 // screen is the component's face (canvas texture: whatever arrives at the "screen" input, drawn
 // by faces.drawScreen). Shares the node port anatomy: inputs on the left of the screen slab,
-// outputs on the right (labels outside, off the screen).
+// outputs on the right, names outside beside the pins (off the screen).
 import * as THREE from 'three';
 import { palette, sizes, materials, makeLabel, makeShadowBlob } from './theme.js';
 import { panelGeometry, slabGeometry, outlineGeometry } from './geometry.js';
@@ -12,7 +12,6 @@ export class Device3D extends Block3D {
   constructor(def, o = {}) {
     super(def, o);
     this.type = def.device;
-    this.portLabelSide = 'outside';   // names sit beside the pins, off the screen
     this.meshes = [];      // pickable body parts
     this.themedParts = []; // [mesh, paletteKey]
     const spec = sizes.device[this.type] || sizes.device.phone;

@@ -107,14 +107,6 @@ kbd { font: inherit; font-size: 10.5px; color: var(--text); background: var(--fi
 .mnu-sep { height: 1px; background: var(--border); margin: 5px 6px; flex: none; }
 .mnu-heading { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim); padding: 8px 8px 3px; font-weight: 600; }
 
-/* ---- Top bar: File · Undo/Redo | Wiring · Flow · Gizmo | Theme · Frame all | ? · Properties ---- */
-#toolbar {
-  top: calc(var(--menubar-h) + 12px); right: calc(var(--panel-w) + 24px); display: flex; gap: 8px; align-items: center; padding: 4px;
-  background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-l); backdrop-filter: blur(10px); pointer-events: auto;
-}
-body.panel-hidden #toolbar { right: 24px; }
-.tb-group { display: inline-flex; gap: 2px; }
-.tb-sep { width: 1px; height: 20px; background: var(--border-strong); }
 button, select, input, textarea {
   font: inherit; font-size: 12px; font-weight: 500; color: var(--text);
   background: var(--field); border: 1px solid transparent; border-radius: var(--r-s);
@@ -126,30 +118,19 @@ button:disabled { opacity: 0.4; cursor: default; }
 button:disabled:hover { background: var(--field); }
 button.off { color: var(--dim); }
 button.on { color: var(--accent); background: var(--accent-soft); }
-#toolbar .tb { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; background: none; color: var(--text); }
-#toolbar .tb:hover { background: var(--field-hover); }
-#toolbar .tb.on { color: var(--accent); background: var(--accent-soft); }
-#toolbar .tb.off { color: var(--dim); }
-#toolbar .tb.off svg { opacity: 0.6; }
-#toolbar .tb.icon-only { padding: 0 7px; }
-#toolbar .tb i { display: inline-flex; }
-#toolbar .tb span { font-weight: 500; }
-
-/* ---- Menus (File, ?) ---- */
-.menu-anchor { position: relative; pointer-events: auto; }
-.menu {
-  position: absolute; top: calc(100% + 8px); left: 0; min-width: 232px; z-index: 5;
-  background: var(--panel-solid); border: 1px solid var(--border); border-radius: var(--r-l); padding: 6px;
-  display: flex; flex-direction: column; gap: 2px; box-shadow: var(--shadow);
-}
-#help-menu { left: auto; right: 0; }
-.menu button { text-align: left; background: none; border: 0; border-radius: var(--r-s); padding: 7px 10px; display: flex; align-items: center; gap: 8px; }
-.menu button small { margin-left: auto; color: var(--dim); font-size: 10.5px; }
-.menu button:hover { background: var(--field-hover); }
-.menu button.on { color: var(--accent); background: var(--accent-soft); }
-.menu button.on::after { content: "✓"; margin-left: 6px; }
-.menu .menu-sep { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim); padding: 10px 10px 4px; border-top: 1px solid var(--border); margin-top: 4px; }
-.menu button kbd { margin-left: auto; }
+/* ---- Quick toggles at the right end of the menu bar: undo · redo | wiring · flow · gizmo | theme · frame all | help · panel ---- */
+.mnu-grow { flex: 1; }
+.mnu-tools { display: inline-flex; align-items: center; gap: 2px; pointer-events: auto; }
+.mnu-tools .tb { width: 28px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--text); }
+.mnu-tools .tb:hover { background: var(--field-hover); }
+.mnu-tools .tb.on { color: var(--accent); background: var(--accent-soft); }
+.mnu-tools .tb.off { color: var(--dim); }
+.mnu-tools .tb.off svg { opacity: 0.6; }
+.mnu-tools .tb:disabled { opacity: 0.35; }
+.mnu-tools .tb:disabled:hover { background: none; }
+.mnu-tools .tb i { display: grid; }
+.mnu-tools .tb svg { width: 16px; height: 16px; }
+.tb-sep { width: 1px; height: 16px; background: var(--border-strong); margin: 0 4px; }
 
 /* ---- Left Add toolbar ---- */
 #left-bar { position: fixed; top: var(--menubar-h); left: 0; bottom: 0; width: var(--rail-w); z-index: 4; display: flex; }
@@ -373,7 +354,6 @@ body.panel-hidden #empty-hint { left: calc(var(--rail-w) + (100% - var(--rail-w)
 #help ol.rules { margin: 0; padding-left: 18px; color: var(--dim); display: block; }
 #help ol.rules li { display: list-item; margin: 0 0 4px; line-height: 1.45; }
 #help ol.rules b { color: var(--text); font-weight: 600; }
-#help-menu kbd { font: inherit; font-size: 10px; color: var(--dim); margin-left: auto; }
 
 /* ---- Modals (Connections, model browser): a settings page, not a popup ---- */
 .modal-backdrop { position: fixed; inset: 0; z-index: 8; background: rgba(6, 9, 15, 0.55); display: flex; align-items: center; justify-content: center; padding: 24px; backdrop-filter: blur(4px); }

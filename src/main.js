@@ -1,7 +1,7 @@
 // main.js — boots the platform: theme, workspace, registry (all core components), world model,
 // engine, history, selection, gizmo, interaction, guidance overlays, properties panel, Add
-// toolbar, the menu bar (File · Edit · View · Add · Help) and the top-bar File / help menus, the
-// wiring switch, navigation presets, first-run tour, LOD, the AI layer (providers, key vault,
+// toolbar, the menu bar (File · Edit · View · Add · Help) with its quick toggles at the right end,
+// the wiring switch, navigation presets, first-run tour, LOD, the AI layer (providers, key vault,
 // jobs) with its Connections page, model browser and job tray, the performance stats, autosave,
 // recent projects, the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
@@ -16,7 +16,6 @@ import { Interaction, isTyping } from './interaction.js';
 import { Gizmo } from './gizmo.js';
 import { Panel } from './panel.js';
 import { LeftToolbar } from './ui/toolbar-left.js';
-import { FileMenu } from './ui/file-menu.js';
 import { Overlays } from './ui/overlays.js';
 import { Tour, tourSeen } from './ui/tour.js';
 import { createInstance } from './instance.js';
@@ -182,11 +181,6 @@ function exportScreenshot() {
   const a = document.createElement('a'); a.href = url; a.download = safeFileName(`${project.name || 'proto3d'}-${dateStamp()}`, '.png'); document.body.appendChild(a); a.click(); a.remove();
   overlays.toast('Screenshot saved', 1400);
 }
-const fileMenu = new FileMenu({
-  button: $('btn-file'), menu: $('file-menu'), examples,
-  onNew: newProject, onSave: saveProject, onLoad: openProject, onExample: (id) => loadExample(id),
-});
-
 /* ---- Clipboard: the selection as a Proto3D document, in memory and (best effort) on the system clipboard ---- */
 const clipboard = { doc: null };
 const selectedNodes = () => selection.items.flatMap((i) => (i.kind === 'group' ? i.members : i.kind === 'connection' ? [] : [i]));
@@ -216,7 +210,6 @@ setUIHooks({
   focusBlock: (uid) => { const n = world.nodeByUid(uid); if (!n) return false; selection.set([n]); ws.frameBlocks([n], { fill: 0.6 }); return true; },
   toast: (text, ms) => { overlays.toast(text, ms); return true; },
 });
-$('btn-connections').addEventListener('click', () => connections.toggle());
 const shortcutsSheet = new ShortcutsSheet();
 const aboutDialog = new AboutDialog();
 const stats = new StatsOverlay({ el: $('stats'), ws, world });
@@ -272,7 +265,6 @@ function buildControlsSheet() {
     dl.appendChild(dt); dl.appendChild(dd);
   }
   const sel = $('help-preset'); if (sel) { sel.innerHTML = ''; for (const id of PRESET_IDS) { const o = document.createElement('option'); o.value = id; o.textContent = nav.presets[id].label; sel.appendChild(o); } sel.value = nav.presetId; }
-  document.querySelectorAll('#help-menu [data-preset]').forEach((b) => b.classList.toggle('on', b.dataset.preset === nav.presetId));
 }
 buildLegend();
 onThemeChange(() => { buildLegend(); panel.refresh(); syncToolbar(); });
@@ -287,39 +279,52 @@ function refreshAllText() {
 }
 if (document.fonts?.ready) document.fonts.ready.then(() => { if (document.fonts.check('600 16px Inter')) refreshAllText(); }).catch(() => {});
 
-/* ---- Top bar ---- */
+/* ---- Quick toggles: icon buttons at the right end of the menu bar (the MenuBar appends `tools`). Each runs the same code as its key or menu item ---- */
 document.querySelectorAll('[data-icon]').forEach((el) => { el.innerHTML = icons[el.dataset.icon] || ''; });
+const tools = document.createElement('span'); tools.className = 'mnu-tools'; tools.setAttribute('role', 'toolbar'); tools.setAttribute('aria-label', 'Quick toggles');
+const tb = {};   // the toggles by id (they join the DOM when the MenuBar is built below)
+const tool = (id, icon, title, label) => { const b = document.createElement('button'); b.type = 'button'; b.id = id; b.className = 'tb'; b.title = title; b.setAttribute('aria-label', label); b.innerHTML = `<i>${icons[icon]}</i>`; tools.appendChild(b); tb[id] = b; return b; };
+const toolSep = () => { const sep = document.createElement('span'); sep.className = 'tb-sep'; tools.appendChild(sep); };
+tool('btn-undo', 'undo', 'Undo (Ctrl+Z)', 'Undo');
+tool('btn-redo', 'redo', 'Redo (Ctrl+Shift+Z or Ctrl+Y)', 'Redo');
+toolSep();
+tool('btn-wiring', 'flow', 'Wiring — show or hide ports and cables (P). Cables are optional: drop a component onto another to link them', 'Wiring').setAttribute('aria-pressed', 'false');
+tool('btn-flow', 'connection', 'Flow animation on cables', 'Flow animation');
+tool('btn-gizmo', 'gizmo', 'Move / rotate / scale gizmo (G) · W move, E rotate, R scale', 'Gizmo');
+toolSep();
+tool('btn-theme', 'sun', 'Switch light / dark theme (T)', 'Theme');
+tool('btn-frame', 'frame', 'Frame everything (Home) · F frames the selection', 'Frame all');
+toolSep();
+tool('btn-help', 'help', 'Help & legend (H) · the Help menu has the tour and the shortcuts', 'Help & legend');
+tool('btn-panel', 'sidebar', 'Show / hide the properties panel (N or Tab)', 'Properties panel');
+const connectionsHint = () => { const live = providerRegistry.all().filter((p) => p.needsKey && providerStatus(p.id) === 'connected').length; return live ? `${live} provider${live > 1 ? 's' : ''} connected` : 'AI providers and API keys'; };
 function syncToolbar() {
-  $('btn-flow').classList.toggle('off', !isFlowEnabled());
-  $('btn-wiring').classList.toggle('on', isWiringOn());
-  $('btn-wiring').setAttribute('aria-pressed', String(isWiringOn()));
-  $('btn-gizmo').classList.toggle('on', gizmo.enabled);
-  $('btn-theme').querySelector('span').textContent = getTheme() === 'dark' ? 'Light' : 'Dark';
-  $('btn-theme').querySelector('i').innerHTML = getTheme() === 'dark' ? icons.sun : icons.moon;
-  $('btn-panel').classList.toggle('on', !document.body.classList.contains('panel-hidden'));
-  const live = providerRegistry.all().filter((p) => p.needsKey && providerStatus(p.id) === 'connected').length;
-  $('btn-connections').classList.toggle('on', live > 0);
-  $('btn-connections').title = live ? `Connections — ${live} provider${live > 1 ? 's' : ''} connected` : 'Connections — API keys for OpenRouter, fal.ai and kie.ai; the Demo provider works without any';
-  $('btn-undo').disabled = !history.canUndo; $('btn-redo').disabled = !history.canRedo;
+  tb['btn-flow'].classList.toggle('off', !isFlowEnabled());
+  tb['btn-wiring'].classList.toggle('on', isWiringOn());
+  tb['btn-wiring'].setAttribute('aria-pressed', String(isWiringOn()));
+  tb['btn-gizmo'].classList.toggle('on', gizmo.enabled);
+  tb['btn-gizmo'].setAttribute('aria-pressed', String(gizmo.enabled));
+  tb['btn-theme'].title = getTheme() === 'dark' ? 'Switch to the light theme (T)' : 'Switch to the dark theme (T)';
+  tb['btn-theme'].querySelector('i').innerHTML = getTheme() === 'dark' ? icons.sun : icons.moon;
+  const panelShown = !document.body.classList.contains('panel-hidden');
+  tb['btn-panel'].classList.toggle('on', panelShown);
+  tb['btn-panel'].setAttribute('aria-pressed', String(panelShown));
+  const helpShown = !!$('help').open && panelShown;
+  tb['btn-help'].classList.toggle('on', helpShown);
+  tb['btn-help'].setAttribute('aria-pressed', String(helpShown));
+  tb['btn-undo'].disabled = !history.canUndo; tb['btn-redo'].disabled = !history.canRedo;
 }
 history.onChange(syncToolbar);
 onWiringChange(() => { syncToolbar(); panel.refresh(); });
-$('btn-flow').addEventListener('click', () => { setFlowEnabled(!isFlowEnabled()); syncToolbar(); panel.refresh(); });
-$('btn-wiring').addEventListener('click', () => { toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on · ports and cables shown' : 'Wiring off · drop a component onto another to link them', 1800); });
-$('btn-theme').addEventListener('click', () => toggleTheme());
-$('btn-gizmo').addEventListener('click', () => setGizmo(!gizmo.enabled));
-$('btn-panel').addEventListener('click', () => togglePanel());
-$('btn-frame').addEventListener('click', () => frameAll());
-const helpMenu = $('help-menu');
-const closeHelpMenu = () => { helpMenu.hidden = true; $('btn-help').classList.remove('on'); };
-$('btn-help').addEventListener('click', (e) => { e.stopPropagation(); helpMenu.hidden = !helpMenu.hidden; $('btn-help').classList.toggle('on', !helpMenu.hidden); });
-helpMenu.querySelector('[data-action="help"]').addEventListener('click', () => { closeHelpMenu(); toggleHelp(); });
-helpMenu.querySelector('[data-action="tour"]').addEventListener('click', () => { closeHelpMenu(); tour.start(); });
-helpMenu.querySelector('[data-action="connections"]').addEventListener('click', () => { closeHelpMenu(); connections.open(); });
-helpMenu.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => { nav.setPreset(b.dataset.preset); closeHelpMenu(); overlays.toast(`${nav.preset.label} controls · ${nav.binding('orbit')} orbits`, 2000); }));
-window.addEventListener('pointerdown', (e) => { if (!helpMenu.contains(e.target) && e.target !== $('btn-help')) closeHelpMenu(); });
-$('btn-undo').addEventListener('click', () => { history.undo(); selection.prune(world); });
-$('btn-redo').addEventListener('click', () => { history.redo(); selection.prune(world); });
+tb['btn-flow'].addEventListener('click', () => { setFlowEnabled(!isFlowEnabled()); syncToolbar(); panel.refresh(); });
+tb['btn-wiring'].addEventListener('click', () => { toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on · ports and cables shown' : 'Wiring off · drop a component onto another to link them', 1800); });
+tb['btn-theme'].addEventListener('click', () => toggleTheme());
+tb['btn-gizmo'].addEventListener('click', () => setGizmo(!gizmo.enabled));
+tb['btn-panel'].addEventListener('click', () => togglePanel());
+tb['btn-frame'].addEventListener('click', () => frameAll());
+tb['btn-help'].addEventListener('click', () => toggleHelp());
+tb['btn-undo'].addEventListener('click', () => { history.undo(); selection.prune(world); });
+tb['btn-redo'].addEventListener('click', () => { history.redo(); selection.prune(world); });
 
 function setGizmo(on) {
   gizmo.setEnabled(on);
@@ -336,6 +341,7 @@ function togglePanel(force) {
 function toggleHelp() {
   const help = $('help'); help.open = !help.open;
   if (help.open) { togglePanel(true); help.scrollIntoView({ block: 'nearest' }); }
+  syncToolbar();
 }
 window.addEventListener('keydown', (e) => {
   if (isTyping(e) || anyModalOpen() || e.altKey) return;
@@ -378,7 +384,7 @@ const setPortsOnSelection = (v) => { selection.nodes.forEach((n) => n.setShowPor
 const timeAgo = (iso) => { const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
 const undoLabel = (stack, verb) => { const c = stack[stack.length - 1]; return c?.label ? `${verb} ${c.label}` : verb; };
 const menubar = new MenuBar({
-  el: $('menubar'),
+  el: $('menubar'), tools,
   menus: [
     { id: 'file', label: 'File', items: () => [
       { label: 'New project', hint: 'empty scene', run: newProject },
@@ -400,7 +406,7 @@ const menubar = new MenuBar({
       { sep: true },
       { label: 'Examples', items: () => examples.map((ex) => ({ label: ex.label, run: () => loadExample(ex.id) })) },
       { sep: true },
-      { label: 'Connections…', hint: 'AI providers and API keys', run: () => connections.open() },
+      { label: 'Connections…', hint: connectionsHint(), run: () => connections.open() },
     ] },
     { id: 'edit', label: 'Edit', items: () => [
       { label: undoLabel(history.undoStack, 'Undo'), shortcut: sc('Ctrl+Z'), disabled: !history.canUndo, run: () => { history.undo(); selection.prune(world); } },
@@ -527,7 +533,7 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, fileMenu, menubar, stats, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, stats, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd,
   newProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },

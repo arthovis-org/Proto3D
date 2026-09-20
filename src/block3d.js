@@ -60,6 +60,32 @@ let portSeq = 1;
 export const portShapeFor = (type, multi = false, dir = 'in') => (type === 'event' ? 'chevron' : multi && dir === 'in' ? 'slot' : 'sphere');
 
 /**
+ * Distribute one side's ports along a body edge, beside the content band `top..bottom`: the
+ * ungrown stack sits centred in the band at `gap` pitch, compressing to `minGap` when the band
+ * is short. Grown multi-input slots (`extraHeight`) push the ports below them down; the stack
+ * first slides up along the edge to stay inside the band and reports as `overflow` only what
+ * still does not fit, so the owner extends its body by that much (and no more). `list` may be
+ * port records or bare specs (no `extraHeight`). Returns `{ ys, gap, overflow }`.
+ */
+export function stackPorts(list, top, bottom, { gap = sizes.port.gap, minGap = sizes.port.minGap, pad = sizes.port.pad } = {}) {
+  const n = list.length;
+  if (!n) return { ys: [], gap, overflow: 0 };
+  const extras = list.map((p) => p.extraHeight || 0);
+  const grown = extras.reduce((a, b) => a + b, 0);
+  const avail = Math.max(0, top - bottom - 2 * pad);
+  let g = gap;
+  if (n > 1 && (n - 1) * gap + grown > avail) g = Math.max(minGap, Math.min(gap, (avail - grown) / (n - 1)));
+  const stack = (n - 1) * g + grown;
+  let first = (top + bottom) / 2 + (n - 1) * g / 2;
+  const room = first - stack - pad - bottom;
+  if (room < 0) first = Math.min(first - room, top - pad);
+  const overflow = Math.max(0, bottom - (first - stack - pad));
+  const ys = []; let acc = 0;
+  for (let i = 0; i < n; i++) { ys.push(first - i * g - acc); acc += extras[i]; }
+  return { ys, gap: g, overflow };
+}
+
+/**
  * Shared port anatomy. `owner` is the block (or a collapsed group) hosting it. Returns a plain
  * port record that the engine annotates with `value`, `changedAt`, `pulse`, `rate`.
  */
@@ -276,14 +302,12 @@ export class Block3D extends THREE.Group {
     this.faceDirty = true;
     this.subSelection = null;  // { kind, id } — a child pickable (card, column, item) the panel edits
     this.world = null;
-    this.portLabelSide = 'inside';   // 'outside' for devices (labels would cover the screen)
+    this.portLabelSide = 'outside';  // port names ride the wire just outside the body; 'inside' for plain slabs with no content behind them
     this.dropTarget = false;         // a card is being dragged over this block (assign on drop)
     this.bodyOffsetY = 0;            // the body's centre relative to the origin when it grew (getAABB)
     this._portsExtra = 0;            // how much the tallest side of ports grew (multi-input slots)
-    this.sideCaptions = null;        // { in, out } small "IN" / "OUT" captions above the port columns
-    this._captionAnchor = { in: new THREE.Vector3(NaN, 0, 0), out: new THREE.Vector3(NaN, 0, 0) };
     this.showPorts = o.showPorts === true || o.showPorts === false ? o.showPorts : null;   // per-component override of the global wiring flag
-    this.wiringLabels = new Set();   // port names, IN / OUT captions: hidden with the ports
+    this.wiringLabels = new Set();   // port names: hidden with the ports
     this._offTheme = onThemeChange(() => this.refreshTheme());
     this._offWiring = onWiringChange(() => this.applyWiring());
   }
@@ -292,11 +316,10 @@ export class Block3D extends THREE.Group {
   get portsVisible() { return portsVisibleFor(this); }
   /** Per-component override: true / false, or null to follow the global flag. */
   setShowPorts(v) { this.showPorts = v === true || v === false ? v : null; this.applyWiring(); this.world?.changed('wiring'); }
-  /** Show / hide every port, its label and the side captions; subclasses re-layout through `_onWiringChange`. */
+  /** Show / hide every port and its label. The body never changes size with the switch; subclasses may react through `_onWiringChange`. */
   applyWiring() {
     const on = this.portsVisible;
     for (const p of this.ports) { p.group.visible = on; if (p.labelMesh) p.labelMesh.visible = on && this.lodBlend < 0.98; }
-    if (this.sideCaptions) for (const c of Object.values(this.sideCaptions)) c.visible = on && this.lodBlend < 0.98;
     if (this._wiringOn !== on) { this._wiringOn = on; this._onWiringChange?.(on); }
     this.world?.bumpLayout();
   }
@@ -325,7 +348,7 @@ export class Block3D extends THREE.Group {
   /**
    * Re-place every port from its `basePos`, shifting the ports under a grown multi input down by
    * its extra height (Blender node behaviour); labels follow. Subclasses may grow their body
-   * through `_onPortsGrow(extra)`.
+   * through `_onPortsGrow(extra)`. Node3D overrides this with its edge stacking (`stackPorts`).
    */
   relayoutPorts() {
     let most = 0;
@@ -334,7 +357,7 @@ export class Block3D extends THREE.Group {
       for (const p of list) {
         const [x, y, z] = p.basePos;
         p.group.position.set(x, y - acc, z);
-        if (p.labelMesh) p.labelMesh.position.y = y - acc - (p.extraHeight || 0) / 2;
+        this._placePortLabel(p);
         acc += p.extraHeight || 0;
       }
       most = Math.max(most, acc);
@@ -343,45 +366,30 @@ export class Block3D extends THREE.Group {
     this.world?.bumpLayout();
   }
   /**
-   * A port with its name label beside it (inside the body by default; outside for devices).
-   * `zFront` is where labels sit (the front face of the body).
+   * A port with its name label. By default the name sits just outside the body, past the pin and
+   * riding above where the wire leaves (`portLabelSide` 'outside'); 'inside' puts it on the body
+   * front beside the pin (`zFront`) for slabs with nothing behind it.
    */
   _addLabelledPort(spec, x, y, z = 0, zFront = this.depth / 2 + 0.01) {
     const port = this._addPort(spec, x, y, z);
-    const label = makeLabel(spec.label, { size: sizes.label.port, color: 'textDim', weight: 500 });
-    const inset = 0.22 + label.userData.worldW / 2;
-    const inside = this.portLabelSide === 'inside';
-    const lx = spec.dir === 'in' ? (inside ? x + inset : x - inset - sizes.port.stem) : (inside ? x - inset : x + inset + sizes.port.stem);
-    label.position.set(lx, y, inside ? zFront : z + 0.02);
+    const label = makeLabel(spec.label, { size: sizes.label.port, color: 'textDim', weight: 500, maxWidth: sizes.port.labelMax });
+    label.userData.alpha = 0.85;
     this.add(label); this.labels.push(label); this.detailLabels.push(label); this.wiringLabels.add(label);
-    port.labelMesh = label;
+    port.labelMesh = label; port.labelZ = zFront;
+    this._placePortLabel(port);
     const on = this.portsVisible;
     port.group.visible = on; label.visible = on;
     return port;
   }
-  /** Position (or create) the "IN" / "OUT" captions above the first port of each side. Cheap; called per frame. */
-  positionSideCaptions() {
-    const zFront = this.depth / 2 + 0.01;
+  /** Put a port's name where its pin is now (outside: past the pin, lifted above the wire; inside: beside it on the body front). */
+  _placePortLabel(port) {
+    const l = port.labelMesh; if (!l) return;
+    const P = sizes.port, { x, y, z } = port.group.position;
+    const half = l.userData.worldW / 2;
     const inside = this.portLabelSide === 'inside';
-    for (const dir of ['in', 'out']) {
-      const first = (dir === 'in' ? this.inputs : this.outputs)[0];
-      if (!first) continue;
-      const p = first.group.position;
-      const anchor = this._captionAnchor[dir];
-      if (anchor.equals(p)) continue;
-      anchor.copy(p);
-      if (!this.sideCaptions) this.sideCaptions = {};
-      let cap = this.sideCaptions[dir];
-      if (!cap) {
-        cap = makeLabel(dir === 'in' ? 'IN' : 'OUT', { size: 0.115, color: 'textDim', weight: 600, spacing: 0.08 });
-        this.add(cap); this.labels.push(cap); this.detailLabels.push(cap); this.wiringLabels.add(cap);
-        cap.visible = this.portsVisible;
-        this.sideCaptions[dir] = cap;
-      }
-      const w = cap.userData.worldW;
-      const x = dir === 'in' ? (inside ? p.x + 0.22 + w / 2 : p.x - 0.22 - sizes.port.stem - w / 2) : (inside ? p.x - 0.22 - w / 2 : p.x + 0.22 + sizes.port.stem + w / 2);
-      cap.position.set(x, p.y + sizes.port.gap * 0.52, inside ? zFront : p.z + 0.02);
-    }
+    const dx = inside ? 0.22 + half : P.stem + P.labelGap + half;
+    const towardsBody = (port.dir === 'in') === inside;   // inputs read into the body, outputs out of it — and the reverse outside
+    l.position.set(towardsBody ? x + dx : x - dx, inside ? y - (port.extraHeight || 0) / 2 : y + P.labelLift, inside ? (port.labelZ ?? this.depth / 2 + 0.01) : z + 0.09);
   }
 
   /* ---------- face: a live canvas on the body ---------- */
@@ -490,13 +498,12 @@ export class Block3D extends THREE.Group {
     const target = this.lod ? 1 : 0;
     if (Math.abs(this.lodBlend - target) >= 0.002) this.lodBlend += (target - this.lodBlend) * Math.min(1, dt * 6);
     else this.lodBlend = target;
-    this.positionSideCaptions();
     this._applyLOD();
   }
   _applyLOD() {
     const a = 1 - this.lodBlend;
     const ports = this.portsVisible;
-    for (const l of this.detailLabels) { l.material.opacity = a; l.visible = a > 0.02 && (ports || !this.wiringLabels.has(l)); }
+    for (const l of this.detailLabels) { l.material.opacity = a * (l.userData.alpha ?? 1); l.visible = a > 0.02 && (ports || !this.wiringLabels.has(l)); }
   }
   _updateShadow() {
     const sy = this.scale.y || 1;

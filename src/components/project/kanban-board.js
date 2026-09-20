@@ -353,9 +353,9 @@ const body3d = {
     node.rim.geometry.dispose(); node.rim.geometry = outlineGeometry(d.width, d.height, BACK_D, sizes.outline.grow, { radius: 0.36 }).translate(0, L.centreY, -BACK_D / 2 + 0.01);
     node.shadow.geometry.dispose(); node.shadow.geometry = new THREE.PlaneGeometry(d.width * 1.4, DEPTH * 3.2);
     const P = body3d.ports(node);
-    node.inputs.forEach((p, i) => { p.basePos = P.in[i]; p.labelMesh.position.x = P.in[i][0] + 0.22 + p.labelMesh.userData.worldW / 2; });
-    node.outputs.forEach((p, i) => { p.basePos = P.out[i]; p.labelMesh.position.x = P.out[i][0] - 0.22 - p.labelMesh.userData.worldW / 2; });
-    node.relayoutPorts();
+    node.inputs.forEach((p, i) => { p.basePos = P.in[i]; });
+    node.outputs.forEach((p, i) => { p.basePos = P.out[i]; });
+    node.relayoutPorts();   // re-places the pins from basePos and their names beside them
     const at = body3d.titleAt(node);
     node.titleLabel.position.set(at[0] + node.titleLabel.userData.worldW / 2, at[1], at[2]);
     node._titleY = node.titleLabel.position.y; node._titleX = node.titleLabel.position.x;
