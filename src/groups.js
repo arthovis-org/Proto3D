@@ -9,8 +9,10 @@ import { palette, states, sizes, materials, makeLabel, refreshLabel, setLabelTex
 import { createPort, genUid } from './block3d.js';
 import { panelGeometry, slabGeometry, outlineGeometry } from './geometry.js';
 import { isWiringOn, onWiringChange } from './wiring.js';
+import { isPlanOn, onPlanChange } from './plan.js';
 
 const PAD = 1.2;
+const _box = new THREE.Box3();
 
 export class Group3D extends THREE.Group {
   constructor({ uid, title = 'Group', members = [], collapsed = false } = {}) {
@@ -45,8 +47,17 @@ export class Group3D extends THREE.Group {
     this.slab = null;
     this._offTheme = onThemeChange(() => this.refreshTheme());
     this._offWiring = onWiringChange(() => this._applyWiring());
+    this._offPlan = onPlanChange(() => this._applyPlan());
+    this._applyPlan();
     this.updateBounds(true);
     if (collapsed) this._pendingCollapse = true;
+  }
+  /** 2D editing mode: the title lies flat at the frame's top-left, a collapsed slab lies flat at its spot. */
+  _applyPlan() {
+    const on = isPlanOn();
+    this.titleLabel.rotation.x = on ? -Math.PI / 2 : 0;
+    if (this.slab) this.slab.rotation.x = on ? -Math.PI / 2 : 0;
+    this.updateBounds(true);
   }
 
   get ports() { return this.proxies.map((p) => p.proxy); }
@@ -60,10 +71,14 @@ export class Group3D extends THREE.Group {
     if (!this.members.length) return;
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     this.center.set(0, 0, 0);
+    const plan = isPlanOn();
     for (const m of this.members) {
-      const f = m.footprint();
-      minX = Math.min(minX, m.position.x - f.w / 2); maxX = Math.max(maxX, m.position.x + f.w / 2);
-      minZ = Math.min(minZ, m.position.z - f.d / 2); maxZ = Math.max(maxZ, m.position.z + f.d / 2);
+      if (plan && m.getAABB) { const b = m.getAABB(_box); minX = Math.min(minX, b.min.x); maxX = Math.max(maxX, b.max.x); minZ = Math.min(minZ, b.min.z); maxZ = Math.max(maxZ, b.max.z); }
+      else {
+        const f = m.footprint();
+        minX = Math.min(minX, m.position.x - f.w / 2); maxX = Math.max(maxX, m.position.x + f.w / 2);
+        minZ = Math.min(minZ, m.position.z - f.d / 2); maxZ = Math.max(maxZ, m.position.z + f.d / 2);
+      }
       this.center.add(m.position);
     }
     this.center.divideScalar(this.members.length);
@@ -79,7 +94,8 @@ export class Group3D extends THREE.Group {
     }
     this.fill.position.set((minX + maxX) / 2, 0.025, (minZ + maxZ) / 2);
     this.edge.position.set((minX + maxX) / 2, 0.035, (minZ + maxZ) / 2);
-    this.titleLabel.position.set(minX + 0.5 + this.titleLabel.userData.worldW * this.titleLabel.scale.x / 2, 0.32 + 0.2 * this.farBlend, maxZ + 0.02);
+    if (plan) this.titleLabel.position.set(minX + 0.5 + this.titleLabel.userData.worldW * this.titleLabel.scale.x / 2, 0.12, minZ + 0.35 + this.titleLabel.userData.worldH / 2);   // flat, top-left inside the frame
+    else this.titleLabel.position.set(minX + 0.5 + this.titleLabel.userData.worldW * this.titleLabel.scale.x / 2, 0.32 + 0.2 * this.farBlend, maxZ + 0.02);
     if (this.slab) { this.slab.position.set(this.center.x, this.slab.userData.h / 2 + 0.4, this.center.z); }
   }
 
@@ -120,6 +136,7 @@ export class Group3D extends THREE.Group {
     slab.add(body, header, label, sub, rim);
     slab.titleLabel = label; slab.body = body; slab.rim = rim; slab.header = header; slab.sub = sub;
     slab.userData.w = w; slab.userData.d = d;
+    slab.rotation.x = isPlanOn() ? -Math.PI / 2 : 0;   // flat in the plan
     this.slab = slab;
     this.add(slab);
     this.updateBounds(true);
@@ -222,7 +239,7 @@ export class Group3D extends THREE.Group {
     this.applyVisual();
   }
   serialize() { return { uid: this.uid, title: this.title, members: this.members.map((m) => m.uid), collapsed: this.collapsed }; }
-  dispose() { this._offTheme?.(); this._offWiring?.(); disposeTree(this); }
+  dispose() { this._offTheme?.(); this._offWiring?.(); this._offPlan?.(); disposeTree(this); }
 }
 
 /** Flat rounded-rectangle ring (frame border) in the XY plane, rotated onto the floor by the caller. */

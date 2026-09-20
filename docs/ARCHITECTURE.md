@@ -11,6 +11,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 │ UI          ui/menubar.js (menus + quick toggles)  ui/toolbar-left.js  panel.js  interaction.js │
 │             ui/mini-toolbar.js (above the selection)  ui/command-palette.js (Ctrl+K)          │
 │             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
+│             ui/guides.js (snap guides)  layout.js (Auto-layout)  plan.js (2D mode + snap settings) │
 │             controls/presets.js + controls/navigation.js (camera + bindings) │
 │             main.js (boot + render loop)                                     │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -622,7 +623,8 @@ What the menus add beyond the older controls, all in `main.js` and `serialize.js
   tabs). *Export → Screenshot* renders once more and reads the canvas as a PNG.
 - **Shortcuts** the menus bind: `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+O`, `Ctrl+X` / `Ctrl+C`
   (with a selection), `Shift+?` for the shortcut sheet, `I` for the performance stats, `Ctrl+K`
-  for the command palette (§9d; a capture-phase listener, so it also works from a panel field).
+  for the command palette (§9d; a capture-phase listener, so it also works from a panel field),
+  `2` for the 2D editing mode and `L` for Auto-layout (§9f).
 - **Help pages** (`ui/help-dialogs.js`, on the Connections modal shell): the keyboard shortcut
   sheet (fixed keys from `GLOBAL_SHORTCUTS` plus the active preset's `nav.sheet()`) and About.
 
@@ -717,6 +719,69 @@ What is measured versus estimated:
 | components, connections, groups, far-LOD blocks, faces above 1× (`faceScale` tiers) | the world and `lod.js` state |
 | browser storage | `navigator.storage.estimate()` (usage / quota, every 5 s) and the bytes held in `localStorage` |
 
+## 9f. 2D editing mode, snapping and Auto-layout (`plan.js`, `layout.js`, `ui/guides.js`)
+
+**The plan view** (*View → 2D editing mode*, key `2`, the menu bar toggle `#btn-plan`, the panel's
+checkbox and the palette) is a *view* setting held in `plan.js` (`isPlanOn / setPlan / onPlanChange`,
+never saved, off at boot). Turning it on does four things at once:
+
+- **Blocks lie flat.** `Block3D.applyPlan` sets `planFlat`; `updateMatrix` then appends a local
+  matrix that rotates the block −90° about X around its `planPivot()` (the centre of the front
+  face: `(0, bodyOffsetY, depth / 2)`; a device uses its screen slab and a `lift` of 1.2 so the
+  screen floats clear of the floor and the cables) and puts that pivot at the origin. The same
+  card, canvas, title, pins and sub pickables now face up at `(x, position.y, z)` — inputs still
+  left, outputs right, nothing re-rendered, and `position` stays the single source of truth (the
+  plan's x / z are the room's x / z, y is untouched). Everything that reads `matrixWorld`
+  (raycasts, `worldToLocal` in the board and the timeline, labels) follows; `getAABB` and
+  `footprint` swap the card's height into z while flat; contact shadows hide. `Group3D` lays its
+  title flat at the frame's top-left, a collapsed slab flat at its spot, and measures members by
+  their plan AABBs.
+- **Cables go planar.** `Connection3D.rebuild` passes `planar` to `routeCurve`: a cubic whose
+  middle runs at `PLAN_CABLE_Y` (0.35) — under the cards, rising only at the ends to the pins —
+  lanes fan out in z, no lift, no obstacle avoidance. Chips, dimming, previews, drop-to-link and the
+  end labels are unchanged.
+- **The camera flies top-down.** `workspace.enterPlan(blocks)` remembers the 3D pose (`planSaved`
+  — also what a document saved in 2D writes as its camera), puts the Navigator in `planMode`
+  (orbit / turn off: a middle or right button that would orbit pans, `Space` + left-drag pans, the
+  wheel always zooms about the cursor with the preset's invert settings, numpad views ignored,
+  polar clamp lowered to `PLAN_PHI`) and flies 0.35 s to `planPose` — the target at the centre of
+  the blocks' plan AABBs, the camera straight above at the distance whose orthographic frustum
+  shows them at 80 % of the visible width / height. On landing it swaps in the orthographic camera
+  and sets `planLock`, which holds θ = 0 / φ = `PLAN_PHI` every frame (screen-up is −z, so a card's
+  title reads upright). `frameBlocks`, F, Home and *Go to* frame top-down while the plan is on; fog
+  is off. `exitPlan` unlocks, restores the projection at once (still top-down, so no visible jump)
+  and flies back to the remembered pose.
+- **The rest adapts.** `lod.js` keeps every block at full detail (faces still fit their
+  resolution), the gizmo is `suspended` (moves are drags), a left press on empty space always
+  box-selects whatever the preset, the marquee tests plan AABB centres, the mini toolbar anchors to
+  the flat card's projected box, the block tooltip sits past its top edge, `Shift` while dragging
+  means "no snap" instead of "lift".
+
+**Snapping** (`snap` in `plan.js`, *View → Snap to grid*, `localStorage["proto3d.snap.v1"]`, on by
+default, 2D and 3D alike). While a set of blocks is dragged, `Interaction._applySnap` first looks
+for an **alignment**: an edge or centre (x: left / right / centre, z: top / bottom / centre) of the
+dragged set's footprint box that lands within `_snapThreshold` (8 px in world units, clamped
+0.12–0.9) of any other visible block's — the closest wins per axis and the set snaps onto it.
+Otherwise the anchor block's centre lands on the grid (`snap.size` 1; `Ctrl` while dragging uses
+`snap.fine` 0.5). `Shift` held during the drag disables both. The guides live in `ui/guides.js`:
+an SVG over the window (`#guides`, pointer-events none) holding world-space segments re-projected
+every frame — an accent line spanning both blocks for an alignment, dashed ticks beside the block's
+centre lines for a grid snap — set on every move and cleared on release or cancel.
+
+**Auto-layout** (`layout.js`; *Edit → Auto-layout*, key `L`, the mini toolbar with two or more
+blocks selected, the palette). `layoutPlan(world, nodes)` arranges the selection (two or more) or
+every visible block as a left-to-right layered graph along the cables: an expanded group's members
+form a **cluster** laid out first by the same algorithm and placed as one item (so groups stay
+contiguous), members of collapsed groups are left alone; edges are the cables among the items,
+cycles are broken by dropping the back edges a DFS finds (`backEdges`); layers by longest path from
+the sources, order within a layer by eight barycentre sweeps, x by cumulative layer widths plus
+`gapX`, z by stacking with `gapZ` then pulled towards the neighbours' mean without overlapping;
+items without cables go into a tidy grid below the graph. Footprints are the cards as seen from
+above (width × height, `layoutSize`) in both modes, the arranged set keeps its former centre and y
+is untouched. `layoutCommand` is one undoable command whose `do` / `undo` glide the blocks with
+`tweenTo` (0.25 s, `updateTweens` in the render loop; a dragged block is left alone), so the same
+positions read as rows of standing cards in 3D and as a diagram in 2D.
+
 ## 10. Serialization (`serialize.js`)
 
 ```json
@@ -729,7 +794,10 @@ What is measured versus estimated:
 ```
 
 `showPorts` is written only when a block overrides the wiring switch; `wiring` is the switch
-itself and is applied on load (an autosaved world keeps its setting).
+itself and is applied on load (an autosaved world keeps its setting). The 2D editing mode is not
+saved: a document written while it is on carries the remembered 3D camera (`pose` in
+`serializeWorld`), and loading a document while it is on keeps the plan (`main.js →
+afterLoadInPlan`).
 
 `loadWorld` clears the world, instantiates known types (unknown ids are reported in `skipped`),
 reconnects by uid + port key, rebuilds groups (collapsing after their members exist) and restores
@@ -767,6 +835,8 @@ and `pickJSONFile({ withName })` (§9b).
   and `materials.panel`; use `outlineGeometry` for its rim.
 - **A param control**: extend `PARAM_TYPES` in `core/component.js` and `_buildBlock` in `panel.js`.
 - **An undoable operation**: a command in `core/commands.js` built from `World` mutations.
+- **A 2D-mode behaviour**: subscribe with `onPlanChange` (`plan.js`) or read `isPlanOn()`; a body
+  that should pivot differently when flat overrides `planPivot()` (§9f).
 
 ## 11b. AI generation (`ai/`, `components/generate/`)
 

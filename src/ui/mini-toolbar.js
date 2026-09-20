@@ -4,7 +4,8 @@
 // and pushed clear of the job tray / stats. Hidden while a block, cable, marquee, face, sub or
 // gizmo drag is in flight and while the camera moves; fades in over 120 ms once things are still.
 //
-//   Duplicate · Delete · Ports (follow / show / hide, per-block override) · Collapse / expand
+//   Duplicate · Delete · Ports (follow / show / hide, per-block override) · Auto-layout (two or
+//   more blocks) · Collapse / expand
 //   (groups, or the group the block is in) · Run (components with a run / trigger: Generate faces,
 //   Input buttons and toggles, Flow Terminals, Actions and anything with an event input named
 //   run / trigger / in / start) · Frame · More (the properties panel focused on the block).
@@ -48,8 +49,8 @@ export class MiniToolbar {
   /**
    * @param {object} o { el, ws, world, engine, selection, interaction, history, gizmo, avoid: () => HTMLElement[], onMore(items) }
    */
-  constructor({ el, ws, world, engine, selection, interaction, history, gizmo = null, avoid = () => [], onMore = () => {} }) {
-    Object.assign(this, { el, ws, world, engine, selection, interaction, history, gizmo, avoid, onMore });
+  constructor({ el, ws, world, engine, selection, interaction, history, gizmo = null, avoid = () => [], onMore = () => {}, onLayout = null }) {
+    Object.assign(this, { el, ws, world, engine, selection, interaction, history, gizmo, avoid, onMore, onLayout });
     this.el.setAttribute('role', 'toolbar'); this.el.setAttribute('aria-label', 'Selection');
     this.sig = '';           // what the buttons were built for
     this.visible = false;    // shown (fading in or settled)
@@ -86,6 +87,8 @@ export class MiniToolbar {
       const to = next === null ? 'follow the Wiring switch' : next ? 'always show' : 'always hide';
       list.push({ id: 'ports', icon: v === true ? 'eye' : v === false ? 'eyeOff' : 'flow', label: 'Ports', hint: `${state} · click to ${to}`, on: v === true, off: v === false, run: () => this.history.execute(cmd.setShowPorts(this.world, nodes, next)) });
     }
+    const blocks = items.flatMap((i) => (i.kind === 'group' ? (i.collapsed ? [] : i.members) : [i]));
+    if (this.onLayout && blocks.length > 1) list.push({ id: 'layout', icon: 'autoLayout', label: 'Auto-layout', hint: `arrange these ${blocks.length} blocks left to right along their cables`, shortcut: 'L', run: () => this.onLayout(blocks) });
     if (allInGroups) {
       const collapsed = groupsOf.every((g) => g.collapsed);
       list.push({ id: 'collapse', icon: collapsed ? 'expand' : 'collapse', label: collapsed ? 'Expand group' : 'Collapse group', shortcut: 'C', run: () => this.interaction.toggleCollapseSelection() });

@@ -6,26 +6,28 @@
 // (face-canvas.js), nearest faces first and only a few blocks per frame.
 import * as THREE from 'three';
 import { sizes } from './theme.js';
+import { isPlanOn } from './plan.js';
 
 const _m = new THREE.Vector3();
 const _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4(), _box = new THREE.Box3();
 export function updateLOD(world, camera, dt, renderer = null) {
   const far = sizes.lod.far, hys = sizes.lod.hysteresis;
   const cam = camera.position;
+  const plan = isPlanOn();   // 2D editing mode: full detail everywhere, faces still fit their resolution
   for (const n of world.nodes) {
     const d = cam.distanceTo(n.position);
-    const level = n.lod ? (d < far - hys ? 0 : 1) : (d > far + hys ? 1 : 0);
+    const level = plan ? 0 : n.lod ? (d < far - hys ? 0 : 1) : (d > far + hys ? 1 : 0);
     n.setLOD(level, d);
   }
   if (renderer) fitFaceResolutions(world, camera, renderer);
   for (const c of world.connections) {
     c.midpoint(_m);
     const d = cam.distanceTo(_m);
-    c.setFar(c.far ? d > far - hys : d > far + hys);
+    c.setFar(!plan && (c.far ? d > far - hys : d > far + hys));
   }
   for (const g of world.groups) {
     const d = cam.distanceTo(g.center);
-    g.setFar(g.far ? d > far - hys : d > far + hys, d);
+    g.setFar(!plan && (g.far ? d > far - hys : d > far + hys), d);
   }
 }
 /** Device pixels one world unit covers at distance `d` (perspective) or anywhere (orthographic). */

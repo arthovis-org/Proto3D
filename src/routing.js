@@ -4,9 +4,13 @@
 //    depth offsets so they never overlap along their whole length;
 //  • lift: long links rise a little, and any link whose samples pass through another block's
 //    bounding box raises its control points until it clears the box (2 relaxation passes);
+//  • planar (2D editing mode): a flat spline — the handles sit low over the floor (PLAN_CABLE_Y)
+//    so the cable runs under the cards and rises only at its ends to the pins; lanes fan out in z
+//    (the visible axis from above), there is no lift and no obstacle avoidance.
 // The result is a THREE.CubicBezierCurve3 the tube geometry is built from.
 import * as THREE from 'three';
 import { sizes } from './theme.js';
+import { PLAN_CABLE_Y } from './plan.js';
 
 const _box = new THREE.Box3();
 const _pt = new THREE.Vector3();
@@ -34,9 +38,22 @@ export function laneInfo(c, connections) {
  * @param {THREE.Vector3} p3 input port position
  * @param {object} o { lanes, obstacles: Block3D[], skip: Set<Block3D> }
  */
-export function routeCurve(p0, p3, { lanes = null, obstacles = [], skip = null } = {}) {
-  const dist = p0.distanceTo(p3);
+export function routeCurve(p0, p3, { lanes = null, obstacles = [], skip = null, planar = false } = {}) {
+  const dist = Math.hypot(p0.x - p3.x, p0.z - p3.z, planar ? 0 : p0.y - p3.y);
   const h = Math.max(sizes.connection.tangentMin, dist * sizes.connection.tangent);
+  if (planar) {
+    // 2D: a flat spline whose middle runs at PLAN_CABLE_Y under the cards (the handles dip lower to
+    // pull the body down from the pins), fanned out in z, wider loops for backward links
+    const yc = THREE.MathUtils.clamp((PLAN_CABLE_Y - 0.125 * (p0.y + p3.y)) / 0.75, -0.4, PLAN_CABLE_Y);
+    const p1 = new THREE.Vector3(p0.x + h, yc, p0.z), p2 = new THREE.Vector3(p3.x - h, yc, p3.z);
+    if (lanes) {
+      const L = sizes.connection.lane * 1.8;
+      p1.z += (lanes.fromIndex - (lanes.fromCount - 1) / 2) * L;
+      p2.z += (lanes.toIndex - (lanes.toCount - 1) / 2) * L;
+    }
+    if (p3.x < p0.x + 1) { const extra = Math.min(6, (p0.x - p3.x) * 0.35 + 1.5); p1.x += extra; p2.x -= extra; }
+    return new THREE.CubicBezierCurve3(p0.clone(), p1, p2, p3.clone());
+  }
   const p1 = new THREE.Vector3(p0.x + h, p0.y, p0.z);
   const p2 = new THREE.Vector3(p3.x - h, p3.y, p3.z);
 

@@ -4,7 +4,8 @@
 // the mini toolbar above the selection, the command palette (Ctrl+K), the wiring switch,
 // navigation presets, first-run tour, LOD, the AI layer (providers, key vault, jobs) with its
 // Connections page, model browser and job tray, the performance stats, autosave, recent projects,
-// the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
+// the 2D editing mode (plan view, key 2) with grid snapping and Auto-layout (L), the Showcase scene
+// and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
 import { createWorkspace } from './workspace.js';
 import { registry } from './components/index.js';
@@ -28,6 +29,9 @@ import { StatsOverlay } from './ui/stats.js';
 import { MiniToolbar } from './ui/mini-toolbar.js';
 import { CommandPalette, menuCommands } from './ui/command-palette.js';
 import { CableChips } from './cable-chips.js';
+import { Guides } from './ui/guides.js';
+import { isPlanOn, setPlan, snap } from './plan.js';
+import { layoutPlan, layoutCommand, updateTweens, tweening } from './layout.js';
 import { examples, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
 import { portTypes, subtypes, states, sizes, hex, getTheme, setTheme, toggleTheme, onThemeChange, refreshLabel } from './theme.js';
@@ -65,9 +69,10 @@ const connLabel = $('conn-label');
 let hoveredConnection = null;
 const overlays = new Overlays({ camera: ws.camera, renderer: ws.renderer, world, els: { tip: $('tip'), dragLabel: $('drag-label'), toast: $('toast'), endLabels: $('cable-labels'), emptyHint: $('empty-hint') } });
 const chips = new CableChips(ws.scene);   // value chips at cable midpoints (hovered / selected cables, cables of a selected block)
+const guides = new Guides({ el: $('guides'), ws });   // snap / alignment guides while a block is dragged
 world.overlays = overlays;    // components may toast ("Assigned to Maya")
 const interaction = new Interaction({
-  camera: ws.camera, renderer: ws.renderer, controls: ws.controls, world, selection, history, gizmo, createInstance, overlays,
+  camera: ws.camera, renderer: ws.renderer, controls: ws.controls, world, selection, history, gizmo, createInstance, overlays, guides,
   onHoverConnection: (c) => { hoveredConnection = c; connLabel.hidden = !c; },
   onFocus: (blocks) => ws.frameBlocks(blocks, { insetLeft: leftBar?.isOpen ? 300 : 0 }),
   onFrameAll: () => frameAll(),
@@ -84,6 +89,7 @@ const panel = new Panel({
   el: $('panel'), world, engine, ws, gizmo, history, selection, interaction,
   flow: { isEnabled: isFlowEnabled, setEnabled: (v) => { setFlowEnabled(v); syncToolbar(); }, getSpeed: getFlowSpeed, setSpeed: setFlowSpeed },
   wiring: { isOn: isWiringOn, set: (v) => setWiring(v) },
+  plan: { isOn: isPlanOn, set: (v) => setPlanView(v), snap },
   onGizmoToggle: () => syncToolbar(),
 });
 
@@ -109,13 +115,21 @@ function addComponent(def, position) {
 const leftBar = new LeftToolbar({ el: $('left-bar'), ws, world, interaction, onAdd: addComponent });
 
 /* ---- Project: name, autosave, recent projects, save / open / import / export ---- */
-const autosave = new AutoSave(world, { extras: () => ({ camera: ws.camera, controls: ws.controls, name: project.name || 'untitled' }) });
+// the 2D editing mode is a view setting: a document written while it is on carries the remembered 3D camera
+const cameraPose = () => (isPlanOn() && ws.planSaved ? { position: ws.planSaved.position, target: ws.planSaved.target } : null);
+const autosave = new AutoSave(world, { extras: () => ({ camera: ws.camera, controls: ws.controls, pose: cameraPose(), name: project.name || 'untitled' }) });
 const recent = new RecentProjects();
 const project = { name: null };
 const insetLeft = () => (leftBar?.isOpen ? 300 : 0);
 const dateStamp = () => new Date().toISOString().slice(0, 10);
 function setProjectName(name) { project.name = name ? String(name).trim() || null : null; document.title = `${project.name || 'Untitled'} — Proto3D`; }
-function currentDoc(name = project.name || 'untitled') { return serializeWorld(world, { camera: ws.camera, controls: ws.controls, name }); }
+function currentDoc(name = project.name || 'untitled') { return serializeWorld(world, { camera: ws.camera, controls: ws.controls, pose: cameraPose(), name }); }
+/** A document's camera arrived while the plan is on: keep it as the 3D pose to return to and frame the plan over everything. */
+function afterLoadInPlan(doc) {
+  if (!isPlanOn()) return;
+  if (doc?.camera) ws.planSaved = { position: new THREE.Vector3().fromArray(doc.camera.position), target: new THREE.Vector3().fromArray(doc.camera.target), ortho: false };
+  frameAll({ instant: true });
+}
 /** Keep the scene on the recent list before it is replaced (New, Open, an example); untitled scenes get a timestamp for a name. */
 function rememberCurrent() {
   if (!world.nodes.length) return;
@@ -130,7 +144,8 @@ function loadExample(id) {
   engine.evaluate();
   setProjectName(null);
   const focus = ex.focus ? ex.focus(named).filter(Boolean) : [];
-  if (focus.length) ws.frameBlocks(focus, { instant: true, fill: 0.7, insetLeft: insetLeft() }); else frameAll({ instant: true });
+  if (isPlanOn()) frameAll({ instant: true });
+  else if (focus.length) ws.frameBlocks(focus, { instant: true, fill: 0.7, insetLeft: insetLeft() }); else frameAll({ instant: true });
   return named;
 }
 function newProject() { rememberCurrent(); selection.clear(); history.clear(); world.clear(); world.named = {}; setProjectName(null); }
@@ -157,6 +172,7 @@ function openDoc(doc, name) {
   setProjectName(name || doc.name);
   recent.remember(project.name || 'Untitled', doc);
   if (!doc.camera) frameAll({ instant: true });
+  afterLoadInPlan(doc);
   if (r.skipped.length) overlays.toast(`Opened · ${r.skipped.length} unknown component${r.skipped.length > 1 ? 's' : ''} skipped`, 2400);
   else overlays.toast(`Opened ${project.name || 'project'} · ${r.nodes} components`, 1600);
 }
@@ -297,6 +313,7 @@ toolSep();
 tool('btn-wiring', 'flow', 'Wiring — show or hide ports and cables (P). Cables are optional: drop a component onto another to link them', 'Wiring').setAttribute('aria-pressed', 'false');
 tool('btn-flow', 'connection', 'Flow animation on cables', 'Flow animation');
 tool('btn-gizmo', 'gizmo', 'Move / rotate / scale gizmo (G) · W move, E rotate, R scale', 'Gizmo');
+tool('btn-plan', 'plan', '2D editing mode (2) · a top-down plan: drag to box-select, middle-drag or Space+drag pans, the wheel zooms, blocks snap to the grid · press again for 3D', '2D editing mode').setAttribute('aria-pressed', 'false');
 toolSep();
 tool('btn-theme', 'sun', 'Switch light / dark theme (T)', 'Theme');
 tool('btn-frame', 'frame', 'Frame everything (Home) · F frames the selection', 'Frame all');
@@ -312,6 +329,10 @@ function syncToolbar() {
   tb['btn-wiring'].setAttribute('aria-pressed', String(isWiringOn()));
   tb['btn-gizmo'].classList.toggle('on', gizmo.enabled);
   tb['btn-gizmo'].setAttribute('aria-pressed', String(gizmo.enabled));
+  tb['btn-gizmo'].disabled = isPlanOn();
+  tb['btn-gizmo'].title = isPlanOn() ? 'Gizmo — hidden in the 2D editing mode: drag blocks to move them' : 'Move / rotate / scale gizmo (G) · W move, E rotate, R scale';
+  tb['btn-plan'].classList.toggle('on', isPlanOn());
+  tb['btn-plan'].setAttribute('aria-pressed', String(isPlanOn()));
   tb['btn-theme'].title = getTheme() === 'dark' ? 'Switch to the light theme (T)' : 'Switch to the dark theme (T)';
   tb['btn-theme'].querySelector('i').innerHTML = getTheme() === 'dark' ? icons.sun : icons.moon;
   const panelShown = !document.body.classList.contains('panel-hidden');
@@ -328,6 +349,7 @@ tb['btn-flow'].addEventListener('click', () => { setFlowEnabled(!isFlowEnabled()
 tb['btn-wiring'].addEventListener('click', () => { toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on · ports and cables shown' : 'Wiring off · drop a component onto another to link them', 1800); });
 tb['btn-theme'].addEventListener('click', () => toggleTheme());
 tb['btn-gizmo'].addEventListener('click', () => setGizmo(!gizmo.enabled));
+tb['btn-plan'].addEventListener('click', () => setPlanView(!isPlanOn()));
 tb['btn-panel'].addEventListener('click', () => togglePanel());
 tb['btn-frame'].addEventListener('click', () => frameAll());
 tb['btn-help'].addEventListener('click', () => toggleHelp());
@@ -335,6 +357,37 @@ tb['btn-undo'].addEventListener('click', () => { history.undo(); selection.prune
 tb['btn-redo'].addEventListener('click', () => { history.redo(); selection.prune(world); });
 tb['btn-palette'].addEventListener('click', () => palette.toggle());
 
+/**
+ * 2D editing mode (plan.js): blocks lie flat, cables go planar, the camera flies top-down and
+ * goes orthographic (workspace.enterPlan), the gizmo hides; off, everything stands up again and
+ * the camera flies back to the remembered 3D pose. A view setting — nothing about it is saved.
+ */
+function setPlanView(on, { toast = true } = {}) {
+  on = !!on;
+  if (on === isPlanOn()) return;
+  interaction.cancel();
+  if (on) {
+    const focus = selection.nodes.length || selection.groups.length ? selectedNodes() : world.nodes.filter((n) => n.visible);
+    setPlan(true);                                        // blocks, groups and cables follow
+    ws.enterPlan(focus, { insetLeft: insetLeft() });
+    gizmo.setSuspended(true);
+  } else {
+    setPlan(false);
+    ws.exitPlan();
+    gizmo.setSuspended(false);
+  }
+  syncToolbar(); panel.refresh();
+  if (toast) overlays.toast(on ? '2D editing mode · drag on empty space to box-select · middle-drag or Space+drag pans · wheel zooms · 2 returns to 3D' : '3D view', on ? 3200 : 1000);
+}
+/** Edit → Auto-layout: arrange the selected blocks (two or more) or every block, one undoable animated command. */
+function autoLayoutSelection(nodes = null) {
+  const picked = nodes || selectedNodes();
+  const plan = layoutPlan(world, picked.length > 1 ? picked : null);
+  if (!plan.nodes.length) return null;
+  history.execute(layoutCommand(world, plan.nodes, plan.positions));
+  overlays.toast(`Arranged ${plan.nodes.length} block${plan.nodes.length > 1 ? 's' : ''} left to right${plan.backEdges.length ? ` · ${plan.backEdges.length} cable${plan.backEdges.length > 1 ? 's' : ''} loop back` : ''} · Ctrl+Z undoes`, 2200);
+  return plan;
+}
 function setGizmo(on) {
   gizmo.setEnabled(on);
   gizmo.setTarget(selection.nodes[selection.nodes.length - 1] || null);
@@ -372,8 +425,10 @@ window.addEventListener('keydown', (e) => {
   if (nav.keyAction(e)) return;   // the navigation preset owns this key (interaction.js handles it)
   if (e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); leftBar.open('search'); return; }
   if (e.shiftKey) return;
+  if (e.code === 'Digit2') { e.preventDefault(); setPlanView(!isPlanOn()); return; }   // 2D ↔ 3D
   switch (e.key.toLowerCase()) {
     case 'h': toggleHelp(); break;
+    case 'l': autoLayoutSelection(); break;
     case 't': toggleTheme(); break;
     case 'p': toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on' : 'Wiring off', 1000); break;
     case 'g': setGizmo(!gizmo.enabled); break;
@@ -430,6 +485,8 @@ const menubar = new MenuBar({
       { label: 'Select all', shortcut: sc('Ctrl+A'), disabled: !world.nodes.length, run: () => selection.set(world.nodes.filter((n) => n.visible)) },
       { label: 'Deselect', shortcut: 'Esc', disabled: !selection.size, run: () => selection.clear() },
       { sep: true },
+      { label: 'Auto-layout', shortcut: 'L', hint: selectedNodes().length > 1 ? `arrange the ${selectedNodes().length} selected blocks along their cables` : 'arrange every block left to right along its cables', disabled: !world.nodes.length, run: () => autoLayoutSelection() },
+      { sep: true },
       { label: 'Group', shortcut: sc('Ctrl+G'), disabled: !selection.nodes.some((n) => !n.group), run: () => interaction.groupSelection() },
       { label: 'Ungroup', shortcut: sc('Ctrl+Shift+G'), disabled: !(selection.groups.length || selection.nodes.some((n) => n.group)), run: () => interaction.ungroupSelection() },
       { label: 'Collapse / expand group', shortcut: 'C', disabled: !(selection.groups.length || selection.nodes.some((n) => n.group)), run: () => interaction.toggleCollapseSelection() },
@@ -448,7 +505,10 @@ const menubar = new MenuBar({
       } },
       { label: 'Flow animation', hint: 'on cables', checked: isFlowEnabled(), run: () => { setFlowEnabled(!isFlowEnabled()); syncToolbar(); panel.refresh(); } },
       { sep: true },
-      { label: 'Gizmo', shortcut: 'G', checked: gizmo.enabled, run: () => setGizmo(!gizmo.enabled) },
+      { label: '2D editing mode', hint: 'top-down plan: box-select, snap, wire and arrange', shortcut: '2', checked: isPlanOn(), run: () => setPlanView(!isPlanOn()) },
+      { label: 'Snap to grid', hint: 'moved blocks land on the grid and on neighbours\' edges · Shift skips, Ctrl is finer', checked: snap.on, run: () => { snap.toggle(); panel.refresh(); overlays.toast(snap.on ? 'Snap to grid on · Shift while dragging skips it, Ctrl snaps to half units' : 'Snap to grid off', 1800); } },
+      { sep: true },
+      { label: 'Gizmo', shortcut: 'G', checked: gizmo.enabled, disabled: isPlanOn(), hint: isPlanOn() ? 'hidden in 2D: drag to move' : undefined, run: () => setGizmo(!gizmo.enabled) },
       { label: 'Gizmo mode', items: () => [['translate', 'Move', 'W'], ['rotate', 'Rotate', 'E'], ['scale', 'Scale', 'R']].map(([m, l, k]) => ({ label: l, shortcut: k, radio: true, checked: gizmo.mode === m, run: () => { if (!gizmo.enabled) setGizmo(true); gizmo.setMode(m); syncToolbar(); } })) },
       { sep: true },
       { label: 'Properties panel', shortcut: 'N', checked: !document.body.classList.contains('panel-hidden'), run: () => togglePanel() },
@@ -458,7 +518,7 @@ const menubar = new MenuBar({
       { label: 'Frame selection', shortcut: 'F', disabled: !selection.size, run: () => interaction.focusSelection() },
       { label: 'Frame all', shortcut: 'Home', run: () => frameAll() },
       { label: 'Reset view', hint: 'home camera', run: () => ws.flyTo(ws.HOME.position, ws.HOME.target) },
-      { label: 'Orthographic view', shortcut: 'Numpad 5', checked: ws.controls.isOrtho, run: () => { ws.controls.setOrtho(!ws.controls.isOrtho); overlays.toast(ws.controls.isOrtho ? 'Orthographic view' : 'Perspective view', 1200); } },
+      { label: 'Orthographic view', shortcut: 'Numpad 5', checked: ws.controls.isOrtho, disabled: isPlanOn(), hint: isPlanOn() ? 'always on in 2D' : undefined, run: () => { ws.controls.setOrtho(!ws.controls.isOrtho); overlays.toast(ws.controls.isOrtho ? 'Orthographic view' : 'Perspective view', 1200); } },
       { sep: true },
       { label: 'Navigation', hint: nav.preset.label, items: () => PRESET_IDS.map((id) => ({ label: nav.presets[id].label, hint: nav.presets[id].description, radio: true, checked: nav.presetId === id, run: () => { nav.setPreset(id); overlays.toast(`${nav.preset.label} controls · ${nav.binding('orbit')} orbits`, 2000); } })) },
       { label: 'Level of detail', hint: `far at ${sizes.lod.far} units`, items: () => [['Close', 60], ['Default', 110], ['Far', 200]].map(([l, d]) => ({ label: l, hint: `${d} units`, radio: true, checked: sizes.lod.far === d, run: () => { sizes.lod.far = d; panel.refresh(); } })) },
@@ -504,6 +564,7 @@ window.addEventListener('keydown', (e) => {
 const miniBar = new MiniToolbar({
   el: $('mini-toolbar'), ws, world, engine, selection, interaction, history, gizmo,
   avoid: () => [$('bottom-right'), $('selection')],
+  onLayout: (blocks) => autoLayoutSelection(blocks),
   onMore: () => { togglePanel(true); const body = $('panel'); body.scrollTop = 0; const f = body.querySelector('#prop-name, #panel-body input, #panel-body select, #panel-body textarea'); f?.focus({ preventScroll: true }); },
 });
 
@@ -552,6 +613,7 @@ function frame() {
   ws.controls.update();
   ws.updateFog();
   engine.tick(dt);
+  updateTweens(dt);          // Auto-layout glides blocks to their places
   world.detectMoves();
   world.nodes.forEach((b) => b.update(t, dt));
   world.groups.forEach((g) => g.update(dt));
@@ -560,6 +622,7 @@ function frame() {
   chips.update(world, ws.camera, { hovered: hoveredConnection, anySelected: selection.size > 0, time: engine.time, dt, renderer: ws.renderer });
   interaction.update(t, dt);
   overlays.update();
+  guides.update();
   miniBar.update();
   jobsTray.update();
   tour.update(dt);
@@ -575,10 +638,12 @@ frame();
 // Exposed for debugging / automated tests
 window.__proto = {
   ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, palette, stats, chips, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
-  setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd,
+  setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
+  plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap },
+  layout: { arrange: autoLayoutSelection, plan: (nodes) => layoutPlan(world, nodes), tweening },
   newProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },
   ai: { vault, jobs, spend, store, providers: providerRegistry, providerStatus, connections, modelBrowser, jobsTray },
-  serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls }),
+  serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls, pose: cameraPose() }),
   load: (doc) => loadWorld(world, doc, { camera: ws.camera, controls: ws.controls }),
 };

@@ -8,6 +8,7 @@ export class Gizmo {
   constructor({ camera, renderer, scene, controls, world, history, onChange = () => {}, onModeChange = () => {} }) {
     Object.assign(this, { controls, world, history, onChange, onModeChange });
     this.enabled = false;
+    this.suspended = false;   // hidden while the 2D editing mode is on (moves are drags there)
     this.mode = 'translate';
     this.target = null;
     this.dragging = false;
@@ -43,7 +44,9 @@ export class Gizmo {
   /** True while the pointer hovers a gizmo handle (so picking must yield). */
   get hot() { return this.enabled && this.control.visible && !!this.control.axis; }
 
-  setEnabled(on) { this.enabled = !!on; this.control.enabled = this.enabled; this._sync(); }
+  setEnabled(on) { this.enabled = !!on; this.control.enabled = this.enabled && !this.suspended; this._sync(); }
+  /** Keep the setting but hide the handles (2D editing mode). */
+  setSuspended(on) { this.suspended = !!on; this.control.enabled = this.enabled && !this.suspended; this._sync(); }
   /** Follow the selection: attach to a node / device, detach for connections or nothing. */
   setTarget(block) {
     this.target = block && (block.kind === 'node' || block.kind === 'device') ? block : null;
@@ -56,7 +59,7 @@ export class Gizmo {
     this.onModeChange(mode);
   }
   _sync() {
-    if (this.enabled && this.target && this.target.visible) { this.control.attach(this.target); this.control.visible = true; }
+    if (this.enabled && !this.suspended && this.target && this.target.visible) { this.control.attach(this.target); this.control.visible = true; }
     else { this.control.detach(); this.control.visible = false; }
   }
 }

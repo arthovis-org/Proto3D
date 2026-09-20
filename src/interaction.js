@@ -14,6 +14,11 @@
 //   sub pickables (cards, tiles, handles owned by a Shape3D body) are picked right after ports:
 //   the owning block gets down / drag / drop / click through body3d.onSubPointer
 //   Shift+drag on empty floor: marquee select · drag on a live face: the component handles it
+//   snapping (plan.js `snap`, on by default): a dragged set lands on the grid (Ctrl: the finer
+//          pitch, Shift: off for this drag) or on an edge / centre that lines up with a neighbour;
+//          the guides (ui/guides.js) show only while the drag lasts
+//   2D editing mode: orbit is off, so a left press on empty space always box-selects (whatever the
+//          preset), Space + drag pans (the Navigator's), Shift means "no snap" rather than "lift"
 //   keys: Del, Esc, F focus, Home frame all, Ctrl+D duplicate, Ctrl+Z / Ctrl+Shift+Z undo / redo,
 //         Ctrl+G group, Ctrl+Shift+G ungroup, Ctrl+A select all
 // Every edit goes through the History so it can be undone. Yields to the gizmo while it is hot.
@@ -25,6 +30,7 @@ import { formatValue, compatiblePorts, portTypeText, portTypeName, mismatchReaso
 import { hex, sizes } from './theme.js';
 import { describeLink, dropLinkCandidates } from './pm/relations.js';
 import { nav } from './controls/navigation.js';
+import { isPlanOn, snap } from './plan.js';
 
 /** True when the key event comes from a text field (panel) — ignore shortcuts then. */
 export const isTyping = (e) => {
@@ -33,13 +39,16 @@ export const isTyping = (e) => {
   return !!(t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable || t.closest?.('.modal-backdrop')));
 };
 const _v = new THREE.Vector3();
+const _box = new THREE.Box3();
+const SNAP_PX = 8;          // alignment reach on screen
+const GUIDE_TICK = 1.4;     // length of a grid tick beside the block (world units)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const portName = (p) => `${p.owner.title}.${p.label}`;
 const FADE = 0.28;
 
 export class Interaction {
-  constructor({ camera, renderer, controls, world, selection, history, gizmo = null, createInstance, overlays = null, onHoverConnection = () => {}, onFocus = () => {}, onFrameAll = () => {}, onGizmoMode = () => {}, onTogglePanel = () => {}, onOpenPanel = () => {} }) {
-    Object.assign(this, { camera, renderer, controls, world, selection, history, gizmo, createInstance, overlays, onHoverConnection, onFocus, onFrameAll, onGizmoMode, onTogglePanel, onOpenPanel });
+  constructor({ camera, renderer, controls, world, selection, history, gizmo = null, createInstance, overlays = null, guides = null, onHoverConnection = () => {}, onFocus = () => {}, onFrameAll = () => {}, onGizmoMode = () => {}, onTogglePanel = () => {}, onOpenPanel = () => {} }) {
+    Object.assign(this, { camera, renderer, controls, world, selection, history, gizmo, createInstance, overlays, guides, onHoverConnection, onFocus, onFrameAll, onGizmoMode, onTogglePanel, onOpenPanel });
     this.ray = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.hovered = null;
@@ -185,7 +194,9 @@ export class Interaction {
   }
   _tipBlock(b) {
     if (!this.overlays) return;
-    const top = b.position.clone(); top.y += (b.kind === 'device' ? b.height : b.height / 2) + 0.2;
+    const top = b.position.clone();
+    if (b.planFlat) { b.getAABB(_box); top.set((_box.min.x + _box.max.x) / 2, _box.max.y, _box.min.z - 0.2); }   // flat card: just past its top edge
+    else top.y += (b.kind === 'device' ? b.height : b.height / 2) + 0.2;
     this.overlays.tip(`<b>${esc(b.def.label)}</b><span class="t">${esc(b.title)}</span><span class="d">${esc(b.def.description)}</span>`, { anchor: top, offset: [0, -56], cls: 'block-tip', delay: 500 });
   }
 
@@ -271,13 +282,12 @@ export class Interaction {
     if (this.drag) {
       const hit = new THREE.Vector3();
       if (this.ray.ray.intersectPlane(this.drag.plane, hit)) {
-        this.drag.moved = true;
-        this.drag.nodes.forEach((n, i) => {
-          const p = hit.clone().add(this.drag.offsets[i]);
-          if (!this.shift) p.y = n.position.y; else { p.x = n.position.x; p.z = n.position.z; }
-          p.y = Math.max(n.kind === 'device' ? 0 : 0.2, p.y);
-          n.position.copy(p);
-        });
+        const d = this.drag; d.moved = true;
+        const raw = d.nodes.map((n, i) => hit.clone().add(d.offsets[i]));
+        const vertical = this.shift && !this.controls.planMode;   // 3D: Shift lifts; 2D: Shift means no snapping
+        if (vertical) raw.forEach((p, i) => { p.x = d.nodes[i].position.x; p.z = d.nodes[i].position.z; });
+        else { raw.forEach((p, i) => { p.y = d.nodes[i].position.y; }); this._applySnap(d, raw, e); }
+        d.nodes.forEach((n, i) => { const p = raw[i]; p.y = Math.max(n.kind === 'device' ? 0 : 0.2, p.y); n.position.copy(p); });
         this.world.bumpLayout();
       }
       this._updateBlockDrop();
@@ -295,7 +305,7 @@ export class Interaction {
 
   onDown(e) {
     if (this.gizmoBusy) return;
-    const action = nav.resolveMouse(e);
+    const action = this.controls.mouseAction ? this.controls.mouseAction(e) : nav.resolveMouse(e);
     if (e.button !== 0) {
       // right-click under a preset that uses it for selection: select the block and open its properties
       if (action === 'contextSelect') {
@@ -307,6 +317,7 @@ export class Interaction {
       return;
     }
     if (this.keyDrag) return;   // a Shift+D duplicate follows the pointer until the next release
+    if (this.controls.planMode && this.controls.spaceHeld) return;   // 2D: Space + drag pans, whatever is under the pointer
     this.shift = e.shiftKey;
     this.add = nav.isAddModifier(e);
     this._setPointer(e);
@@ -315,8 +326,8 @@ export class Interaction {
     const hit = this.pick();
 
     if (!hit) {
-      // empty space: the preset decides between a box select and a camera move
-      if (action === 'marquee' || action === 'marqueeAdd') { this._startMarquee(e, action === 'marqueeAdd'); }
+      // empty space: the preset decides between a box select and a camera move (in 2D orbit is off, so a plain press box-selects)
+      if (action === 'marquee' || action === 'marqueeAdd' || (this.controls.planMode && action === null)) { this._startMarquee(e, action === 'marqueeAdd'); }
       return;
     }
     if (hit.kind === 'port') {
@@ -419,7 +430,7 @@ export class Interaction {
   _beginMove(nodes, point, e) {
     if (!nodes.length) return;
     const anchor = nodes[nodes.length - 1];
-    const normal = e.shiftKey && nodes.length === 1
+    const normal = e.shiftKey && nodes.length === 1 && !this.controls.planMode
       ? this.camera.getWorldDirection(new THREE.Vector3()).setY(0).normalize().negate()
       : new THREE.Vector3(0, 1, 0);
     const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, anchor.position);
@@ -431,6 +442,58 @@ export class Interaction {
     this.controls.enabled = false;
     this.overlays?.hideTip();
     this._cursor('grabbing');
+  }
+
+  /* ---------- snapping ---------- */
+  /** World units that SNAP_PX cover at `point` (orthographic: anywhere). */
+  _snapThreshold(point) {
+    const cam = this.camera, H = this.renderer.domElement.clientHeight || 800;
+    const upp = cam.isOrthographicCamera ? (cam.top - cam.bottom) / (cam.zoom || 1) / H : 2 * cam.position.distanceTo(point) * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2) / H;
+    return THREE.MathUtils.clamp(SNAP_PX * upp, 0.12, 0.9);
+  }
+  /** The x / z extents of a set of blocks with their positions replaced by `at[i]`. */
+  _footprintBox(nodes, at) {
+    const B = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+    nodes.forEach((n, i) => {
+      n.getAABB(_box); const dx = at ? at[i].x - n.position.x : 0, dz = at ? at[i].z - n.position.z : 0;
+      B.minX = Math.min(B.minX, _box.min.x + dx); B.maxX = Math.max(B.maxX, _box.max.x + dx); B.minZ = Math.min(B.minZ, _box.min.z + dz); B.maxZ = Math.max(B.maxZ, _box.max.z + dz);
+    });
+    B.cx = (B.minX + B.maxX) / 2; B.cz = (B.minZ + B.maxZ) / 2;
+    return B;
+  }
+  /**
+   * Snap the dragged set (`raw` = the unsnapped positions, edited in place) when snapping is on and
+   * Shift is not held: an edge or centre that lines up with a neighbour within `_snapThreshold` wins
+   * (an alignment guide spans both blocks), otherwise the anchor block's centre lands on the grid
+   * (Ctrl: the finer pitch) and short ticks beside the block mark the grid line. Guides are shown
+   * through `this.guides` and cleared when the drag ends.
+   */
+  _applySnap(d, raw, e) {
+    const G = [];
+    if (snap.on && !this.shift) {
+      const anchor = raw[raw.length - 1];
+      const thr = this._snapThreshold(anchor);
+      const box = this._footprintBox(d.nodes, raw);
+      const set = new Set(d.nodes);
+      let ax = null, az = null;
+      for (const o of this._visibleNodes()) {
+        if (set.has(o)) continue;
+        const ob = this._footprintBox([o]);
+        for (const [mine, theirs] of [[box.minX, ob.minX], [box.minX, ob.maxX], [box.maxX, ob.minX], [box.maxX, ob.maxX], [box.cx, ob.cx]]) { const k = theirs - mine; if (Math.abs(k) < thr && (!ax || Math.abs(k) < Math.abs(ax.delta))) ax = { delta: k, value: theirs, other: ob }; }
+        for (const [mine, theirs] of [[box.minZ, ob.minZ], [box.minZ, ob.maxZ], [box.maxZ, ob.minZ], [box.maxZ, ob.maxZ], [box.cz, ob.cz]]) { const k = theirs - mine; if (Math.abs(k) < thr && (!az || Math.abs(k) < Math.abs(az.delta))) az = { delta: k, value: theirs, other: ob }; }
+      }
+      const fine = !!(e.ctrlKey || e.metaKey);
+      const dx = ax ? ax.delta : snap.value(anchor.x, fine) - anchor.x;
+      const dz = az ? az.delta : snap.value(anchor.z, fine) - anchor.z;
+      raw.forEach((p) => { p.x += dx; p.z += dz; });
+      const y = anchor.y, hw = (box.maxX - box.minX) / 2, hd = (box.maxZ - box.minZ) / 2, cx = box.cx + dx, cz = box.cz + dz;
+      if (ax) G.push({ kind: 'align', a: new THREE.Vector3(ax.value, y, Math.min(box.minZ + dz, ax.other.minZ) - 0.6), b: new THREE.Vector3(ax.value, y, Math.max(box.maxZ + dz, ax.other.maxZ) + 0.6) });
+      else G.push({ kind: 'grid', a: new THREE.Vector3(cx, y, cz - hd - GUIDE_TICK), b: new THREE.Vector3(cx, y, cz - hd - 0.25) }, { kind: 'grid', a: new THREE.Vector3(cx, y, cz + hd + 0.25), b: new THREE.Vector3(cx, y, cz + hd + GUIDE_TICK) });
+      if (az) G.push({ kind: 'align', a: new THREE.Vector3(Math.min(box.minX + dx, az.other.minX) - 0.6, y, az.value), b: new THREE.Vector3(Math.max(box.maxX + dx, az.other.maxX) + 0.6, y, az.value) });
+      else G.push({ kind: 'grid', a: new THREE.Vector3(cx - hw - GUIDE_TICK, y, cz), b: new THREE.Vector3(cx - hw - 0.25, y, cz) }, { kind: 'grid', a: new THREE.Vector3(cx + hw + 0.25, y, cz), b: new THREE.Vector3(cx + hw + GUIDE_TICK, y, cz) });
+      d.snapped = { grid: !ax || !az, align: !!(ax || az), fine };
+    } else d.snapped = null;
+    this.guides?.set(G);
   }
 
   /* ---------- cables ---------- */
@@ -552,6 +615,7 @@ export class Interaction {
     if (this.keyDrag && this.drag) {
       // Shift+D: the copies followed the pointer; this click drops them
       const d = this.drag; this.drag = null; this.keyDrag = false;
+      this.guides?.clear();
       d.nodes.forEach((n) => { n.dragging = false; });
       this.history.execute(cmd.transform(this.world, d.nodes, d.before, d.nodes.map(cmd.snapshot)));
       this._cursor('');
@@ -576,6 +640,7 @@ export class Interaction {
     if (this.connect) { this._endConnect(e); return; }
     if (this.drag) {
       const d = this.drag; this.drag = null;
+      this.guides?.clear();
       d.nodes.forEach((n) => { n.dragging = false; });
       if (d.dropTarget) {
         // dropped on a card (assign) or on a block (link): the dragged block springs back and the target acts
@@ -634,7 +699,7 @@ export class Interaction {
     if (x1 - x0 < 4 && y1 - y0 < 4) return;
     const r = this.renderer.domElement.getBoundingClientRect();
     const inside = this._visibleNodes().filter((n) => {
-      _v.copy(n.position); if (n.kind === 'device') _v.y += n.height / 2;
+      n.getAABB(_box).getCenter(_v);   // the block's centre (flat or standing)
       _v.project(this.camera);
       const sx = r.left + (_v.x + 1) / 2 * r.width, sy = r.top + (1 - _v.y) / 2 * r.height;
       return _v.z < 1 && sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
@@ -720,6 +785,7 @@ export class Interaction {
       this._recomputeEmphasis();
     }
     if (this.drag) { this.drag.dropTarget?.block.setSubHover?.(null); this.drag.dropTarget?.block.setDropTarget(false); this.overlays?.dragLabel(null); this.drag.nodes.forEach((n, i) => { n.dragging = false; n.position.fromArray(this.drag.before[i].p); }); this.drag = null; this.keyDrag = false; }
+    this.guides?.clear();
     if (this.marquee) { this.marquee = null; if (this.marqueeEl) this.marqueeEl.hidden = true; }
     if (this.subDrag) { this.subDrag.block.onSubPointer(this._subEvent('cancel')); this.subDrag = null; }
     this.faceDrag = null; this.pressFace = null;

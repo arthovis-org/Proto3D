@@ -361,7 +361,9 @@ Everything else is the same in every preset:
 | --- | --- |
 | Focus | `F` frames the selection · double-click a block · `Home` or **Frame all** frames everything (camera flights are smooth) |
 | Add | left toolbar → category → click a component (adds at the camera target on a free slot) or **drag it into the scene** (ghost footprint, drops where the ray hits the floor) · `Shift+A` opens search |
-| Move | drag a block (all selected blocks move together; `Shift` for height) · gizmo `G`, `W` / `E` / `R` · Transform fields in the panel |
+| Move | drag a block (all selected blocks move together; `Shift` for height in 3D) · **snaps** to the grid and to neighbours' edges and centres with guides (`Shift` while dragging skips it, `Ctrl` snaps to half units; *View → Snap to grid* turns it off) · gizmo `G`, `W` / `E` / `R` · Transform fields in the panel |
+| 2D | `2` (or the menu bar toggle, *View → 2D editing mode*) flips to a **top-down plan**: every block is a flat card with its face and pins, cables are flat splines under the cards, left-drag on empty space box-selects, middle-drag or `Space`+drag pans, the wheel zooms about the cursor; `2` again flies back to the 3D pose you left |
+| Arrange | `L` or *Edit → Auto-layout* arranges the selection (two or more) or everything as a left-to-right graph along the cables — groups stay together, unconnected blocks go in a grid below; one undoable, animated step, in 2D or 3D |
 | Link | **drop a component onto another** (a sentence shows what it will mean; a chooser appears when several links fit) · with wiring on: drag from an **OUT** pin to a lit **IN** pin (or backwards from an empty input); the cable snaps within ~1.2 units |
 | Wiring | `P` or the **Wiring** button shows / hides every pin and cable · the eye icon in a block's panel header overrides it for that block |
 | Re-route | grab a cable near either end (hand cursor) and drop it on another compatible pin · drop on empty space to **disconnect** · `Esc` puts it back |
@@ -370,11 +372,26 @@ Everything else is the same in every preset:
 | Group | `Ctrl+G` group the selection · `C` collapse / expand · `Ctrl+Shift+G` ungroup · drag the frame to move the whole group · rename in the panel |
 | Interact | click a device screen (`tap`), an Input face (button, toggle, slider) or press the configured key · click / drag a **card** on a Kanban board (drop it on a **Person** or into a lane to assign it), click the **+** tile, click a checklist row, press the **Run** disc on a Flow Terminal, drag a Timeline bar's end handle |
 | File | menu bar **File** → New project · Open… (`Ctrl+O`) · Open recent · Save (`Ctrl+S`) · Save as… (`Ctrl+Shift+S`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave to `localStorage` on every change |
-| Edit | menu bar **Edit** → Undo / Redo · Cut / Copy / Paste (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`, also between tabs) · Duplicate · Delete · Select all · Deselect · Group / Ungroup · Collapse |
-| View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
+| Edit | menu bar **Edit** → Undo / Redo · Cut / Copy / Paste (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`, also between tabs) · Duplicate · Delete · Select all · Deselect · Auto-layout (`L`) · Group / Ungroup · Collapse |
+| View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · 2D editing mode (`2`) · snap to grid · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
 | Help | menu bar **Help** → tour · keyboard shortcuts (`Shift+?`) · help & legend (`H`) · documentation · About |
 
 Shortcuts are ignored while typing in a panel field.
+
+## 2D editing mode
+
+3D shows the system; 2D is faster for wiring. Press **`2`** (or the menu bar toggle) and the camera
+flies (0.35 s) to a top-down orthographic plan framing the scene or the selection. Every block lies
+flat as a card showing its live face, title and pins — inputs on the left, outputs on the right —
+so wiring works exactly as in 3D: drag from a pin, drop a block onto another, pick up a cable end
+to re-route or disconnect. Cables become flat splines running under the cards; the value chips,
+dimming and end labels stay. Orbit is off: left-drag on empty space box-selects in every preset,
+middle-drag or `Space`+drag pans, the wheel zooms about the cursor. Moving a block snaps to the
+grid (1 unit; `Ctrl` for 0.5) and to the edges and centres of its neighbours with design-tool
+guides; `Shift` skips snapping for that drag. **Edit → Auto-layout** (`L`, or the mini toolbar
+with several blocks selected) arranges blocks as a left-to-right layered graph along their cables,
+keeping groups together. Positions are shared between the modes (the plan's x / z are the room's
+x / z), the mode itself is never saved, and `2` again flies back to the 3D view you left.
 
 ## Wiring is optional
 

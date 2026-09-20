@@ -1,6 +1,7 @@
-// ui/tour.js — first-run walkthrough: six steps with a spotlight over the thing being
+// ui/tour.js — first-run walkthrough: seven steps with a spotlight over the thing being
 // explained (the Add toolbar, a real output port with a ghost cable running to a compatible
-// input, the board's people slot, a card on the board, a cable end, the File menu that holds Connections) and a small card with
+// input, the board's people slot, a card on the board, a cable end, the 2D editing mode toggle,
+// the File menu that holds Connections) and a small card with
 // Next / Skip. Shown once
 // (localStorage flag) and re-openable from the "?" menu. The backdrop does not swallow pointer
 // events, so the person can try things while reading.
@@ -21,6 +22,7 @@ const STEPS = [
   { id: 'people', title: 'Plug people into the board', text: 'Plug a person into the board\'s people slot to see their tasks: the rectangle grows one slot per person, the board draws a lane per person and each Person card lists their tasks. Without wiring: drop the Person onto the board.', wiring: true },
   { id: 'card', title: 'Edit on the right', text: 'Click a card on the board to edit it in the properties panel on the right. Drag a card to move it between columns, or drop it on a Person to assign it.' },
   { id: 'reroute', title: 'Move or remove a cable', text: 'Grab a cable end to move it to another port; drop it on empty space to disconnect. Undo anything with Ctrl+Z.', wiring: true },
+  { id: 'plan', title: 'Switch to 2D to wire faster', text: 'Press 2 (or this toggle) for the 2D editing mode: a top-down plan where every block is a flat card with its pins. Drag on empty space to box-select, blocks snap to the grid and to their neighbours, and Edit → Auto-layout (L) arranges the graph left to right. Press 2 again to come back to 3D.' },
   { id: 'connections', title: 'Generate content', text: 'The Generate zone writes a launch tweet and paints a key visual with the offline Demo provider. Add your own keys under File → Connections… to go live with OpenRouter (text), fal.ai or kie.ai (images, video, audio) — keys stay encrypted in this browser.' },
 ];
 
@@ -114,6 +116,12 @@ export class Tour {
       case 'reroute': {
         const c = this.world.connections.find((x) => x.visible && x.complete);
         if (c) { this.ws.frameBlocks([c.from.owner, c.to.owner], { fill: 0.6 }); this.anchor = () => c.to.getWorldPosition(new THREE.Vector3()); }
+        break;
+      }
+      case 'plan': {
+        const btn = document.getElementById('btn-plan');
+        this.spot.classList.remove('round');
+        this.anchor = () => btn?.getBoundingClientRect() || null;
         break;
       }
       case 'connections': {

@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { portTypes, states, sizes, onThemeChange, portColorFor } from './theme.js';
 import { compatiblePorts } from './core/types.js';
 import { cableVisibleFor } from './wiring.js';
+import { isPlanOn } from './plan.js';
 import { routeCurve, laneInfo } from './routing.js';
 
 let flowEnabled = true;
@@ -196,16 +197,17 @@ export class Connection3D extends THREE.Group {
     const [p0, p3] = this._endpoints();
     const lv = this.world ? this.world.layoutVersion : 0;
     const r = this._targetRadius();
-    if (!force && lv === this._layoutVersion && Math.abs(r - this._radius) < 1e-6
+    const planar = isPlanOn();
+    if (!force && lv === this._layoutVersion && Math.abs(r - this._radius) < 1e-6 && planar === this._planar
       && p0.distanceToSquared(this._p0) < 1e-8 && p3.distanceToSquared(this._p3) < 1e-8) return;
-    this._p0.copy(p0); this._p3.copy(p3); this._layoutVersion = lv; this._radius = r;
+    this._p0.copy(p0); this._p3.copy(p3); this._layoutVersion = lv; this._radius = r; this._planar = planar;
 
     const world = this.world;
     const skip = new Set([this.from?.owner, this.to?.owner].filter(Boolean));
     const curve = routeCurve(p0, p3, {
       lanes: world && this.complete ? laneInfo(this, world.connections) : null,
       obstacles: world ? world.nodes : [],
-      skip,
+      skip, planar,
     });
     this.curve = curve;
     const dist = p0.distanceTo(p3);

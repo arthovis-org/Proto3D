@@ -261,6 +261,11 @@ ul.ports .pcount, ul.ports .pdir { font-size: 11px; }
 
 /* Marquee selection rectangle */
 #marquee { position: fixed; z-index: 3; pointer-events: none; border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 4px; }
+/* Snap and alignment guides (ui/guides.js): an SVG over the whole window, re-projected per frame */
+#guides { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 3; pointer-events: none; overflow: visible; }
+#guides .guide { stroke-linecap: round; }
+#guides .guide-align { stroke: var(--accent); stroke-width: 1.25; }
+#guides .guide-grid { stroke: var(--dim); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
 #viewport canvas:focus { outline: none; }
 
 /* Mini toolbar: floats above the selection (ui/mini-toolbar.js), 32 px tall, fades in over 120 ms once the camera and the pointer are still */

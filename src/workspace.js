@@ -2,9 +2,13 @@
 // environment (so the bevels on every body catch light), grid floor, fog. Listens to theme
 // changes and recolors background, fog, lights, environment and the floor shader.
 // `ws.camera` is a getter: the Navigator may swap in an orthographic camera (Numpad 5).
+// 2D editing mode (plan.js): `enterPlan` remembers the 3D pose, flies (0.35 s) to a top-down view
+// framing the blocks, swaps to the orthographic camera and locks the angles; `exitPlan` unlocks,
+// restores the projection and flies back. `frameBlocks` frames top-down while the plan is on.
 import * as THREE from 'three';
 import { palette, onThemeChange, setMaxAnisotropy } from './theme.js';
 import { Navigator } from './controls/navigation.js';
+import { isPlanOn, PLAN_PHI } from './plan.js';
 
 // Home view: ~36 deg elevation, framed so the demo graph fills most of the viewport
 const HOME = { position: new THREE.Vector3(5, 30, 42), target: new THREE.Vector3(5, 0.5, 2) };
@@ -145,6 +149,7 @@ export function createWorkspace(container) {
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resize).observe(container);
 
   function resetCamera() {
+    if (isPlanOn()) { const pose = planPose([]); controls.camera.position.copy(pose.position); controls.target.copy(pose.target); controls.update(); return; }
     controls.camera.position.copy(HOME.position);
     controls.target.copy(HOME.target);
     controls.update();
@@ -152,12 +157,16 @@ export function createWorkspace(container) {
 
   /* Camera flights: F focuses the selection, Home frames everything, double-click focuses a block. */
   let flight = null;
-  function flyTo(position, target, duration = 0.55) {
+  /** Fly to a pose; `onDone` runs when it lands (or at once when the flight is cut short by a hand on the camera). */
+  function flyTo(position, target, duration = 0.55, onDone = null) {
     const camera = controls.camera;
-    if (duration <= 0) { camera.position.copy(position); controls.target.copy(target); controls.update(); flight = null; return; }
-    flight = { p0: camera.position.clone(), t0: controls.target.clone(), p1: position.clone(), t1: target.clone(), k: 0, duration, start: performance.now() };
+    if (duration <= 0) { camera.position.copy(position); controls.target.copy(target); controls.update(); flight = null; onDone?.(); return; }
+    flight = { p0: camera.position.clone(), t0: controls.target.clone(), p1: position.clone(), t1: target.clone(), k: 0, duration, start: performance.now(), onDone };
   }
-  function cancelFlight() { flight = null; }
+  function cancelFlight() {
+    const f = flight; flight = null;
+    if (f?.onDone) { controls.camera.position.copy(f.p1); controls.target.copy(f.t1); f.onDone(); }   // a mode change lands where it was going
+  }
   controls.addEventListener('start', cancelFlight); // a hand on the camera always wins
   function updateFlight() {
     if (!flight) return;
@@ -165,7 +174,7 @@ export function createWorkspace(container) {
     const e = 1 - Math.pow(1 - flight.k, 3);
     controls.camera.position.lerpVectors(flight.p0, flight.p1, e);
     controls.target.lerpVectors(flight.t0, flight.t1, e);
-    if (flight.k >= 1) flight = null;
+    if (flight.k >= 1) { const f = flight; flight = null; f.onDone?.(); }
   }
   /**
    * Frame a set of blocks. The visible area is the canvas (already excludes the left rail and the
@@ -177,6 +186,7 @@ export function createWorkspace(container) {
   function frameBlocks(blocks, { fill = 0.75, minRadius = 3, instant = false, insetLeft = 0 } = {}) {
     const list = (blocks || []).filter(Boolean);
     const dur = instant ? 0 : 0.55;
+    if (isPlanOn()) { const pose = planPose(list, { fill: 0.8, insetLeft }); flyTo(pose.position, pose.target, instant ? 0 : 0.35); return pose.distance; }
     if (!list.length) { flyTo(HOME.position, HOME.target, dur); return null; }
     const box = new THREE.Box3();
     const tmp = new THREE.Box3();
@@ -219,15 +229,57 @@ export function createWorkspace(container) {
     flyTo(target.clone().addScaledVector(dir, dist), target, dur);
     return dist;
   }
-  /** Fog thins as the camera pulls back so a far overview stays readable instead of fading out. */
+  /** Fog thins as the camera pulls back so a far overview stays readable instead of fading out; the plan has none. */
   function updateFog() {
     const d = controls.camera.position.distanceTo(controls.target);
-    scene.fog.density = 0.011 * THREE.MathUtils.clamp(45 / Math.max(d, 1), 0.28, 1);
-    floorMat.uniforms.fadeRadius.value = Math.max(40, d * 0.5); // the lit pool grows with the overview
+    scene.fog.density = isPlanOn() ? 0 : 0.011 * THREE.MathUtils.clamp(45 / Math.max(d, 1), 0.28, 1);
+    floorMat.uniforms.fadeRadius.value = Math.max(40, d * (isPlanOn() ? 1.2 : 0.5)); // the lit pool grows with the overview
+  }
+
+  /* ---- 2D editing mode: a top-down orthographic pose over the blocks, and the flights in and out ---- */
+  const PLAN_DUR = 0.35;
+  let planSaved = null;   // the 3D pose to come back to: { position, target, ortho }
+  /**
+   * The top-down pose that frames `blocks` (their plan AABBs; the whole scene when empty is the
+   * home spot): the target at the box centre, the camera straight above at the distance whose
+   * orthographic frustum shows the box at `fill` of the visible area (the canvas minus `insetLeft`).
+   */
+  function planPose(blocks, { fill = 0.8, insetLeft = 0 } = {}) {
+    const list = (blocks || []).filter(Boolean);
+    const box = new THREE.Box3(), tmp = new THREE.Box3();
+    for (const b of list) { if (b.getAABB) box.union(b.getAABB(tmp)); else if (b.center) box.expandByPoint(b.center); }
+    if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(HOME.target.x, 1.5, HOME.target.z), new THREE.Vector3(30, 3, 20));
+    const size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
+    const W = container.clientWidth || 1, H = container.clientHeight || 1, aspect = W / H, visW = Math.max(100, W - insetLeft);
+    const halfH = Math.max(4, size.z / (2 * fill), size.x / (2 * fill) / aspect * (W / visW));
+    const distance = THREE.MathUtils.clamp(halfH / Math.tan(THREE.MathUtils.degToRad(controls.perspective.fov) / 2), controls.minDistance, controls.maxDistance);
+    const unitsPerPx = 2 * halfH * aspect / W;
+    const target = new THREE.Vector3(centre.x - (insetLeft / 2) * unitsPerPx, Math.max(0, centre.y), centre.z);
+    const position = target.clone().add(new THREE.Vector3(0, distance * Math.cos(PLAN_PHI), distance * Math.sin(PLAN_PHI)));
+    return { position, target, distance };
+  }
+  /** Enter the plan: remember the 3D pose, fly top-down over `blocks`, then go orthographic and lock. */
+  function enterPlan(blocks, { insetLeft = 0, instant = false } = {}) {
+    if (!planSaved) planSaved = { position: controls.camera.position.clone(), target: controls.target.clone(), ortho: controls.isOrtho };
+    controls.setPlanMode(true, { lock: false });
+    const pose = planPose(blocks, { insetLeft });
+    flyTo(pose.position, pose.target, instant ? 0 : PLAN_DUR, () => { controls.setOrtho(true); controls.setPlanMode(true, { lock: true }); controls.update(); });
+  }
+  /** Leave the plan: unlock, restore the projection and fly back to the remembered 3D pose. */
+  function exitPlan({ instant = false } = {}) {
+    const saved = planSaved || { position: HOME.position.clone(), target: HOME.target.clone(), ortho: false };
+    controls.setPlanMode(false);
+    controls.setOrtho(saved.ortho);
+    flyTo(saved.position, saved.target, instant ? 0 : PLAN_DUR, () => { planSaved = null; });
+    if (instant) planSaved = null;
   }
 
   return {
     renderer, scene, controls, resize, resetCamera, applyTheme, setGridVisible, isGridVisible, HOME, flyTo, cancelFlight, updateFlight, frameBlocks, updateFog, onCameraSwap, buildEnvironment,
+    planPose, enterPlan, exitPlan,
+    /** The remembered 3D pose while the plan is on (what a save writes as the camera), else null. */
+    get planSaved() { return planSaved; },
+    set planSaved(v) { planSaved = v; },
     /** True while a camera flight (F, Home, Go to) is still animating. */
     inFlight: () => !!flight,
     /** The active camera (perspective, or orthographic after Numpad 5). */

@@ -105,6 +105,9 @@ export class Device3D extends Block3D {
     }
   }
 
+  /** In the plan the screen slab lies flat, centred on the origin and lifted clear of the floor and the cables (the stand hangs below it on screen). */
+  planPivot() { const p = this.slab ? this.slab.position : new THREE.Vector3(0, this.height / 2, 0); return { x: p.x, y: p.y, z: p.z + this.depth / 2, lift: 1.2 }; }
+
   applyVisual() {
     const disabled = this.derivedState === 'disabled';
     if (this.face?.mesh) this.face.mesh.material.emissiveIntensity = disabled ? 0.1 : this.derivedState === 'active' ? 0.95 : 0.75;

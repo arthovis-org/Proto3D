@@ -181,6 +181,10 @@ export class Panel {
       s.appendChild(this._h('div', 'panel-note', 'Wiring off hides every port and cable. Drop a component onto another to link them; a block can still show its own ports (eye icon in its header).'));
     }
     this._check(s, 'grid', () => ws.isGridVisible(), (v) => ws.setGridVisible(v));
+    if (this.plan) {
+      this._check(s, '2D editing mode (2)', () => this.plan.isOn(), (v) => this.plan.set(v));
+      this._check(s, 'snap to grid', () => this.plan.snap.on, (v) => this.plan.snap.set(v));
+    }
     this._check(s, 'flow animation', () => flow.isEnabled(), (v) => flow.setEnabled(v));
     this._num(s, 'flow speed', () => flow.getSpeed(), (v) => flow.setSpeed(v), { step: 0.1, min: 0, max: 5 });
     this._num(s, 'LOD distance', () => sizes.lod.far, (v) => { sizes.lod.far = Math.max(10, v); }, { step: 2, min: 10, max: 200 });

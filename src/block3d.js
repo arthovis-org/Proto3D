@@ -22,17 +22,26 @@
 //     (dimmed when incompatible) and while its block is selected (`nameMode`, `_fadeNames`);
 //   • `alignPorts` places a side's pins level with the content they affect (`anchorY`) and
 //     nudges colliding pins apart by the minimum gap; `stackPorts` is the centred fallback.
+//
+// 2D editing mode (plan.js): `applyPlan` lays the block flat. The local plan matrix rotates the
+// block −90° about X around its `planPivot` (the front-face centre: title, face, ports, cards) and
+// puts that pivot at the block's origin, `lift` above it — so the same card, canvas and pins face
+// straight up at (x, position.y + lift, z), inputs still on the left and outputs on the right, and
+// nothing is re-rendered. `updateMatrix` appends it, so every child, raycast and `worldToLocal`
+// agrees; `position` stays the single source of truth and is what a document saves.
 import * as THREE from 'three';
 import {
   palette, states, sizes, materials, makeLabel, refreshLabel, setLabelText, makeShadowBlob, onThemeChange, portColorFor,
 } from './theme.js';
 import { panelGeometry } from './geometry.js';
 import { portsVisibleFor, onWiringChange } from './wiring.js';
+import { isPlanOn, onPlanChange } from './plan.js';
 import { defaultParams, clone } from './core/component.js';
 import { formatValue } from './core/types.js';
 import { clear as clearFace } from './faces.js';
 import { createSurface, baseFaceScale, fitTier } from './face-canvas.js';
 
+const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _rx = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
 let nextUid = 1;
 export const genUid = () => `b${(nextUid++).toString(36)}${Date.now().toString(36).slice(-3)}`;
 /** Keep uids unique after a load. */
@@ -357,8 +366,30 @@ export class Block3D extends THREE.Group {
     this._portsExtra = 0;            // how much the tallest side of ports grew (multi-input slots)
     this.showPorts = o.showPorts === true || o.showPorts === false ? o.showPorts : null;   // per-component override of the global wiring flag
     this.wiringLabels = new Set();   // port names: hidden with the ports
+    this.planFlat = isPlanOn();      // lying flat for the 2D editing mode (plan.js)
     this._offTheme = onThemeChange(() => this.refreshTheme());
     this._offWiring = onWiringChange(() => this.applyWiring());
+    this._offPlan = onPlanChange(() => this.applyPlan());
+  }
+
+  /* ---------- 2D editing mode: the block lies flat ---------- */
+  /** The local point the plan rotation turns about — the centre of the front face — and how far above the origin it lands. */
+  planPivot() { return { x: 0, y: this.bodyOffsetY || 0, z: this.depth / 2, lift: 0 }; }
+  /** Lay the block flat (plan on) or stand it up again; the matrix does the work (`updateMatrix`), nothing is rebuilt. */
+  applyPlan() {
+    this.planFlat = isPlanOn();
+    this.matrixWorldNeedsUpdate = true;
+    this.updateMatrixWorld(true);
+    this.world?.bumpLayout();
+  }
+  /** The local matrix with the plan rotation appended while flat (the pivot may move when a card grows, so it is composed here). */
+  updateMatrix() {
+    super.updateMatrix();
+    if (this.planFlat && Number.isFinite(this.depth)) {
+      const P = this.planPivot();
+      _m1.makeTranslation(0, P.lift, 0).multiply(_rx).multiply(_m2.makeTranslation(-P.x, -P.y, -P.z));
+      this.matrix.multiply(_m1);
+    }
   }
 
   /** Whether this block shows its pins, labels and captions (its override, else the global wiring flag). */
@@ -576,6 +607,8 @@ export class Block3D extends THREE.Group {
     for (const l of this.detailLabels) { if (this.wiringLabels.has(l)) continue; l.material.opacity = a * (l.userData.alpha ?? 1); l.visible = a > 0.02; }   // port names: _fadeNames
   }
   _updateShadow() {
+    this.shadow.visible = !this.planFlat;   // a flat card casts none in the plan
+    if (this.planFlat) return;
     const sy = this.scale.y || 1;
     this.shadow.position.y = -this.position.y / sy + 0.005;
     this.shadow.quaternion.copy(this.quaternion).invert();
@@ -590,17 +623,24 @@ export class Block3D extends THREE.Group {
     this.faceDirty = true;
     this.applyVisual();
   }
-  /** World-space AABB used by connection routing (rotation ignored on purpose: cheap and stable). */
+  /** World-space AABB used by connection routing (rotation ignored on purpose: cheap and stable). Flat in the plan: the card's height runs along z. */
   getAABB(box = new THREE.Box3()) {
     const s = this.scale.x || 1;
     const hw = this.width / 2 * s, hh = this.height / 2 * s, hd = Math.max(this.depth / 2, 0.4) * s;
+    if (this.planFlat) {
+      const P = this.planPivot();
+      const cy = this.position.y + (P.lift - P.z) * s;   // the body's centre plane after the rotation
+      box.min.set(this.position.x - hw, cy - hd, this.position.z - hh);
+      box.max.set(this.position.x + hw, cy + hd, this.position.z + hh);
+      return box;
+    }
     const cy = this.position.y + (this.kind === 'device' ? hh : 0) + (this.bodyOffsetY || 0) * s;
     box.min.set(this.position.x - hw, cy - hh, this.position.z - hd);
     box.max.set(this.position.x + hw, cy + hh, this.position.z + hd);
     return box;
   }
-  /** Ground-plane footprint (w × d) for group frames, ghosts and free-slot search. */
-  footprint() { const s = this.scale.x || 1; return { w: this.width * s, d: Math.max(this.depth, this.kind === 'device' ? 2.6 : 0.5) * s }; }
+  /** Ground-plane footprint (w × d) for group frames, ghosts and free-slot search; the flat card in the plan. */
+  footprint() { const s = this.scale.x || 1; return { w: this.width * s, d: this.planFlat ? this.height * s : Math.max(this.depth, this.kind === 'device' ? 2.6 : 0.5) * s }; }
 
   serialize() {
     let state = {};
@@ -616,6 +656,7 @@ export class Block3D extends THREE.Group {
   dispose() {
     this._offTheme?.();
     this._offWiring?.();
+    this._offPlan?.();
     this.def.onDestroy?.(this);
     this.traverse((obj) => {
       if (obj === this) return;

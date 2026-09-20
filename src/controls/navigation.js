@@ -12,8 +12,16 @@
 //
 // The preset and its per-preset settings (invert orbit / zoom, sensitivities, zoom to cursor,
 // fly speed) persist in localStorage["proto3d.nav.v1"].
+//
+// 2D editing mode (plan.js): `planMode` remaps the preset — orbit and turn are off (a middle or
+// right button that would orbit pans instead, a left button that would orbit does nothing so the
+// interaction layer can box-select), Space + left-drag pans, the wheel always zooms about the
+// cursor (the preset's invert settings still apply) and the numpad views / steps are ignored.
+// With `planLock` the camera is held top-down (theta 0, phi PLAN_PHI) every frame; the workspace
+// flies the camera there first and locks afterwards.
 import * as THREE from 'three';
 import { PRESETS, DEFAULT_PRESET, presetSheet, bindingFor } from './presets.js';
+import { PLAN_PHI } from '../plan.js';
 
 const KEY = 'proto3d.nav.v1';
 const CAMERA_ACTIONS = new Set(['orbit', 'pan', 'dolly', 'turn']);
@@ -84,6 +92,9 @@ export class Navigator extends THREE.EventDispatcher {
     this.flyKeys = new Set();
     this.flying = false;
     this.viewAnim = null;      // { t, d, theta0, theta1, phi0, phi1 }
+    this.planMode = false;     // 2D editing mode: remapped mouse, no orbit (plan.js)
+    this.planLock = false;     // hold the camera top-down (after the entry flight)
+    this.spaceHeld = false;    // Space + left-drag pans in 2D
     this._lastPointer = { x: 0, y: 0 };
     this._clock = performance.now();
 
@@ -101,7 +112,7 @@ export class Navigator extends THREE.EventDispatcher {
     domElement.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', this._onKeyDown);
     window.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('blur', () => { this.flyKeys.clear(); });
+    window.addEventListener('blur', () => { this.flyKeys.clear(); this.spaceHeld = false; });
     this.update();
   }
   dispose() {
@@ -118,9 +129,17 @@ export class Navigator extends THREE.EventDispatcher {
   get polar() { _v.copy(this.camera.position).sub(this.target); return Math.acos(THREE.MathUtils.clamp(_v.y / (_v.length() || 1), -1, 1)); }
 
   /* ---------- pointer ---------- */
+  /** The preset's action under the 2D remap: no orbit / turn (middle / right → pan, left → nothing), Space + left → pan. */
+  _planAction(action, e) {
+    if (this.spaceHeld && e.button === 0) return 'pan';
+    if (action === 'orbit' || action === 'turn') return e.button === 0 ? null : 'pan';
+    return action;
+  }
+  /** What a press means for the camera right now (the interaction layer asks the same). */
+  mouseAction(e) { const a = nav.resolveMouse(e); return this.planMode ? this._planAction(a, e) : a; }
   onPointerDown(e) {
     if (!this.enabled || this.drag) return;
-    const action = nav.resolveMouse(e);
+    const action = this.mouseAction(e);
     if (!nav.isCameraAction(action)) return;
     this.drag = { action, x: e.clientX, y: e.clientY, pointerId: e.pointerId, button: e.button };
     this.flying = action === 'turn' && !!nav.preset.fly;
@@ -162,13 +181,17 @@ export class Navigator extends THREE.EventDispatcher {
     if (this.flying) { nav.setSetting('flySpeed', THREE.MathUtils.clamp(s.flySpeed * (dir > 0 ? 0.8 : 1.25), 0.1, 10)); return; }
     if (action === 'dolly') {
       const k = Math.pow(0.95, -dir * 1.35);
-      if (s.zoomToCursor) this._zoomTowards(e.clientX, e.clientY, k); else this.scale *= k;
+      if (s.zoomToCursor || this.planMode) this._zoomTowards(e.clientX, e.clientY, k); else this.scale *= k;
       this.dispatchEvent({ type: 'start' });
     } else if (action === 'panY') this._panBy(0, -Math.sign(e.deltaY) * 40);
     else if (action === 'panX') this._panBy(-Math.sign(e.deltaY) * 40, 0);
     this.dispatchEvent({ type: 'end' });
   }
   onKey(e, down) {
+    if (e.code === 'Space') {
+      const t = e.target, typing = t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.tagName === 'BUTTON' || t.isContentEditable || t.closest?.('.modal-backdrop'));
+      if (!typing) { this.spaceHeld = down; if (this.planMode && down) e.preventDefault(); }
+    }
     if (!nav.preset.fly) return;
     const code = e.code;
     if (!/^Key[WASDQE]$/.test(code)) return;
@@ -204,6 +227,7 @@ export class Navigator extends THREE.EventDispatcher {
   }
   /** Animate the camera to a spherical direction around the target (numpad views), radius kept. */
   viewTo(theta, phi, duration = 0.45) {
+    if (this.planMode) return;   // the plan is always top-down
     const t0 = this.azimuth, p0 = THREE.MathUtils.clamp(this.polar, this.minPolarAngle, this.maxPolarAngle);
     let dt = theta - t0; while (dt > Math.PI) dt -= 2 * Math.PI; while (dt < -Math.PI) dt += 2 * Math.PI;
     this.sphericalDelta.set(0, 0, 0);
@@ -211,7 +235,17 @@ export class Navigator extends THREE.EventDispatcher {
     this.dispatchEvent({ type: 'start' });
   }
   /** Orbit by a step (numpad 2 / 4 / 6 / 8). */
-  rotateBy(dTheta, dPhi) { this.sphericalDelta.theta += dTheta; this.sphericalDelta.phi += dPhi; }
+  rotateBy(dTheta, dPhi) { if (this.planMode) return; this.sphericalDelta.theta += dTheta; this.sphericalDelta.phi += dPhi; }
+  /**
+   * 2D editing mode. `on` remaps the mouse and lowers the polar clamp so the camera may go straight
+   * down; `lock` (set by the workspace once its flight has landed) holds theta / phi every frame.
+   */
+  setPlanMode(on, { lock = false } = {}) {
+    this.planMode = !!on;
+    this.planLock = !!on && !!lock;
+    this.minPolarAngle = on ? PLAN_PHI : 0.02;
+    if (on) { this.sphericalDelta.set(0, 0, 0); this.turnDelta.theta = this.turnDelta.phi = 0; this.viewAnim = null; this.flying = false; }
+  }
   /** Orthographic ↔ perspective, keeping the framing (the ortho frustum is derived from the distance). */
   setOrtho(on) {
     on = !!on;
@@ -276,6 +310,7 @@ export class Navigator extends THREE.EventDispatcher {
       this.spherical.theta += this.sphericalDelta.theta * damp;
       this.spherical.phi += this.sphericalDelta.phi * damp;
     }
+    if (this.planLock) { this.spherical.theta = 0; this.spherical.phi = PLAN_PHI; this.sphericalDelta.set(0, 0, 0); }
     this.spherical.phi = THREE.MathUtils.clamp(this.spherical.phi, this.minPolarAngle, this.maxPolarAngle);
     this.spherical.makeSafe();
     this.spherical.radius = THREE.MathUtils.clamp(this.spherical.radius * (this.enableDamping ? Math.pow(this.scale, damp) : this.scale), this.minDistance, this.maxDistance);

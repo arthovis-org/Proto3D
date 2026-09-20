@@ -20,14 +20,16 @@ const LEGACY_PORTS = {
 };
 const portKey = (typeId, dir, key) => LEGACY_PORTS[typeId]?.[dir]?.[key] || key;
 
-export function serializeWorld(world, { camera, controls, name = 'untitled' } = {}) {
+/** `pose` = { position, target } replaces the live camera (the remembered 3D pose while the 2D editing mode is on — the mode itself is never saved). */
+export function serializeWorld(world, { camera, controls, pose = null, name = 'untitled' } = {}) {
+  const cam = pose ? { position: pose.position, target: pose.target } : camera && controls ? { position: camera.position, target: controls.target } : null;
   return {
     app: 'proto3d', version: FORMAT_VERSION, name, savedAt: new Date().toISOString(),
     nodes: world.nodes.map((n) => n.serialize()),
     connections: world.connections.filter((c) => c.to).map((c) => c.serialize()),
     groups: world.groups.map((g) => g.serialize()),
     wiring: isWiringOn(),
-    camera: camera && controls ? { position: camera.position.toArray().map((v) => +v.toFixed(2)), target: controls.target.toArray().map((v) => +v.toFixed(2)) } : undefined,
+    camera: cam ? { position: cam.position.toArray().map((v) => +v.toFixed(2)), target: cam.target.toArray().map((v) => +v.toFixed(2)) } : undefined,
   };
 }
 
