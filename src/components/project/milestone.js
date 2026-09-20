@@ -1,11 +1,12 @@
 // Milestone — a dated goal as a small flag on a pole. `milestone` carries { title, date,
 // daysLeft, reached } (a board shows it in its header, a Timeline draws it on its axis, a
 // Dashboard counts down to it); `when reached` pulses once when today reaches the date. The flag
-// turns from accent to green when reached, red when it slipped.
+// turns from accent to green when reached, red when it slipped. Double-click the flag's title or
+// date to edit them where they are.
 import * as THREE from 'three';
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
-import { palette, setLabelText } from '../../theme.js';
+import { palette, setLabelText, hex } from '../../theme.js';
 import { daysUntil, fmtDate, isoDate, DAY_MS } from '../../pm/model.js';
 
 const W = 3.0, H = 3.2, D = 0.6;
@@ -36,6 +37,15 @@ export default registry.register({
     refresh(node) {
       const c = flagColour(node); node.flag.material.color.setHex(c); node.flag.material.emissive.setHex(c);
       setLabelText(node.dateLabel, dateText(node)); setLabelText(node.statusLabel, status(node));
+      node.dateLabel.userData.alpha = node._editing === 'date' ? 0 : 1;   // the inline date editor sits over it
+    },
+    /** Editable regions on the flag (ui/field-editor.js): the title and the date. */
+    fields(node) {
+      const bg = hex(flagColour(node));
+      return [
+        { id: 'title', kind: 'text', prop: 'title', label: 'title', local: { x: 0.05, y: 0.94, w: 1.9, h: 0.4, z: 0.07 }, placeholder: 'Milestone', font: { labelSize: 0.3, weight: 600, color: '#ffffff', align: 'center' }, bg },
+        { id: 'date', kind: 'date', param: 'date', label: 'date', local: { x: 0.05, y: 0.56, w: 1.9, h: 0.26, z: 0.07 }, font: { labelSize: 0.17, weight: 500, color: '#ffffff', align: 'center' }, bg, validate: (v) => (v ? null : 'Pick a date') },
+      ];
     },
     update(node, time) {
       // the flag ripples a little; reached flags glow

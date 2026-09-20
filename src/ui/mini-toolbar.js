@@ -2,7 +2,8 @@
 // 3D object) anchored to the selection's projected bounding box, re-placed every frame from the
 // world AABBs, clamped to the viewport, flipped below the selection when there is no room above,
 // and pushed clear of the job tray / stats. Hidden while a block, cable, marquee, face, sub or
-// gizmo drag is in flight and while the camera moves; fades in over 120 ms once things are still.
+// gizmo drag is in flight, while a face field is pressed or edited in place, and while the camera
+// moves; fades in over 120 ms once things are still.
 //
 //   Duplicate · Delete · Ports (follow / show / hide, per-block override) · Auto-layout (two or
 //   more blocks) · Collapse / expand
@@ -66,7 +67,7 @@ export class MiniToolbar {
   /** Something is in flight: the toolbar keeps out of the way. */
   get busy() {
     const I = this.interaction, C = this.ws.controls;
-    return !!(I.drag || I.connect || I.marquee || I.subDrag || I.faceDrag || I.pendingDetach || (this.gizmo && (this.gizmo.dragging || this.gizmo.hot)) || C.drag || C.moving || this.ws.inFlight?.());
+    return !!(I.drag || I.connect || I.marquee || I.subDrag || I.faceDrag || I.pendingDetach || I.pressField || I.editing || (this.gizmo && (this.gizmo.dragging || this.gizmo.hot)) || C.drag || C.moving || this.ws.inFlight?.());
   }
   _items() { return this.selection.items.filter((i) => i.kind !== 'connection'); }
 

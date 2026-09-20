@@ -3,7 +3,7 @@
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { palette } from '../../theme.js';
-import { clear, drawText, roundRect } from '../../faces.js';
+import { clear, drawText, roundRect, beginFields } from '../../faces.js';
 import { num, parseLiteral } from '../util.js';
 /** What a button / key press sends: the configured payload (text or JSON), else the press count. */
 const pressPayload = (instance) => (instance.params.payload ? parseLiteral(instance.params.payload) : instance.state.count || 0);
@@ -50,10 +50,11 @@ export default registry.register({
   footer: ({ params, outputs }) => `${params.mode} · ${params.mode === 'slider' ? (outputs.value ?? 0).toFixed(2) : params.mode === 'toggle' ? (outputs.value ? 'on' : 'off') : `${outputs.value ?? 0}×`}`,
   face: {
     live: true, fps: 12,
-    render(g, w, h, { params, state, time }) {
+    render(g, w, h, { params, state, time, instance }) {
       clear(g, w, h);
       const pressed = state.pressedAt && performance.now() - state.pressedAt < 160;
       const acc = palette.faceAccent;
+      const F = beginFields(instance);
       switch (params.mode) {
         case 'toggle': {
           const on = !!state.on; const tw = Math.min(w * 0.5, 220), th = tw * 0.42;
@@ -90,7 +91,9 @@ export default registry.register({
         default: {
           const bw = Math.min(w * 0.72, 320), bh = Math.min(h * 0.46, 96);
           g.fillStyle = pressed ? '#fff' : acc; roundRect(g, (w - bw) / 2, (h - bh) / 2 - 10, bw, bh, bh / 2); g.fill();
-          drawText(g, params.label || 'Tap', (w - bw) / 2, (h - bh) / 2 - 10, bw, bh, { size: 30, weight: 600, color: pressed ? acc : '#fff' });
+          // the button label is editable in place (double-click; a click still fires the button)
+          const f = F.add({ id: 'label', kind: 'text', param: 'label', label: 'button label', mode: 'through', rect: { x: (w - bw) / 2, y: (h - bh) / 2 - 10, w: bw, h: bh }, placeholder: 'Tap', font: { size: 30, weight: 600, color: '#ffffff', align: 'center' }, bg: acc });
+          if (!f.editing) drawText(g, params.label || 'Tap', (w - bw) / 2, (h - bh) / 2 - 10, bw, bh, { size: 30, weight: 600, color: pressed ? acc : '#fff' });
           drawText(g, `${state.count || 0} press${state.count === 1 ? '' : 'es'}`, 0, h - 40, w, 30, { size: 15, color: palette.faceDim });
         }
       }

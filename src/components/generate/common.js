@@ -8,7 +8,7 @@
 // ({ current, history[≤8], lastPrompt }); live handles stay on the instance (`_job`, `_approval`,
 // `_err`, `_partial`, `_pendingDone`, `_hits`) and are never written to the world JSON.
 import { palette } from '../../theme.js';
-import { clear, drawCaps, drawDivider, drawTile, drawChip, drawBar, drawMedia, drawMediaGrid, drawText, wrapLines, fitLine, font, roundRect, tabular, PAD } from '../../faces.js';
+import { clear, drawCaps, drawDivider, drawTile, drawChip, drawBar, drawMedia, drawMediaGrid, drawText, wrapLines, fitLine, font, roundRect, tabular, PAD, beginFields } from '../../faces.js';
 import { providerRegistry, providerStatus, createJob } from '../../ai/providers/index.js';
 import { ProviderError, request } from '../../ai/http.js';
 import { store } from '../../ai/store.js';
@@ -214,6 +214,7 @@ export function drawGenerateFace(g, w, h, ctx, { kind, body, promptText = '' }) 
   const { params, state, instance: inst, time } = ctx;
   clear(g, w, h);
   const hits = []; inst._hits = hits;
+  const F = beginFields(inst);   // in-place editing: the fallback prompt when nothing is connected; the model chip opens the model browser
   const job = inst._job, running = !!job?.active, err = inst._err, appr = inst._approval;
   const rec = state.current;
   const dim = palette.faceDim, text = palette.faceText, acc = palette.faceAccent;
@@ -226,13 +227,18 @@ export function drawGenerateFace(g, w, h, ctx, { kind, body, promptText = '' }) 
   x += drawChip(g, ml, x, y, { h: 26, bg: palette.faceCard, color: text, size: 12, weight: 600, padX: 10 }) + 6;
   if (modelIsFree(params.provider, params.model)) x += drawChip(g, 'FREE', x, y, { h: 26, bg: palette.faceCard, color: palette.faceGood, size: 10, weight: 700, padX: 8 }) + 6;
   hits.push({ x: PAD, y, w: x - PAD, h: 26, action: 'model' });
+  F.add({ id: 'model', kind: 'action', label: 'model', mode: 'through', rect: { x: PAD, y, w: x - PAD, h: 26 }, run: () => openModelPicker(inst, kind) });
   drawStatus(g, w - PAD, y + 13, { inst, job, rec, err, running, time });
 
-  /* prompt preview */
+  /* prompt preview: the connected prompt, or the fallback typed here (editable in place) */
   const py = y + 44;
-  g.font = font(14, 500); g.fillStyle = dim; g.textAlign = 'left'; g.textBaseline = 'middle';
-  const pv = String(promptText || rec?.prompt || '').replace(/\s+/g, ' ').trim();
-  g.fillText(pv ? fitLine(g, pv, w - 2 * PAD) : 'no prompt connected — plug a Prompt or Text in, or type one in the panel', PAD, py);
+  const connected = ctx.inputs?.prompt !== undefined;
+  const fallback = connected ? null : F.add({ id: 'prompt', kind: 'multiline', param: 'prompt', label: 'prompt', rect: { x: PAD, y: py - 11, w: w - 2 * PAD, h: 22 }, placeholder: 'Type a prompt, or connect a Prompt component', font: { size: 14, weight: 500, color: dim, align: 'left' } });
+  if (!fallback?.editing) {
+    g.font = font(14, 500); g.fillStyle = dim; g.textAlign = 'left'; g.textBaseline = 'middle';
+    const pv = String(promptText || rec?.prompt || '').replace(/\s+/g, ' ').trim();
+    g.fillText(pv ? fitLine(g, pv, w - 2 * PAD) : connected ? 'the connected prompt is empty' : 'no prompt connected — plug a Prompt or Text in, or double-click here to type one', PAD, py);
+  }
   drawDivider(g, PAD, py + 18, w - 2 * PAD);
 
   /* body */
@@ -369,6 +375,10 @@ export function drawMediaBody(g, x, y, w, h, rec, inst, running, kind, time) {
     if (m.missing) drawText(g, 'stored file missing', x, y + h - 26, w, 22, { size: 12, color: palette.faceWarn });
   } else drawMediaGrid(g, list, x, y, w, h, { gap: 8, time });
 }
+/** The model browser for a Generate component, as the face's model chip opens it (also the field editor's action for that chip). */
+export function openModelPicker(inst, kind) {
+  return ui.openModelBrowser({ kind, providerId: inst.params.provider, current: inst.params.model, onPick: (id, providerId) => { if (providerId && providerId !== inst.params.provider) { inst.params.provider = providerId; } inst.params.model = id; inst.faceDirty = true; inst.world?.changed?.('param'); } });
+}
 /** Map a face click to an action; returns true when handled. */
 export function facePointer(ctx, ev, kind) {
   if (ev.type !== 'click') return false;
@@ -385,7 +395,7 @@ export function facePointer(ctx, ev, kind) {
     case 'dismiss': inst._err = null; break;
     case 'connections': ui.openConnections(inst.params.provider); break;
     case 'history': selectHistory(inst, hit.arg); break;
-    case 'model': ui.openModelBrowser({ kind, providerId: inst.params.provider, current: inst.params.model, onPick: (id, providerId) => { if (providerId && providerId !== inst.params.provider) { inst.params.provider = providerId; } inst.params.model = id; inst.faceDirty = true; inst.world?.changed?.('param'); } }); break;
+    case 'model': openModelPicker(inst, kind); break;
     default: return false;
   }
   inst.faceDirty = true;

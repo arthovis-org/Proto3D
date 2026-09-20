@@ -181,13 +181,11 @@ export class Panel {
       s.appendChild(this._h('div', 'panel-note', 'Wiring off hides every port and cable. Drop a component onto another to link them; a block can still show its own ports (eye icon in its header).'));
     }
     this._check(s, 'grid', () => ws.isGridVisible(), (v) => ws.setGridVisible(v));
-    if (this.plan) {
-      this._check(s, '2D editing mode (2)', () => this.plan.isOn(), (v) => this.plan.set(v));
-      this._check(s, 'snap to grid', () => this.plan.snap.on, (v) => this.plan.snap.set(v));
-    }
+    if (this.plan) this._check(s, '2D editing mode (2)', () => this.plan.isOn(), (v) => this.plan.set(v));
     this._check(s, 'flow animation', () => flow.isEnabled(), (v) => flow.setEnabled(v));
     this._num(s, 'flow speed', () => flow.getSpeed(), (v) => flow.setSpeed(v), { step: 0.1, min: 0, max: 5 });
     this._num(s, 'LOD distance', () => sizes.lod.far, (v) => { sizes.lod.far = Math.max(10, v); }, { step: 2, min: 10, max: 200 });
+    if (this.plan) this._buildSnap();
     this._buildControls();
     const g = this._section('Gizmo');
     this._check(g, 'enabled (G)', () => gizmo.enabled, (v) => { gizmo.setEnabled(v); this.onGizmoToggle?.(); });
@@ -204,6 +202,21 @@ export class Panel {
     registry.categories().forEach((c) => this._readonly(reg, c.label, () => c.components.map((d) => d.label).join(', ')));
   }
 
+  /** Snap settings (plan.js): the master switch and one toggle per kind, persisted; the menu, the magnet toggle and this section never disagree. */
+  _buildSnap() {
+    const P = this.plan, S = P.snap;
+    const s = this._section('Snap');
+    this._check(s, 'snap (M)', () => S.on, () => (P.toggleSnap ? P.toggleSnap() : S.toggle()), 'snapOn');
+    const set = (k) => (v) => (P.setSnapOption ? P.setSnapOption(k, v) : S.setOption(k, v));
+    this._check(s, 'grid', () => S.grid, set('grid'), 'snapGrid');
+    const sizes = (P.GRID_SIZES || [0.25, 0.5, 1, 2]).map(String);
+    this._select(s, 'grid size (units)', sizes, () => String(S.gridSize), (v) => set('gridSize')(parseFloat(v)), 'snapGridSize');
+    this._check(s, 'objects (edges, centres)', () => S.objects, set('objects'), 'snapObjects');
+    this._check(s, 'ports (straight cables)', () => S.ports, set('ports'), 'snapPorts');
+    this._check(s, 'rotation (15°)', () => S.rotation, set('rotation'), 'snapRotation');
+    this._check(s, 'scale (0.25)', () => S.scale, set('scale'), 'snapScale');
+    s.appendChild(this._h('div', 'panel-note', 'While dragging: Shift skips snapping, Ctrl halves the grid. Objects and ports win over the grid within their reach.'));
+  }
   /** Navigation presets (Blender default, Unreal, Maya, Simple) and their per-preset settings. */
   _buildControls() {
     const c = this._section('Controls');
@@ -267,7 +280,7 @@ export class Panel {
         case 'select': this._select(n, p.label, p.options, get, setP(p.key), p.key); break;
         case 'json': this._json(n, p.label, get, setP(p.key), p.key); break;
         case 'color': this._color(n, p.label, get, setP(p.key), p.key); break;
-        default: this._text(n, p.label, () => String(get() ?? ''), setP(p.key), p.key);
+        default: if (p.multiline) this._area(n, p.label, () => String(get() ?? ''), setP(p.key), p.key, 3); else this._text(n, p.label, () => String(get() ?? ''), setP(p.key), p.key);
       }
     }
     if (b.footerText !== undefined) this._readonly(n, 'footer', () => b.footerText || '—');

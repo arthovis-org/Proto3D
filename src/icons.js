@@ -85,6 +85,7 @@ export const icons = {
   expand: svg('<path d="M4 14l8-5 8 5M4 20l8-5 8 5" transform="translate(0 -2)"/>'),
   command: svg('<path d="M4 17l6-5-6-5M12 19h8"/>'),
   // 2D editing mode, snapping, auto-layout
+  snap: svg('<path d="M6 3v8a6 6 0 0012 0V3"/><path d="M6 3h4v8a2 2 0 004 0V3h4"/><path d="M6 7h4M14 7h4"/>'),
   plan: svg('<rect x="3" y="4" width="8" height="6" rx="1.5"/><rect x="13" y="14" width="8" height="6" rx="1.5"/><path d="M11 7h1.5a2 2 0 012 2v6a2 2 0 002 2H13" stroke-dasharray="0"/><path d="M3 20h5M18 4h3"/>'),
   snap: svg('<path d="M4 9h16M4 15h16M9 4v16M15 4v16"/><circle cx="9" cy="9" r="1.6" fill="currentColor" stroke="none"/>'),
   autoLayout: svg('<rect x="2.5" y="9" width="5.5" height="6" rx="1.3"/><rect x="16" y="3.5" width="5.5" height="6" rx="1.3"/><rect x="16" y="14.5" width="5.5" height="6" rx="1.3"/><path d="M8 12c4 0 4-5.75 8-5.75M8 12c4 0 4 5.75 8 5.75"/>'),

@@ -14,9 +14,14 @@
 //   sub pickables (cards, tiles, handles owned by a Shape3D body) are picked right after ports:
 //   the owning block gets down / drag / drop / click through body3d.onSubPointer
 //   Shift+drag on empty floor: marquee select · drag on a live face: the component handles it
-//   snapping (plan.js `snap`, on by default): a dragged set lands on the grid (Ctrl: the finer
-//          pitch, Shift: off for this drag) or on an edge / centre that lines up with a neighbour;
-//          the guides (ui/guides.js) show only while the drag lasts
+//   face fields (faces.js beginFields, ui/field-editor.js): hovering an editable region shows a faint
+//          outline and a text cursor; a press on one never starts a block drag; a double-click (a
+//          single click on an empty field, Enter with the block selected) opens the inline editor
+//   snapping (plan.js `snap`, on by default, each kind its own toggle): a dragged set lands on the
+//          grid (Ctrl: half the pitch, Shift: off for this drag), on an edge / centre that lines up
+//          with a neighbour (objects, wins over the grid) or with a pin level with the pin it is
+//          wired to so the cable runs straight (ports); the guides (ui/guides.js) show only while
+//          the drag lasts
 //   2D editing mode: orbit is off, so a left press on empty space always box-selects (whatever the
 //          preset), Space + drag pans (the Navigator's), Shift means "no snap" rather than "lift"
 //   keys: Del, Esc, F focus, Home frame all, Ctrl+D duplicate, Ctrl+Z / Ctrl+Shift+Z undo / redo,
@@ -36,15 +41,16 @@ import { isPlanOn, snap } from './plan.js';
 export const isTyping = (e) => {
   const t = e.target;
   // a focused field, or anything inside an open modal (Connections, model browser): the workspace keeps its hands off
-  return !!(t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable || t.closest?.('.modal-backdrop')));
+  return !!(t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable || t.closest?.('.modal-backdrop') || t.closest?.('#field-editor')));
 };
-const _v = new THREE.Vector3();
+const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
 const _box = new THREE.Box3();
 const SNAP_PX = 8;          // alignment reach on screen
 const GUIDE_TICK = 1.4;     // length of a grid tick beside the block (world units)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const portName = (p) => `${p.owner.title}.${p.label}`;
 const FADE = 0.28;
+const DBL_MS = 300;         // a 'delay' field holds a single click this long so a double-click can open the editor instead
 
 export class Interaction {
   constructor({ camera, renderer, controls, world, selection, history, gizmo = null, createInstance, overlays = null, guides = null, onHoverConnection = () => {}, onFocus = () => {}, onFrameAll = () => {}, onGizmoMode = () => {}, onTogglePanel = () => {}, onOpenPanel = () => {} }) {
@@ -60,6 +66,9 @@ export class Interaction {
     this.faceDrag = null;    // { block, mesh }
     this.pressFace = null;   // { block, u, v } for click detection
     this.subDrag = null;     // { block, sub } while a child pickable is pressed
+    this.pressField = null;  // { block, field, hit } while an editable face region is pressed (never a block drag)
+    this._pendingClick = null; // a held single click on a 'delay' field (checklist row): fires unless a double-click follows
+    this.fieldEditor = null; // ui/field-editor.js, set by main.js
     this.hoveredSub = null;
     this.fading = [];        // preview cables fading out after a cancelled drag
     this.glowPorts = [];     // ports pulsing this frame
@@ -82,6 +91,17 @@ export class Interaction {
   }
 
   get gizmoBusy() { return !!(this.gizmo && (this.gizmo.dragging || this.gizmo.hot)); }
+  /** The inline field editor is open. */
+  get editing() { return !!this.fieldEditor?.active; }
+  /** Something is in flight that should hide the field hover affordance. */
+  get fieldBusy() { return !!(this.drag || this.connect || this.marquee || this.faceDrag || this.subDrag || this.pendingDetach || this.pressField || this.gizmoBusy || this.controls.drag); }
+  /** The editable region under a pick (face fields by uv, body fields by the hit point), or null. */
+  _fieldAt(hit) {
+    if (!hit || !this.fieldEditor || !hit.target?.fieldAt) return null;
+    if (hit.kind === 'face') return hit.target.fieldAt({ uv: { u: hit.uv.x, v: 1 - hit.uv.y }, point: hit.point });
+    if (hit.kind === 'sub' || hit.kind === 'block') return hit.target.fieldAt({ point: hit.point });
+    return null;
+  }
   _cursor(name) { if (this.cursor !== name) { this.cursor = name; this.renderer.domElement.style.cursor = name; } }
 
   /* ---------- picking ---------- */
@@ -285,8 +305,8 @@ export class Interaction {
         const d = this.drag; d.moved = true;
         const raw = d.nodes.map((n, i) => hit.clone().add(d.offsets[i]));
         const vertical = this.shift && !this.controls.planMode;   // 3D: Shift lifts; 2D: Shift means no snapping
-        if (vertical) raw.forEach((p, i) => { p.x = d.nodes[i].position.x; p.z = d.nodes[i].position.z; });
-        else { raw.forEach((p, i) => { p.y = d.nodes[i].position.y; }); this._applySnap(d, raw, e); }
+        if (vertical) { raw.forEach((p, i) => { p.x = d.nodes[i].position.x; p.z = d.nodes[i].position.z; d.baseY[i] = Math.max(d.nodes[i].kind === 'device' ? 0 : 0.2, p.y); }); }
+        else { raw.forEach((p, i) => { p.y = d.baseY[i]; }); this._applySnap(d, raw, e); }   // the height the drag started at (a port snap may lift the block while it applies)
         d.nodes.forEach((n, i) => { const p = raw[i]; p.y = Math.max(n.kind === 'device' ? 0 : 0.2, p.y); n.position.copy(p); });
         this.world.bumpLayout();
       }
@@ -301,6 +321,10 @@ export class Interaction {
     this._setHoverSub(hit && hit.kind === 'sub' ? hit.sub : null);
     this._setHover(hit && hit.kind !== 'sub' ? hit.target : null, hit?.kind === 'connection' ? hit.end : null);
     if (hit?.kind === 'face' && hit.target.def.face?.onPointer) this._cursor('pointer');
+    // an editable region: faint outline + text cursor (hidden at the far LOD and while anything is dragged)
+    const field = this._fieldAt(hit);
+    this.fieldEditor?.hover(field ? hit.target : null, field);
+    if (field && hit.target.lodBlend <= 0.5) this._cursor('text');
   }
 
   onDown(e) {
@@ -324,6 +348,14 @@ export class Interaction {
     this.downPos.set(e.clientX, e.clientY);
     this.pressFace = null; this.pendingDetach = null;
     const hit = this.pick();
+    const field = this._fieldAt(hit);
+    if (field && (field.mode || 'edit') !== 'through') {
+      // an editable region: the press is captured (never a block or card drag); the release decides what a click means, a double-click opens the editor
+      this.pressField = { block: hit.target, field, hit };
+      this.controls.enabled = false;
+      if (!this.selection.has(hit.target)) this.select(hit.target, { toggle: this.add });
+      return;
+    }
 
     if (!hit) {
       // empty space: the preset decides between a box select and a camera move (in 2D orbit is off, so a plain press box-selects)
@@ -438,7 +470,7 @@ export class Interaction {
     if (!this.ray.ray.intersectPlane(plane, planeHit)) planeHit.copy(point);
     const offsets = nodes.map((n) => n.position.clone().sub(planeHit));
     nodes.forEach((n) => { n.dragging = true; });
-    this.drag = { nodes, plane, offsets, before: nodes.map(cmd.snapshot), moved: false };
+    this.drag = { nodes, plane, offsets, before: nodes.map(cmd.snapshot), baseY: nodes.map((n) => n.position.y), moved: false };
     this.controls.enabled = false;
     this.overlays?.hideTip();
     this._cursor('grabbing');
@@ -462,38 +494,71 @@ export class Interaction {
     return B;
   }
   /**
-   * Snap the dragged set (`raw` = the unsnapped positions, edited in place) when snapping is on and
-   * Shift is not held: an edge or centre that lines up with a neighbour within `_snapThreshold` wins
-   * (an alignment guide spans both blocks), otherwise the anchor block's centre lands on the grid
-   * (Ctrl: the finer pitch) and short ticks beside the block mark the grid line. Guides are shown
-   * through `this.guides` and cleared when the drag ends.
+   * Snap the dragged set (`raw` = the unsnapped positions, edited in place) by the kinds that are on
+   * (plan.js `snap`; Shift held = none for this drag). Per axis the most specific wins within
+   * `_snapThreshold`: on z a pin made level with the pin it is wired to (ports, the cable runs
+   * straight), then an edge or centre that lines up with a neighbour (objects, an alignment guide
+   * spans both blocks), then the grid (the anchor block's centre lands on the pitch, Ctrl halves it,
+   * short ticks beside the block mark the line). Guides are shown through `this.guides` and cleared
+   * when the drag ends.
    */
   _applySnap(d, raw, e) {
     const G = [];
-    if (snap.on && !this.shift) {
+    const useGrid = snap.active('grid') && !this.shift, useObjects = snap.active('objects') && !this.shift, usePorts = snap.active('ports') && !this.shift;
+    if (useGrid || useObjects || usePorts) {
       const anchor = raw[raw.length - 1];
       const thr = this._snapThreshold(anchor);
       const box = this._footprintBox(d.nodes, raw);
       const set = new Set(d.nodes);
-      let ax = null, az = null;
-      for (const o of this._visibleNodes()) {
-        if (set.has(o)) continue;
-        const ob = this._footprintBox([o]);
-        for (const [mine, theirs] of [[box.minX, ob.minX], [box.minX, ob.maxX], [box.maxX, ob.minX], [box.maxX, ob.maxX], [box.cx, ob.cx]]) { const k = theirs - mine; if (Math.abs(k) < thr && (!ax || Math.abs(k) < Math.abs(ax.delta))) ax = { delta: k, value: theirs, other: ob }; }
-        for (const [mine, theirs] of [[box.minZ, ob.minZ], [box.minZ, ob.maxZ], [box.maxZ, ob.minZ], [box.maxZ, ob.maxZ], [box.cz, ob.cz]]) { const k = theirs - mine; if (Math.abs(k) < thr && (!az || Math.abs(k) < Math.abs(az.delta))) az = { delta: k, value: theirs, other: ob }; }
+      let ax = null, az = null, pz = null;
+      if (useObjects) {
+        for (const o of this._visibleNodes()) {
+          if (set.has(o)) continue;
+          const ob = this._footprintBox([o]);
+          for (const [mine, theirs] of [[box.minX, ob.minX], [box.minX, ob.maxX], [box.maxX, ob.minX], [box.maxX, ob.maxX], [box.cx, ob.cx]]) { const k = theirs - mine; if (Math.abs(k) < thr && (!ax || Math.abs(k) < Math.abs(ax.delta))) ax = { delta: k, value: theirs, other: ob }; }
+          for (const [mine, theirs] of [[box.minZ, ob.minZ], [box.minZ, ob.maxZ], [box.maxZ, ob.minZ], [box.maxZ, ob.maxZ], [box.cz, ob.cz]]) { const k = theirs - mine; if (Math.abs(k) < thr && (!az || Math.abs(k) < Math.abs(az.delta))) az = { delta: k, value: theirs, other: ob }; }
+        }
       }
+      if (usePorts) pz = this._portSnap(d, raw, thr);
       const fine = !!(e.ctrlKey || e.metaKey);
-      const dx = ax ? ax.delta : snap.value(anchor.x, fine) - anchor.x;
-      const dz = az ? az.delta : snap.value(anchor.z, fine) - anchor.z;
-      raw.forEach((p) => { p.x += dx; p.z += dz; });
+      const dx = ax ? ax.delta : useGrid ? snap.value(anchor.x, fine) - anchor.x : 0;
+      const dz = pz ? pz.dz : az ? az.delta : useGrid ? snap.value(anchor.z, fine) - anchor.z : 0;
+      raw.forEach((p) => { p.x += dx; p.z += dz; if (pz) p.y += pz.dy; });
       const y = anchor.y, hw = (box.maxX - box.minX) / 2, hd = (box.maxZ - box.minZ) / 2, cx = box.cx + dx, cz = box.cz + dz;
       if (ax) G.push({ kind: 'align', a: new THREE.Vector3(ax.value, y, Math.min(box.minZ + dz, ax.other.minZ) - 0.6), b: new THREE.Vector3(ax.value, y, Math.max(box.maxZ + dz, ax.other.maxZ) + 0.6) });
-      else G.push({ kind: 'grid', a: new THREE.Vector3(cx, y, cz - hd - GUIDE_TICK), b: new THREE.Vector3(cx, y, cz - hd - 0.25) }, { kind: 'grid', a: new THREE.Vector3(cx, y, cz + hd + 0.25), b: new THREE.Vector3(cx, y, cz + hd + GUIDE_TICK) });
-      if (az) G.push({ kind: 'align', a: new THREE.Vector3(Math.min(box.minX + dx, az.other.minX) - 0.6, y, az.value), b: new THREE.Vector3(Math.max(box.maxX + dx, az.other.maxX) + 0.6, y, az.value) });
-      else G.push({ kind: 'grid', a: new THREE.Vector3(cx - hw - GUIDE_TICK, y, cz), b: new THREE.Vector3(cx - hw - 0.25, y, cz) }, { kind: 'grid', a: new THREE.Vector3(cx + hw + 0.25, y, cz), b: new THREE.Vector3(cx + hw + GUIDE_TICK, y, cz) });
-      d.snapped = { grid: !ax || !az, align: !!(ax || az), fine };
+      else if (useGrid) G.push({ kind: 'grid', a: new THREE.Vector3(cx, y, cz - hd - GUIDE_TICK), b: new THREE.Vector3(cx, y, cz - hd - 0.25) }, { kind: 'grid', a: new THREE.Vector3(cx, y, cz + hd + 0.25), b: new THREE.Vector3(cx, y, cz + hd + GUIDE_TICK) });
+      if (pz) G.push({ kind: 'port', a: pz.a.clone().add(new THREE.Vector3(0, pz.dy, pz.dz)), b: pz.b.clone() });
+      else if (az) G.push({ kind: 'align', a: new THREE.Vector3(Math.min(box.minX + dx, az.other.minX) - 0.6, y, az.value), b: new THREE.Vector3(Math.max(box.maxX + dx, az.other.maxX) + 0.6, y, az.value) });
+      else if (useGrid) G.push({ kind: 'grid', a: new THREE.Vector3(cx - hw - GUIDE_TICK, y, cz), b: new THREE.Vector3(cx - hw - 0.25, y, cz) }, { kind: 'grid', a: new THREE.Vector3(cx + hw + 0.25, y, cz), b: new THREE.Vector3(cx + hw + GUIDE_TICK, y, cz) });
+      d.snapped = { grid: useGrid && (!ax || (!az && !pz)), align: !!(ax || az), port: !!pz, fine };
     } else d.snapped = null;
     this.guides?.set(G);
+  }
+  /**
+   * Snap to ports: among the cables between a dragged block and a block that stays, the one whose
+   * two pins come closest to level within `thr` — the same row (world z, the axis cables run
+   * across) and, standing in 3D, the same height (world y; the block lifts or sinks by that much
+   * while the snap applies; the plan leaves y alone). Returns { dz, dy, a, b } (a = the dragged pin
+   * where it is about to be, b = the fixed pin) or null.
+   */
+  _portSnap(d, raw, thr) {
+    const set = new Set(d.nodes), plan = this.controls.planMode;
+    let best = null;
+    d.nodes.forEach((n, i) => {
+      const off = _v2.copy(raw[i]).sub(n.position);
+      for (const c of this.world.connections) {
+        if (!c.complete) continue;
+        const mine = c.from.owner === n ? c.from : c.to.owner === n ? c.to : null;
+        if (!mine) continue;
+        const theirs = mine === c.from ? c.to : c.from;
+        if (set.has(theirs.owner) || theirs.owner.kind === 'group' || theirs.proxy || mine.proxy) continue;
+        const a = mine.getWorldPosition(new THREE.Vector3()).add(off), b = theirs.getWorldPosition(new THREE.Vector3());
+        const dz = b.z - a.z, dy = plan ? 0 : b.y - a.y;
+        const k = Math.hypot(dz, dy);
+        if (k < thr && (!best || k < best.k)) best = { k, dz, dy, a, b };
+      }
+    });
+    return best;
   }
 
   /* ---------- cables ---------- */
@@ -622,6 +687,7 @@ export class Interaction {
       return;
     }
     const moved = Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4;
+    if (this.pressField) { const P = this.pressField; this.pressField = null; if (!moved) this._fieldClick(P); this._cursor(this._hoverCursor(this.hovered, this.hoveredEnd)); return; }
     if (this.marquee) { this._endMarquee(e); return; }
     if (this.subDrag) {
       const d = this.subDrag; this.subDrag = null;
@@ -660,9 +726,29 @@ export class Interaction {
     if (!moved && !this.gizmoBusy && !nav.isAddModifier(e)) { this._setPointer(e); if (!this.pick()) this.selection.clear(); }
   }
 
+  /**
+   * A click (no movement) on an editable region: 'open' fields and empty 'edit' fields open the
+   * editor at once; a 'delay' field (a checklist row) hands the click to the face after the
+   * double-click window unless a second click arrives first; other clicks just selected the block.
+   */
+  _fieldClick({ block, field, hit }) {
+    const FE = this.fieldEditor; if (!FE) return;
+    const mode = field.mode || 'edit';
+    const v = FE.valueOf(block, field);
+    if (mode === 'open' || (mode === 'edit' && field.placeholder && (v === undefined || v === null || String(v).trim() === ''))) { FE.open(block, field); return; }
+    if (mode === 'delay' && hit.kind === 'face') {
+      clearTimeout(this._pendingClick?.timer);
+      const uv = { u: hit.uv.x, v: 1 - hit.uv.y };
+      this._pendingClick = { block, timer: setTimeout(() => { this._pendingClick = null; block.onFacePointer({ type: 'click', ...uv, button: 0 }); }, DBL_MS) };
+    }
+  }
+
   onDblClick(e) {
     this._setPointer(e);
     const hit = this.pick();
+    if (this._pendingClick) { clearTimeout(this._pendingClick.timer); this._pendingClick = null; }
+    const field = this._fieldAt(hit);
+    if (field && this.fieldEditor) { this.fieldEditor.open(hit.target, field); return; }
     if (hit && (hit.kind === 'block' || hit.kind === 'face')) this.onFocus([hit.target]);
     else if (hit && hit.kind === 'group') this.onFocus(hit.target.collapsed ? [hit.target] : hit.target.members);
   }
@@ -742,7 +828,7 @@ export class Interaction {
     if (!this.ray.ray.intersectPlane(plane, hit)) hit.copy(anchor.position);
     const offsets = nodes.map((n) => n.position.clone().sub(hit));
     nodes.forEach((n) => { n.dragging = true; });
-    this.drag = { nodes, plane, offsets, before: nodes.map(cmd.snapshot), moved: true };
+    this.drag = { nodes, plane, offsets, before: nodes.map(cmd.snapshot), baseY: nodes.map((n) => n.position.y), moved: true };
     this.keyDrag = true;
     this.controls.enabled = false;
     this._cursor('grabbing');
@@ -776,6 +862,9 @@ export class Interaction {
   /** Esc: abandon whatever is in flight. A detached cable goes back where it was. */
   cancel() {
     this.pendingDetach = null;
+    this.pressField = null;
+    if (this._pendingClick) { clearTimeout(this._pendingClick.timer); this._pendingClick = null; }
+    this.fieldEditor?.cancel();
     if (this.connect) {
       const C = this.connect; this.connect = null;
       C.snapped?.setHover(false);
@@ -841,6 +930,13 @@ export class Interaction {
     if (mod) return;
     switch (e.key) {
       case 'Escape': { const wasDragging = !!this.connect; this.cancel(); if (!wasDragging) this.selection.clear(); break; }
+      case 'Enter': {
+        // edit the selected block's first field where it is drawn (Tab walks the rest)
+        if (!this.fieldEditor || this.selection.nodes.length !== 1) break;
+        const b = this.selection.nodes[0]; const f = this.fieldEditor.tabbable(b)[0];
+        if (f) { e.preventDefault(); this.fieldEditor.open(b, f); }
+        break;
+      }
       case 'Delete': case 'Backspace': this.deleteSelection(); break;
       case 'f': case 'F': this.focusSelection(); break;
       case 'Home': this.onFrameAll(); break;

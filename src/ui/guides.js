@@ -2,7 +2,8 @@
 // the viewport (pointer-events none) holding world-space segments that are re-projected every
 // frame. `align` guides are the accent-coloured lines along an edge or centre that lines up with a
 // neighbour (design-tool smart guides); `grid` guides are the subtle dashed ticks that show the
-// block's centre landed on the grid. The interaction layer sets them during a drag and clears them
+// block's centre landed on the grid; a `port` guide runs pin to pin along the cable that was made
+// straight (snap to ports). The interaction layer sets them during a drag and clears them
 // on release; nothing here writes to the world.
 import * as THREE from 'three';
 
@@ -19,7 +20,7 @@ export class Guides {
   }
   /** SVG elements have no `hidden` property, so the attribute is toggled by hand. */
   get visible() { return !this.el.hasAttribute('hidden'); }
-  /** Replace the guides: `lines` = [{ a, b, kind: 'align' | 'grid' }] in world space. */
+  /** Replace the guides: `lines` = [{ a, b, kind: 'align' | 'grid' | 'port' }] in world space. */
   set(lines) {
     this.lines = lines.map((l) => ({ a: l.a.clone(), b: l.b.clone(), kind: l.kind || 'align' }));
     while (this.nodes.length < this.lines.length) { const n = document.createElementNS(NS, 'line'); this.el.appendChild(n); this.nodes.push(n); }

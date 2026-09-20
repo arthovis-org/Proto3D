@@ -63,12 +63,14 @@
         <h2>Build</h2>
         <dl>
           <dt>Add</dt><dd>left toolbar: click a category, click a component (or drag it into the scene) · <kbd>Shift</kbd>+<kbd>A</kbd> search</dd>
-          <dt>Move</dt><dd>drag a block (<kbd>Shift</kbd> for height in 3D) · it snaps to the grid and to neighbours (<kbd>Shift</kbd> skips, <kbd>Ctrl</kbd> is finer) · gizmo <kbd>G</kbd>, <kbd>W</kbd>/<kbd>E</kbd>/<kbd>R</kbd></dd>
+          <dt>Move</dt><dd>drag a block (<kbd>Shift</kbd> for height in 3D) · gizmo <kbd>G</kbd>, <kbd>W</kbd>/<kbd>E</kbd>/<kbd>R</kbd></dd>
+          <dt>Snap</dt><dd><kbd>M</kbd> or the magnet toggle · <b>View → Snap</b> picks the kinds: grid (size 0.25–2), objects (neighbours' edges and centres), ports (a pin level with the pin it is wired to, so the cable runs straight), rotation (15°) and scale (0.25) on the gizmo · <kbd>Shift</kbd> while dragging skips, <kbd>Ctrl</kbd> halves the grid</dd>
           <dt>2D</dt><dd><kbd>2</kbd> toggles the 2D editing mode: a top-down plan · left-drag box-selects · middle-drag or <kbd>Space</kbd>+drag pans · wheel zooms · <kbd>L</kbd> auto-layout</dd>
           <dt>Link</dt><dd>drop a component onto another · or, with wiring on, drag from a pin to a lit pin</dd>
           <dt>Re-route</dt><dd>grab a cable end and drop it on another pin · empty space disconnects · <kbd>Esc</kbd> puts it back</dd>
           <dt>Edit</dt><dd><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate · <kbd>Del</kbd> delete · <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> undo / redo</dd>
           <dt>Group</dt><dd><kbd>Ctrl</kbd>+<kbd>G</kbd> group · <kbd>C</kbd> collapse / expand · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> ungroup</dd>
+          <dt>Edit in place</dt><dd>double-click text on a face (a note, a prompt, a card title, a name, a date) to edit it right there · <kbd>Enter</kbd> saves (<kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line) · <kbd>Esc</kbd> cancels · <kbd>Tab</kbd> next field · <kbd>Enter</kbd> on a selected block edits its first field</dd>
           <dt>Interact</dt><dd>click / drag cards on a Kanban board · drop a card on a Person (or a Person on a card) to assign it · press Run on a Flow Terminal · click a checklist row · click a device screen or an Input face to fire events</dd>
           <dt>View</dt><dd><kbd>P</kbd> wiring · <kbd>T</kbd> theme · <kbd>N</kbd> panel · <kbd>H</kbd> help · <kbd>Esc</kbd> cancel</dd>
         </dl>
@@ -91,6 +93,9 @@
   <div id="marquee" hidden></div>
   <!-- Snap and alignment guides while a block is dragged (ui/guides.js) -->
   <svg id="guides" hidden></svg>
+  <!-- Inline face editing (ui/field-editor.js): the outline over the editable region under the pointer, and the editor placed over the face text -->
+  <div id="field-hover" hidden></div>
+  <div id="field-editor" hidden></div>
 
   <!-- Guidance layers (presentation only, see ui/overlays.js) -->
   <div id="tip" hidden></div>

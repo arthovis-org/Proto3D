@@ -133,7 +133,7 @@ evaluates, serializes and can be searched.
 // Smooth — exponential moving average of a number.
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
-import { clear, drawText } from '../../faces.js';
+import { clear, drawText, beginFields } from '../../faces.js';
 
 export default registry.register({
   id: 'smooth', category: 'transform', label: 'Smooth', icon: icons.transform, size: 'M',
@@ -150,7 +150,16 @@ export default registry.register({
   },
   footer: ({ outputs }) => (outputs.out === undefined ? 'waiting' : `≈ ${outputs.out}`),
   face: {                                                 // optional live 2D face on the node body
-    render(g, w, h, { outputs }) { clear(g, w, h); drawText(g, outputs.out === undefined ? '—' : String(outputs.out), 0, 0, w, h, { size: 64, mono: true }); },
+    render(g, w, h, { outputs, instance }) {
+      clear(g, w, h);
+      drawText(g, outputs.out === undefined ? '—' : String(outputs.out), 0, 0, w, h - 28, { size: 64, mono: true });
+      // an editable field: double-click the strip at the bottom of the face to change `smoothing` right there
+      // (Enter saves, Esc cancels; the edit is undoable and the panel follows). Kinds: text, multiline, number, select, date, checkbox.
+      const F = beginFields(instance);
+      if (!F.add({ id: 'alpha', kind: 'number', param: 'alpha', label: 'smoothing', min: 0.01, max: 1, step: 0.01, rect: { x: 12, y: h - 30, w: w - 24, h: 24 }, font: { size: 14, weight: 500, align: 'center' } }).editing) {
+        drawText(g, `smoothing ${instance.params.alpha}`, 12, h - 30, w - 24, 24, { size: 14, weight: 500 });
+      }
+    },
     // optional: where each port's data lives on the face (px from the top), so the pin sits level with it
     // and a cable visibly points at what it changes; flat, or { in: {…}, out: {…} } when a key is on both sides.
     // Ports without an anchor are stacked beside the face; colliding anchors are nudged apart.
@@ -166,7 +175,9 @@ block (`tasks`, `people`, `add task`); **event outputs start with "when"** (`whe
 except a flow shape's `next` / `yes` / `no`; a description is one plain sentence. Event outputs
 are pulsed with `ctx.emit(key, payload)` (or by returning a value for that key); `state` is a
 plain object that persists per instance and is saved when it is JSON-serializable;
-`face.onPointer(ctx, { type, u, v })` receives clicks and drags on the face in 3D; `onCreate` /
+`face.onPointer(ctx, { type, u, v })` receives clicks and drags on the face in 3D; `beginFields(instance)`
++ `F.add({ id, kind, param, rect, … })` in `render` makes a region editable in place (double-click it —
+see `docs/ARCHITECTURE.md` §8d for the spec, modes and the editor's keys); `onCreate` /
 `onDestroy` are for listeners (the Input component's key mode uses them); `describeLink(fromPort,
 toDef, toPort, names)` may return a sentence for a cable leaving the component.
 
@@ -361,7 +372,9 @@ Everything else is the same in every preset:
 | --- | --- |
 | Focus | `F` frames the selection · double-click a block · `Home` or **Frame all** frames everything (camera flights are smooth) |
 | Add | left toolbar → category → click a component (adds at the camera target on a free slot) or **drag it into the scene** (ghost footprint, drops where the ray hits the floor) · `Shift+A` opens search |
-| Move | drag a block (all selected blocks move together; `Shift` for height in 3D) · **snaps** to the grid and to neighbours' edges and centres with guides (`Shift` while dragging skips it, `Ctrl` snaps to half units; *View → Snap to grid* turns it off) · gizmo `G`, `W` / `E` / `R` · Transform fields in the panel |
+| Move | drag a block (all selected blocks move together; `Shift` for height in 3D) · gizmo `G`, `W` / `E` / `R` · Transform fields in the panel |
+| Snap | `M` (or the magnet toggle in the menu bar) turns snapping on and off; *View → Snap ▸* (also the panel's *Snap* section) picks the kinds, each remembered: **grid** with a size of 0.25 / 0.5 / 1 / 2 units, **objects** (a dragged block's edges and centres line up with its neighbours', with guides), **ports** (a pin lands level with the pin it is wired to so the cable runs straight), **rotation** (15° steps on the gizmo) and **scale** (0.25 steps) · `Shift` while dragging skips snapping, `Ctrl` halves the grid · objects and ports win over the grid within their reach |
+| Edit in place | **double-click text on a face** — a Sticky Note, a Prompt (or one of its variable chips), a Text, a Data node's JSON, a Person's name or role, a Display caption, an Input button's label, a Checklist item, a Kanban card or column title, a Timeline bar, a Milestone's title or date, a flow shape's label — and type where it is: `Enter` saves (`Shift+Enter` for a new line), `Esc` cancels, `Tab` moves to the next field, `↑` / `↓` nudge a number · a click on an empty field or a "+" row (checklist, board column) starts typing at once · `Enter` with a block selected edits its first field · every edit undoes and the panel follows |
 | 2D | `2` (or the menu bar toggle, *View → 2D editing mode*) flips to a **top-down plan**: every block is a flat card with its face and pins, cables are flat splines under the cards, left-drag on empty space box-selects, middle-drag or `Space`+drag pans, the wheel zooms about the cursor; `2` again flies back to the 3D pose you left |
 | Arrange | `L` or *Edit → Auto-layout* arranges the selection (two or more) or everything as a left-to-right graph along the cables — groups stay together, unconnected blocks go in a grid below; one undoable, animated step, in 2D or 3D |
 | Link | **drop a component onto another** (a sentence shows what it will mean; a chooser appears when several links fit) · with wiring on: drag from an **OUT** pin to a lit **IN** pin (or backwards from an empty input); the cable snaps within ~1.2 units |
@@ -373,7 +386,7 @@ Everything else is the same in every preset:
 | Interact | click a device screen (`tap`), an Input face (button, toggle, slider) or press the configured key · click / drag a **card** on a Kanban board (drop it on a **Person** or into a lane to assign it), click the **+** tile, click a checklist row, press the **Run** disc on a Flow Terminal, drag a Timeline bar's end handle |
 | File | menu bar **File** → New project · Open… (`Ctrl+O`) · Open recent · Save (`Ctrl+S`) · Save as… (`Ctrl+Shift+S`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave to `localStorage` on every change |
 | Edit | menu bar **Edit** → Undo / Redo · Cut / Copy / Paste (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`, also between tabs) · Duplicate · Delete · Select all · Deselect · Auto-layout (`L`) · Group / Ungroup · Collapse |
-| View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · 2D editing mode (`2`) · snap to grid · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
+| View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · 2D editing mode (`2`) · Snap ▸ (`M`, grid size, objects, ports, rotation, scale) · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
 | Help | menu bar **Help** → tour · keyboard shortcuts (`Shift+?`) · help & legend (`H`) · documentation · About |
 
 Shortcuts are ignored while typing in a panel field.
@@ -386,9 +399,11 @@ flat as a card showing its live face, title and pins — inputs on the left, out
 so wiring works exactly as in 3D: drag from a pin, drop a block onto another, pick up a cable end
 to re-route or disconnect. Cables become flat splines running under the cards; the value chips,
 dimming and end labels stay. Orbit is off: left-drag on empty space box-selects in every preset,
-middle-drag or `Space`+drag pans, the wheel zooms about the cursor. Moving a block snaps to the
-grid (1 unit; `Ctrl` for 0.5) and to the edges and centres of its neighbours with design-tool
-guides; `Shift` skips snapping for that drag. **Edit → Auto-layout** (`L`, or the mini toolbar
+middle-drag or `Space`+drag pans, the wheel zooms about the cursor. Moving a block snaps by the
+kinds turned on under *View → Snap* (`M`): the grid (0.25–2 units; `Ctrl` halves it), the edges
+and centres of its neighbours with design-tool guides, and the pins it is wired to so cables run
+straight; `Shift` skips snapping for that drag. Double-clicking text on a flat card edits it in
+place exactly as in 3D. **Edit → Auto-layout** (`L`, or the mini toolbar
 with several blocks selected) arranges blocks as a left-to-right layered graph along their cables,
 keeping groups together. Positions are shared between the modes (the plan's x / z are the room's
 x / z), the mode itself is never saved, and `2` again flies back to the 3D view you left.

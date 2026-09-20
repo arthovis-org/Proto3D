@@ -3,13 +3,15 @@
 // title (`{Card title}`, `{Milestone}`), `{text}` is the explicit text input, `{1}` / `{2}` pick
 // connections by position, and `{Name.path}` reaches into an object. The face typesets the
 // template with the resolved values as chips (missing ones in amber); the output is the resolved
-// prompt, ready for a Generate component.
+// prompt, ready for a Generate component. Double-click the text to edit the template where it is
+// (Shift+Enter for a new line), or a chip to rename that variable.
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { palette } from '../../theme.js';
-import { clear, drawDivider, drawCaps, font, roundRect, fitLine, PAD } from '../../faces.js';
+import { clear, drawDivider, drawCaps, font, roundRect, fitLine, PAD, beginFields } from '../../faces.js';
 import { asText, pick } from '../util.js';
 import { escapeHTML } from './common.js';
+import * as cmd from '../../core/commands.js';
 
 const VAR_RE = /\{([^{}]+)\}/g;
 const norm = (s) => String(s || '').trim().toLowerCase();
@@ -84,7 +86,11 @@ export default registry.register({
       parts.push({ text: src.slice(last) });
       let x = PAD, y = PAD + 40 + lh / 2; const maxX = w - PAD, maxY = h - 56;
       const newline = () => { x = PAD; y += lh; };
-      for (const p of parts) {
+      // in-place editing: the whole template as multiline text, and every chip as the variable's name
+      const F = beginFields(instance);
+      const setTemplate = (next, api, label) => { const c = cmd.setParam(api.world, instance, 'template', next); c.label = label; api.history.execute(c); };
+      const body = F.add({ id: 'template', kind: 'multiline', param: 'template', label: 'prompt', rect: { x: PAD, y: PAD + 40, w: w - 2 * PAD, h: maxY - (PAD + 40) }, placeholder: 'Write a prompt… {variables} fill in from the components plugged in', font: { size, weight: 500, align: 'left', lineHeight: lh / size } });
+      if (!body.editing) for (const p of parts) {
         if (p.text !== undefined) {
           for (const seg of p.text.split(/(\n)/)) {
             if (seg === '\n') { newline(); continue; }
@@ -104,10 +110,14 @@ export default registry.register({
           const tw = g.measureText(label).width, cw = tw + 24;
           if (x + cw > maxX && x > PAD) newline();
           if (y > maxY) break;
-          g.fillStyle = t.found ? palette.faceAccent : palette.faceWarn; roundRect(g, x, y - chipH / 2, cw, chipH, chipH / 2); g.fill();
-          g.fillStyle = t.found ? '#fff' : '#1c2130'; g.fillText(label, x + 12, y + 1);
-          // the variable's name in tiny caps above the chip
-          g.font = font(9, 700); g.fillStyle = palette.faceDim; g.fillText(t.name.toUpperCase(), x + 12, y - chipH / 2 - 7);
+          const k = res.tokens.indexOf(t);
+          const chip = F.add({ id: `var:${k}`, kind: 'text', label: 'variable', rect: { x, y: y - chipH / 2, w: cw, h: chipH }, font: { size: 15, weight: 600, color: t.found ? '#ffffff' : '#1c2130', align: 'center' }, bg: t.found ? palette.faceAccent : palette.faceWarn, get: () => t.raw, set: (v, api) => { const name = String(v).trim(); const cur = String(instance.params.template || ''); setTemplate(cur.slice(0, t.index) + (name ? `{${name}}` : '') + cur.slice(t.index + t.raw.length + 2), api, name ? 'Rename variable' : 'Remove variable'); } });
+          if (!chip.editing) {
+            g.fillStyle = t.found ? palette.faceAccent : palette.faceWarn; roundRect(g, x, y - chipH / 2, cw, chipH, chipH / 2); g.fill();
+            g.fillStyle = t.found ? '#fff' : '#1c2130'; g.fillText(label, x + 12, y + 1);
+            // the variable's name in tiny caps above the chip
+            g.font = font(9, 700); g.fillStyle = palette.faceDim; g.fillText(t.name.toUpperCase(), x + 12, y - chipH / 2 - 7);
+          }
           x += cw + 6;
         }
       }

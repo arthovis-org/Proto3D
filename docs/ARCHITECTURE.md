@@ -8,7 +8,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ UI          ui/menubar.js (menus + quick toggles)  ui/toolbar-left.js  panel.js  interaction.js │
+│ UI          ui/menubar.js (menus + quick toggles)  ui/toolbar-left.js  panel.js  interaction.js  ui/field-editor.js │
 │             ui/mini-toolbar.js (above the selection)  ui/command-palette.js (Ctrl+K)          │
 │             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
 │             ui/guides.js (snap guides)  layout.js (Auto-layout)  plan.js (2D mode + snap settings) │
@@ -56,11 +56,11 @@ A component type is one plain object, validated and frozen by `defineComponent`:
 | `evaluate(ctx)` | returns `{ [outputKey]: value }`; omit a key (or return `undefined`) to output nothing |
 | `onEvent(ctx, inputKey, pulse)` | optional hook called before `evaluate` for each pulsed event input |
 | `footer(ctx)` | optional footer text (nodes) |
-| `face` | `{ render(g, w, h, ctx), onPointer?(ctx, ev), portAnchors?(info), live?, fps? }` — a live 2D canvas on the body; `portAnchors` puts each pin level with the face region it affects (§7c) |
+| `face` | `{ render(g, w, h, ctx), onPointer?(ctx, ev), portAnchors?(info), fields?(ctx), live?, fps? }` — a live 2D canvas on the body; `portAnchors` puts each pin level with the face region it affects (§7c); `render` may register editable regions with `beginFields` (§8d) |
 | `onCreate(instance)`, `onDestroy(instance)` | lifecycle (listeners, timers) |
-| `body3d` | custom 3D body (see §8b): `dims, build, ports?, portAnchors?, refresh?, update?, applyLOD?, onSubPointer?, onSubHover?, titleAt?` — the instance becomes a `Shape3D` |
+| `body3d` | custom 3D body (see §8b): `dims, build, ports?, portAnchors?, fields?, refresh?, update?, applyLOD?, onSubPointer?, onSubHover?, titleAt?` — the instance becomes a `Shape3D`; `fields(node)` lists regions editable in place (§8d) |
 | `panel(api, instance)` | optional component-owned editor section in the properties panel (see §8b) |
-| params `hidden: true` | a param the generic panel skips because `panel()` edits it (a board, a task list) |
+| params `hidden: true` | a param the generic panel skips because `panel()` edits it (a board, a task list); `multiline: true` on a `text` param gives it a textarea in the panel (a note) |
 
 `ctx` = `{ inputs, params, state, time, dt, emit(key, payload), touch(key), instance, upstream(key), downstream(key), engine }`.
 `state` is the per-instance persistent object (serialized when JSON-safe). `touch(key)` marks an
@@ -383,7 +383,7 @@ drop point that closes on pick, Esc or a click outside.
   `tabular`, `drawText`; `drawValue` dispatches on `kindOf` (text, number, boolean chip, JSON,
   media, media list, media layout); `drawMedia` (image / video poster with progress / audio
   waveform); `drawMediaGrid` + `gridShape`; `drawScreen` for devices; bitmap cache with
-  `onBitmapReady`.
+  `onBitmapReady`; `beginFields` registers the regions a face lets the user edit in place (§8d).
 - **`Connection3D` token bursts**: an `event` link watches its source port's `lastPulseAt`; each
   new pulse spawns a bead (white core + type-coloured halo) that runs the curve in 0.35–1.1 s.
   Nothing else is needed for tokens to be visible on any event path, flowchart or not.
@@ -491,6 +491,66 @@ bar faces (title on the bar), device screens (`drawScreen`: flat gradient, slim 
 Canvas labels (`makeLabel`) share the family and support `caps` + `spacing` for small caps (column
 titles, kind labels).
 
+## 8d. Face fields: editing in place (`faces.js`, `block3d.js`, `ui/field-editor.js`)
+
+The properties panel is optional for the text a face shows: a renderer declares **fields** and the
+user edits them where they are drawn. In `render`, `const F = beginFields(instance)` resets the
+block's list and `F.add(spec)` registers a region; a custom body lists its regions from
+`body3d.fields(node)` (body units) and a face may also compute them on demand in
+`face.fields(ctx)`. A spec is
+
+```
+{ id, kind: text | multiline | number | select | date | checkbox | action,
+  param: 'key' | prop: 'title' | get(block) / set(value, api),         // the value; set gets { history, world, selection, block, cmd }
+  rect: { x, y, w, h }            // face px (origin top-left), the coordinates render draws in
+  | local: { x, y, w, h, z? }     // body units, centre-based (a card title, a flag's date)
+  font?: { size | labelSize, weight, align, color, mono, lineHeight }, bg?,   // how the editor is typeset: the face's own type and colours
+  placeholder?, options?, min?, max?, step?, validate(v) → message | null, parse(text) → value, format(value) → text,
+  mode?: edit | open | through | delay, label?, sub?, run?(block, api) }
+```
+
+`F.add` returns the spec with `editing` set while the editor is open on it, so the renderer leaves
+that text out (`if (!F.add({…}).editing) drawText(…)`) and nothing doubles up; a body reads
+`node._editing` (`Block3D.setEditing`, which also marks the face dirty) for the same purpose.
+`Block3D.fields()` merges the three sources, `fieldAt({ uv, point })` hit-tests them (face fields by
+canvas uv, body fields by the hit point in local space; the smallest region wins, so a chip inside a
+text block is picked over the block) and `fieldCorners(field)` gives the world corners the editor
+projects. **Modes** decide what a press does: `edit` (default) captures the press — never a block
+drag — a click selects, a double-click edits, a click on an *empty* field with a placeholder edits;
+`open` edits on a single click (the checklist's and the board's "+" rows); `through` leaves presses,
+drags and clicks as they were and edits only on a double-click (cards still drag, the Input button
+still fires); `delay` captures the press and hands a single click to the face after the double-click
+window (a checklist row still toggles) unless a second click arrives (`Interaction._fieldClick`,
+`DBL_MS` 300). `Enter` with one block selected opens its first field.
+
+**The editor** (`FieldEditor`, `#field-editor`, `#field-hover`): hovering a field shows a faint
+accent outline over its projected rect and a text cursor (hidden at the far LOD and while anything
+is dragged, `Interaction.fieldBusy`). `open(block, field)` builds an HTML control — a textarea that
+grows with its content for text and multiline, a text input with ↑ ↓ nudges (`step`, Shift ×10) for
+numbers, a themed list for select, a date input, nothing for a checkbox (it toggles at once) or an
+action (it runs: the Generate model chip opens the model browser) — and every frame `_place`
+re-projects the four corners (`screenRect`), so the box follows the camera in 3D and in the plan.
+It is sized to the region and typeset like the face: Inter (or the mono stack), the face font
+scaled by css px per face px at that spot and clamped to **11–28 px** (`FONT_MIN / FONT_MAX`; when
+the clamp raises the type the box grows around the region's centre), the face background and text
+colours (`--fe-bg`, `--fe-color`, or the field's `bg` / `font.color`: a note keeps its paper, a
+card its card colour), an accent focus ring and a small hint pill (*Enter saves · Esc cancels · Tab
+next*). Enter commits (Shift+Enter is a newline in multiline), Esc cancels, blur commits (an invalid
+value is dropped instead), Tab / Shift+Tab commit and open the next / previous field on the same
+block (`tabbable`). A commit parses (`parse`, the Data face's JSON) and validates (`validate`); an
+error shows under the field and keeps it open. Writes go through `cmd.setParam` (label *Edit
+<label>*), `cmd.setTitle` for `prop: 'title'`, or the field's own `set` (boards use `commitBoard`,
+the timeline its task command), so every edit undoes and the panel's live fields show it; an
+unchanged value leaves no history entry. While open, `Interaction.editing` hides the mini toolbar
+and `isTyping` keeps the workspace shortcuts off. Fields are wired on: Sticky Note (text, unless fed),
+Text (text in source mode, template in template mode), Data (JSON in value mode, with a face),
+Input (the button label, `through`), Display (caption), Person (name, role), Prompt (the template
+as multiline plus every variable chip as its name), the Generate faces (the fallback prompt while
+nothing is connected; the model chip as an action), Checklist (item text, `delay`; a "+" row that
+adds an item), Kanban board (card titles and column titles, `through`; the "+" tile types the new
+card's title), Timeline (its own bars' labels), Milestone (title, date) and the flow shapes
+(their label = title).
+
 ## 9. Interaction model (`interaction.js`, `ui/overlays.js`, `ui/tour.js`, `selection.js`, `gizmo.js`, `lod.js`)
 
 **Navigation** (`controls/`): `Navigator` replaces OrbitControls with the same surface (`target`,
@@ -521,7 +581,10 @@ took (it disables `controls` while dragging a block, as before).
 
 **Picking** (`pick()`): ports on blocks that show them (pin + shell meshes) > sub pickables > faces > bodies > connections
 (the `pickTube` and the end rings; the hit carries `end: 'from' | 'to' | null` from
-`Connection3D.endNear`) > group frames. Faces receive `{ type: down | drag | up | click, u, v }`
+`Connection3D.endNear`) > group frames. A hit on a face, sub or body is first asked for a **field**
+(`_fieldAt` → `Block3D.fieldAt`, §8d): a field whose mode is not `through` captures the press
+(`pressField`, no block drag), and a double-click on any field opens the editor. Otherwise faces
+receive `{ type: down | drag | up | click, u, v }`
 in canvas coordinates; a face that handles `down` captures the drag (slider), otherwise the press
 is a normal block drag and a click (no movement) is delivered on release (device tap, button).
 Moves are recorded as one `transform` command per drag; the gizmo records one per handle drag.
@@ -624,7 +687,8 @@ What the menus add beyond the older controls, all in `main.js` and `serialize.js
 - **Shortcuts** the menus bind: `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+O`, `Ctrl+X` / `Ctrl+C`
   (with a selection), `Shift+?` for the shortcut sheet, `I` for the performance stats, `Ctrl+K`
   for the command palette (§9d; a capture-phase listener, so it also works from a panel field),
-  `2` for the 2D editing mode and `L` for Auto-layout (§9f).
+  `2` for the 2D editing mode, `L` for Auto-layout and `M` for the snap master switch (§9f).
+  `Enter` with one block selected edits its first face field in place (§8d).
 - **Help pages** (`ui/help-dialogs.js`, on the Connections modal shell): the keyboard shortcut
   sheet (fixed keys from `GLOBAL_SHORTCUTS` plus the active preset's `nav.sheet()`) and About.
 
@@ -757,16 +821,27 @@ never saved, off at boot). Turning it on does four things at once:
   the flat card's projected box, the block tooltip sits past its top edge, `Shift` while dragging
   means "no snap" instead of "lift".
 
-**Snapping** (`snap` in `plan.js`, *View → Snap to grid*, `localStorage["proto3d.snap.v1"]`, on by
-default, 2D and 3D alike). While a set of blocks is dragged, `Interaction._applySnap` first looks
-for an **alignment**: an edge or centre (x: left / right / centre, z: top / bottom / centre) of the
-dragged set's footprint box that lands within `_snapThreshold` (8 px in world units, clamped
-0.12–0.9) of any other visible block's — the closest wins per axis and the set snaps onto it.
-Otherwise the anchor block's centre lands on the grid (`snap.size` 1; `Ctrl` while dragging uses
-`snap.fine` 0.5). `Shift` held during the drag disables both. The guides live in `ui/guides.js`:
-an SVG over the window (`#guides`, pointer-events none) holding world-space segments re-projected
-every frame — an accent line spanning both blocks for an alignment, dashed ticks beside the block's
-centre lines for a grid snap — set on every move and cleared on release or cancel.
+**Snapping** (`snap` in `plan.js`, *View → Snap ▸*, the magnet toggle `#btn-snap`, the `M` key, the
+*Snap* section of the Workspace panel, `localStorage["proto3d.snap.v1"]`, 2D and 3D alike). The
+settings are a **master switch** (`snap.on`, `set / toggle`) plus independent, persisted toggles
+(`snap.setOption(key, v)`, `snap.active(kind)` = master and toggle both on): `grid` with `gridSize`
+(one of `GRID_SIZES` 0.25 / 0.5 / 1 / 2 units), `objects`, `ports`, `rotation` and `scale`. The
+round-4 shape `{ on, size, fine }` is migrated on load; `snap.summary()` is the one-line state the
+toggle's tooltip and the toasts show. While a set of blocks is dragged, `Interaction._applySnap`
+decides per axis, the most specific kind winning within `_snapThreshold` (8 px in world units,
+clamped 0.12–0.9): on z, **ports** first — among the cables between a dragged block and a block that
+stays, the one whose two pins come closest to level (same world z, the axis cables run across;
+`_portSnap`) shifts the set so the cable runs straight; then **objects** — an edge or centre (x:
+left / right / centre, z: top / bottom / centre) of the dragged set's footprint box that lands within
+the threshold of any other visible block's; then the **grid** — the anchor block's centre lands on
+`gridSize` (`Ctrl` while dragging halves the pitch). Grid and objects may be on together; everything
+off (or the master off, or `Shift` held during the drag) is free movement. The gizmo follows the same
+settings (`Gizmo.applySnap`): `rotationSnap` 15° (`ROTATION_STEP`), `scaleSnap` 0.25 (`SCALE_STEP`)
+and `translationSnap` = the grid pitch; `snap.rotationValue / scaleValue` apply the steps to a bare
+number. The guides live in `ui/guides.js`: an SVG over the window (`#guides`, pointer-events none)
+holding world-space segments re-projected every frame — an accent line spanning both blocks for an
+alignment, a dashed accent line pin to pin for a port snap, dashed ticks beside the block's centre
+lines for a grid snap — set on every move and cleared on release or cancel.
 
 **Auto-layout** (`layout.js`; *Edit → Auto-layout*, key `L`, the mini toolbar with two or more
 blocks selected, the palette). `layoutPlan(world, nodes)` arranges the selection (two or more) or
@@ -811,7 +886,9 @@ and `pickJSONFile({ withName })` (§9b).
 - **A component**: one file under `src/components/<category>/`, `registry.register({...})`, import
   it in `components/index.js`. See the worked example in `README.md`. Give the face
   `portAnchors({ w, h })` (face px per port key) when it has an identifiable region per port, so
-  the pins sit level with what they change (§7c); leave it out to get the centred stack.
+  the pins sit level with what they change (§7c); leave it out to get the centred stack. Register
+  the text a user should be able to change on the face with `beginFields` in `render` (§8d), so
+  a double-click edits it in place and the panel is only needed for the rest.
 - **A custom 3D body**: add `body3d` to the definition (§8b) — `portAnchors(node)` in body units
   for content-aligned pins, or `ports(node)` for explicit positions; add `panel(api, block)` when
   it owns data the generic param controls cannot edit, and mark those params `hidden`.

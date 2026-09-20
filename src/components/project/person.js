@@ -7,7 +7,7 @@
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { palette, typography } from '../../theme.js';
-import { clear, drawText, roundRect, font, PAD, drawAvatar, drawBar, drawCaps, drawDivider, fitLine, tabular } from '../../faces.js';
+import { clear, drawText, roundRect, font, PAD, drawAvatar, drawBar, drawCaps, drawDivider, fitLine, tabular, beginFields } from '../../faces.js';
 import { initials, fmtDate, PRIORITY_COLOURS, daysUntil } from '../../pm/model.js';
 import { personTasks, groupByColumn } from '../../pm/relations.js';
 import { buildPersonPanel } from '../../pm/panel-pm.js';
@@ -59,10 +59,17 @@ export default registry.register({
       drawAvatar(g, initials(params.name), P + r, P + r, r, params.colour || palette.faceAccent);
       const x = P + 2 * r + 16;
       g.textAlign = 'left'; g.textBaseline = 'alphabetic';
-      g.fillStyle = palette.faceText; g.font = font(typography.scale.title, 600);
-      g.fillText(fitLine(g, params.name || '—', w - x - P - 150), x, P + 28);
-      g.fillStyle = palette.faceDim; g.font = font(typography.scale.subtitle, 500);
-      g.fillText(fitLine(g, params.role || '', w - x - P - 150), x, P + 52);
+      // name and role are editable where they are drawn (double-click)
+      const F = beginFields(instance);
+      const tw = w - x - P - 150;
+      if (!F.add({ id: 'name', kind: 'text', param: 'name', label: 'name', rect: { x, y: P + 2, w: tw, h: 32 }, placeholder: 'Name', font: { size: typography.scale.title, weight: 600 } }).editing) {
+        g.fillStyle = palette.faceText; g.font = font(typography.scale.title, 600);
+        g.fillText(fitLine(g, params.name || '—', tw), x, P + 28);
+      }
+      if (!F.add({ id: 'role', kind: 'text', param: 'role', label: 'role', rect: { x, y: P + 36, w: tw, h: 22 }, placeholder: 'Role', font: { size: typography.scale.subtitle, weight: 500, color: palette.faceDim } }).editing) {
+        g.fillStyle = palette.faceDim; g.font = font(typography.scale.subtitle, 500);
+        g.fillText(fitLine(g, params.role || '', tw), x, P + 52);
+      }
       const load = outputs.load ?? open.length, cap = Math.max(1, params.capacity);
       const bw = 132, bx = w - bw - P, by = P + 22;
       tabular(g); g.font = font(14, 600); g.textAlign = 'right'; g.fillStyle = load > cap ? palette.faceBad : palette.faceText;

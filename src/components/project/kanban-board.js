@@ -3,7 +3,8 @@
 // due date, tag pills, checklist progress, lock glyph when blocked), a "+" tile at the foot of
 // every column, dashed arcs for card dependencies. Cards are child pickables: click selects one
 // (the panel shows the card editor), drag moves it to another column / position with a ghost and
-// a drop slot, drop it on a Person block to assign it.
+// a drop slot, drop it on a Person block to assign it. Double-click a card title or a column title
+// to rename it where it is; a click on a column's "+" tile types the new card's title in place.
 //
 // Relationships, not just values: People plugged into the `people` slot (a multi input that
 // grows one slot per person) change how the board is laid out — `people view` highlights their
@@ -19,7 +20,7 @@ import { palette, states, sizes, hex, setLabelText, materials } from '../../them
 import { roundRect, font, drawChip, fitLine, tabular, bitmapFor } from '../../faces.js';
 import { panelGeometry, slabGeometry, outlineGeometry } from '../../geometry.js';
 import {
-  normalizeBoard, boardStats, flatCards, pushBurndown, addCard, moveCard, updateCard, findCard, findColumn, isBlocked, isOverdue,
+  normalizeBoard, boardStats, flatCards, pushBurndown, addCard, moveCard, updateCard, updateColumn, findCard, findColumn, isBlocked, isOverdue,
   initials, checklistRatio, PRIORITY_COLOURS, fmtDate, lastColumn, daysUntil, coverRecord,
 } from '../../pm/model.js';
 import { commitBoard } from '../../pm/board-ops.js';
@@ -79,7 +80,7 @@ function assigneeColour(node, name) {
 }
 
 /* ---------------- card face (2D canvas on the slab) ---------------- */
-export function drawCard(g, w, h, card, { blocked = false, overdue = false, selected = false, hovered = false, colour = null, done = false, tag = null, flag = false } = {}) {
+export function drawCard(g, w, h, card, { blocked = false, overdue = false, selected = false, hovered = false, colour = null, done = false, tag = null, flag = false, editing = false } = {}) {
   // the card body is the extruded slab itself: paint edge to edge, the geometry rounds the corners
   g.clearRect(0, 0, w, h);
   g.fillStyle = hex(palette.pmCard); g.fillRect(0, 0, w, h);
@@ -110,8 +111,8 @@ export function drawCard(g, w, h, card, { blocked = false, overdue = false, sele
   if (lines.length < 2) lines.push(line);
   if (lines.length > 2) lines.length = 2;
   if (words.join(' ') !== lines.join(' ')) lines[1] = fitLine(g, lines[1], maxW);
-  lines.forEach((l, i) => g.fillText(l, P, 16 + i * 30));
-  if (done) { g.strokeStyle = dim; g.lineWidth = 1.5; g.beginPath(); g.moveTo(P, 29); g.lineTo(P + Math.min(maxW, g.measureText(lines[0]).width), 29); g.stroke(); }
+  if (!editing) lines.forEach((l, i) => g.fillText(l, P, 16 + i * 30));   // the inline editor sits over the title while it is edited
+  if (done && !editing) { g.strokeStyle = dim; g.lineWidth = 1.5; g.beginPath(); g.moveTo(P, 29); g.lineTo(P + Math.min(maxW, g.measureText(lines[0]).width), 29); g.stroke(); }
   // lock glyph when blocked, small flag when due after the milestone
   let gx = w - 34 - coverW;
   if (blocked) {
@@ -175,6 +176,26 @@ const body3d = {
       in: { people: lanes ? laneAreaTop - 0.19 : L.colTop - 0.42, milestone: L.top - TOP / 2 - 0.08, cover: topCard, moveTask: cards, addTask: L.colBottom + 0.15 + ADD_H / 2 },
       out: { progress: L.colTop - 0.42, done: topCard, moved: cards, tasks: cards - 0.2 },
     };
+  },
+  /**
+   * Editable regions (ui/field-editor.js), body units: every card's title and every column's title
+   * (double-click; presses and drags still move cards and select columns) and each "+" tile, where
+   * a click types the new card's title. Writes go through `commitBoard` (undoable) and select the card.
+   */
+  fields(node) {
+    const L = layout(node), out = [];
+    const write = (res, label, api, sub) => { if (!commitBoard(node, api.history, res, label)) return; if (sub) node.selectSub(sub, api.selection); };
+    boardOf(node).columns.forEach((col, ci) => {
+      const cx = L.colX(ci);
+      out.push({ id: `col:${col.id}`, kind: 'text', label: 'column title', mode: 'through', sub: { kind: 'column', id: col.id }, local: { x: cx - COL_W / 2 + 0.22 + (COL_W - 1.3) / 2, y: L.colTop - 0.42, w: COL_W - 1.3, h: 0.34, z: 0.1 }, font: { labelSize: 0.19, weight: 600, align: 'left' }, get: () => findColumn(boardOf(node), col.id)?.title || '', set: (v, api) => { const t = String(v).trim(); if (t) write(updateColumn(boardOf(node), col.id, { title: t }), 'Rename column', api, { kind: 'column', id: col.id }); } });
+      out.push({ id: `add:${col.id}`, kind: 'text', label: 'new card', mode: 'open', placeholder: 'New card', local: { x: cx, y: L.colBottom + 0.15 + ADD_H / 2, w: CARD_W, h: ADD_H, z: 0.1 }, font: { size: 20, weight: 600, align: 'center' }, get: () => '', set: (v, api) => { const t = String(v).trim(); if (!t) return; const res = addCard(boardOf(node), col.id, { title: t }); write(res, 'Add card', api, { kind: 'card', id: res.card.id }); } });
+    });
+    for (const [id, e] of node._cards) {
+      if (!e.group.visible) continue;
+      const p = e.group.position, P = 22 / sizes.face.pxPerUnit, tw = CARD_W - (22 + 18) / sizes.face.pxPerUnit;
+      out.push({ id: `card:${id}`, kind: 'text', label: 'card title', mode: 'through', sub: { kind: 'card', id }, local: { x: p.x - CARD_W / 2 + P + tw / 2, y: p.y + CARD_H / 2 - (16 + 30) / sizes.face.pxPerUnit, w: tw, h: 0.5, z: p.z + CARD_D / 2 }, font: { size: 25, weight: 600, align: 'left', color: palette.pmCardText }, bg: hex(palette.pmCard), get: () => findCard(boardOf(node), id)?.card.title || '', set: (v, api) => { const t = String(v).trim(); if (t) write(updateCard(boardOf(node), id, { title: t }), 'Rename card', api, { kind: 'card', id }); } });
+    }
+    return out;
   },
   build(node, h) {
     node._colH = COL_H;
@@ -263,6 +284,7 @@ const body3d = {
       // column title in small caps + a count pill at the right
       const title = node.childLabel(col.title, { size: 0.19, color: 'text', weight: 600, caps: true, spacing: 0.08, maxWidth: COL_W - 1.3 }, [0, L.colTop - 0.42, 0.1]);
       title.position.x = cx - COL_W / 2 + 0.22 + title.userData.worldW / 2;
+      if (node._editing === `col:${col.id}`) title.visible = false;   // the inline editor sits over it
       const countText = mode === 'filter' ? `${shown.length} of ${col.cards.length}` : `${col.cards.length}${col.wipLimit ? ' / ' + col.wipLimit : ''}`;
       const count = node.childLabel(countText, { size: 0.18, color: over ? '#ff5c6c' : 'textDim', weight: 600 }, [0, L.colTop - 0.42, 0.11]);
       const pillW = count.userData.worldW + 0.26;
@@ -310,7 +332,8 @@ const body3d = {
       const add = new THREE.Mesh(panelGeometry(CARD_W, ADD_H, 0.05, { radius: 0.1, bevel: 0.006 }), materials.frosted(palette.pmCard, 0.45));
       add.position.set(cx, L.colBottom + 0.15 + ADD_H / 2, 0.1);
       node.childSub(add, { kind: 'add', id: col.id });
-      node.childLabel('+', { size: 0.3, color: 'textDim', weight: 500 }, [cx, L.colBottom + 0.15 + ADD_H / 2, 0.14], true);
+      const plus = node.childLabel('+', { size: 0.3, color: 'textDim', weight: 500 }, [cx, L.colBottom + 0.15 + ADD_H / 2, 0.14], true);
+      if (node._editing === `add:${col.id}`) plus.userData.alpha = 0;
       // far-LOD bar: card count as a column of colour
       const bh = Math.min(L.colH - 1.6, 0.35 + col.cards.length * 0.55);
       const bar = new THREE.Mesh(panelGeometry(COL_W * 0.55, bh, 0.16, { radius: 0.2 }), materials.panel(node.headerColor(), { emissive: node.headerColor(), emissiveIntensity: 0.3 }));
@@ -351,7 +374,7 @@ const body3d = {
     entry.plane.draw((g, w, h) => drawCard(g, w, h, entry.card, {
       blocked: isBlocked(board, entry.card), overdue: isOverdue(entry.card), done: entry.column === lastColumn(board),
       selected: sel?.kind === 'card' && sel.id === entry.card.id, hovered: hov?.kind === 'card' && hov.id === entry.card.id,
-      colour: assigneeColour(node, entry.card.assignee), tag: entry.tag, flag: entry.flag,
+      colour: assigneeColour(node, entry.card.assignee), tag: entry.tag, flag: entry.flag, editing: node._editing === `card:${entry.card.id}`,
     }));
     // highlight view: cards of people who are not connected fade back
     const o = entry.dim ? 0.3 : 1;

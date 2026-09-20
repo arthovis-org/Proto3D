@@ -2,7 +2,8 @@
 // every task is a bar in its own row, coloured by assignee, priority or column, with its title on
 // the bar face; milestones are small flags on the rail; a translucent "today" plane cuts the
 // chart. Feed it a board's `tasks` output (cards with due dates / estimates become bars) or edit
-// its own task list in the panel; dragging a bar's right-hand handle in 3D changes its due date.
+// its own task list in the panel; dragging a bar's right-hand handle in 3D changes its due date
+// and a double-click on one of its own bars renames the task where it is.
 import * as THREE from 'three';
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
@@ -51,6 +52,21 @@ const body3d = {
   titleAlign: 'left',
   /** Ports level with their content (shape3d.js → alignPorts): `tasks` / `overdue` with the bar rows, `milestones` / `next milestone` with the flags on the rail. */
   portAnchors: (node) => { const bars = CHART_TOP - 0.25 - (node._rowH ?? 0.72) / 2, flags = -H / 2 + RAIL - 0.25 + 1.0; return { in: { tasks: bars, milestones: flags }, out: { overdue: bars, next: flags } }; },
+  /** Editable regions (ui/field-editor.js): the label on each of the timeline's own bars (fed tasks are edited on their board). */
+  fields(node) {
+    return (node._bars || []).filter((b) => b.own).map((b) => ({
+      id: `task:${b.id}`, kind: 'text', label: 'task', mode: 'through', sub: { kind: 'task', id: b.id },
+      local: { x: (b.x0 + b.x1) / 2, y: b.y, w: Math.max(0.6, b.x1 - b.x0 - b.barH), h: b.barH - 0.04, z: 0.215 },
+      font: { size: Math.min((b.barH - 0.04) * 120 * 0.5, 26), weight: 500, color: '#ffffff', align: 'left' }, bg: b.colour,
+      get: () => (node.params.tasks || []).find((t) => t.id === b.id)?.title || '',
+      set: (v, api) => {
+        const title = String(v).trim(); if (!title) return;
+        const before = clone(node.params.tasks || []), after = before.map((t) => (t.id === b.id ? { ...t, title } : t));
+        api.history.execute({ label: 'Rename task', do: () => { node.params.tasks = clone(after); node.faceDirty = true; api.world.changed('param'); }, undo: () => { node.params.tasks = clone(before); node.faceDirty = true; api.world.changed('param'); } });
+        node.selectSub({ kind: 'task', id: b.id }, api.selection);
+      },
+    }));
+  },
   build(node, h) {
     const back = h.part(h.panelGeometry(W, H, DEPTH, { radius: 0.36 }), h.materials.body(), { theme: () => palette.body });
     back.position.z = -DEPTH / 2 + 0.01;
@@ -90,11 +106,13 @@ const body3d = {
     const n = list.length;
     const rowH = n ? Math.min(0.72, CHART_H / n) : 0.7;
     const barH = rowH * 0.66;
+    node._bars = [];   // bar geometry for the field editor (fields)
     list.forEach((t, i) => {
       const x0 = xOf(R, t.start), x1 = Math.max(x0 + 0.25, xOf(R, t.end));
       const y = CHART_TOP - 0.25 - rowH * i - rowH / 2;
       const len = x1 - x0;
       const col = colourFor(t, mode, node);
+      node._bars.push({ id: t.id, own: !!t.own, x0, x1, y, barH, colour: col });
       const bar = new THREE.Mesh(node._helpers().panelGeometry(len, barH, 0.1, { radius: barH / 2, bevel: 0.012, curveSegments: 8 }), node._helpers().materials.panel(new THREE.Color(col), { transparent: t.done, opacity: t.done ? 0.45 : 1 }));
       bar.position.set((x0 + x1) / 2, y, 0.16);
       const sub = { kind: 'task', id: t.id, own: !!t.own };
@@ -106,6 +124,7 @@ const body3d = {
       plane.mesh.position.set((x0 + x1) / 2, y, 0.215);
       plane.draw((g, w, h) => {
         g.clearRect(0, 0, w, h);
+        if (node._editing === `task:${t.id}`) return;   // the inline editor sits over the label
         g.fillStyle = '#ffffff'; g.font = font(Math.min(h * 0.5, 26), 500); g.textBaseline = 'middle'; g.textAlign = 'left';
         const s = fitLine(g, t.title, w - 8);
         if (w > 30) g.fillText(s, 4, h / 2);

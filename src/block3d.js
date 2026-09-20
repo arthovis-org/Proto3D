@@ -359,6 +359,8 @@ export class Block3D extends THREE.Group {
     this.face = null;
     this.faceDirty = true;
     this.subSelection = null;  // { kind, id } — a child pickable (card, column, item) the panel edits
+    this._fields = null;       // editable regions the face registered on its last render (faces.js beginFields)
+    this._editing = null;      // the field id the inline editor is open on (ui/field-editor.js)
     this.world = null;
     this.portLabelSide = 'outside';  // port names ride the wire just outside the body; 'inside' for plain slabs with no content behind them
     this.dropTarget = false;         // a card is being dragged over this block (assign on drop)
@@ -564,6 +566,60 @@ export class Block3D extends THREE.Group {
   }
   /** Emit a pulse on an output from outside evaluation (face click, key press, timer). */
   emit(key, payload) { return this.world?.engine ? this.world.engine.emit(this, key, payload) : false; }
+
+  /* ---------- fields: editable regions (faces.js beginFields, ui/field-editor.js) ---------- */
+  /**
+   * Every editable region on this block: what the face renderer registered (`beginFields`, face
+   * px), `def.face.fields(ctx)` (the same, computed on demand) and `def.body3d.fields(node)`
+   * (`local: { x, y, w, h, z }` in body units, centre-based — a card title, a flag's date).
+   */
+  fields() {
+    const out = [];
+    if (this._fields) out.push(...this._fields);
+    const F = this.def.face;
+    if (F?.fields && this.face) { try { out.push(...(F.fields(this._faceCtx(this.rt.ctx || {})) || [])); } catch (_) { /* a broken hint never breaks picking */ } }
+    const B = this.def.body3d;
+    if (B?.fields) { try { out.push(...(B.fields(this) || [])); } catch (_) { /* same */ } }
+    return out;
+  }
+  /** The field under a pick — face fields by canvas uv (origin top-left), body fields by the hit point in local space; the smallest region wins (a chip inside a text block). */
+  fieldAt({ uv = null, point = null } = {}) {
+    let best = null, bestArea = Infinity;
+    const local = point ? this.worldToLocal(point.clone()) : null;
+    for (const f of this.fields()) {
+      let hit = false, area = 0;
+      if (f.rect && uv && this.face) {
+        const px = uv.u * this.face.cw, py = uv.v * this.face.ch, r = f.rect;
+        hit = px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h; area = r.w * r.h;
+      } else if (f.local && local) {
+        const L = f.local;
+        hit = Math.abs(local.x - L.x) <= L.w / 2 && Math.abs(local.y - L.y) <= L.h / 2 && Math.abs(local.z - (L.z ?? this.depth / 2)) <= (L.reach ?? 0.8); area = L.w * L.h;
+      }
+      if (hit && area < bestArea) { best = f; bestArea = area; }
+    }
+    return best;
+  }
+  /** World-space corners of a field (top-left, top-right, bottom-right, bottom-left), or null. */
+  fieldCorners(f, out = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]) {
+    this.updateWorldMatrix(true, false);
+    if (f.rect && this.face?.mesh) {
+      const m = this.face.mesh; m.updateWorldMatrix(true, false);
+      const { w, h, cw, ch } = this.face, r = f.rect;
+      const X = (px) => (px / cw - 0.5) * w, Y = (py) => (0.5 - py / ch) * h;
+      out[0].set(X(r.x), Y(r.y), 0.01); out[1].set(X(r.x + r.w), Y(r.y), 0.01); out[2].set(X(r.x + r.w), Y(r.y + r.h), 0.01); out[3].set(X(r.x), Y(r.y + r.h), 0.01);
+      for (const v of out) m.localToWorld(v);
+      return out;
+    }
+    if (f.local) {
+      const L = f.local, z = (L.z ?? this.depth / 2) + 0.01;
+      out[0].set(L.x - L.w / 2, L.y + L.h / 2, z); out[1].set(L.x + L.w / 2, L.y + L.h / 2, z); out[2].set(L.x + L.w / 2, L.y - L.h / 2, z); out[3].set(L.x - L.w / 2, L.y - L.h / 2, z);
+      for (const v of out) this.localToWorld(v);
+      return out;
+    }
+    return null;
+  }
+  /** The field editor is open on field `id` (null = none): renderers leave that text out and the body redraws. */
+  setEditing(id) { const v = id || null; if (this._editing === v) return; this._editing = v; this.faceDirty = true; }
 
   /* ---------- state / look ---------- */
   setTitle(text) { this.title = String(text); if (this.titleLabel) setLabelText(this.titleLabel, this.title); this.faceDirty = true; }

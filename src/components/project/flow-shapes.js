@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
-import { states, setLabelText } from '../../theme.js';
+import { states, setLabelText, hex } from '../../theme.js';
 import { pick, compareValues, OPS, parseLiteral } from '../util.js';
 
 const DEPTH = 0.2;
@@ -50,6 +50,8 @@ function commonBuild(node, h, geo) {
   node.rim = h.rim(geo.clone().scale(1.03, 1.06, 1.3));
 }
 const stepText = (node) => (node.params.duration > 0 ? `${node.params.duration} ms` : 'instant');
+/** The shape's label (its title) as an editable region over the title label (ui/field-editor.js). */
+const titleField = (node, x, y, w, size) => [{ id: 'title', kind: 'text', prop: 'title', label: 'label', local: { x, y, w, h: size * 1.3, z: DEPTH / 2 + 0.03 }, placeholder: 'Label', font: { labelSize: size, weight: 600, color: '#ffffff', align: 'center' }, bg: hex(tint(node)) }];
 
 /* ---------------- Flow Terminal ---------------- */
 registry.register({
@@ -66,6 +68,7 @@ registry.register({
     titleAt: () => [-0.35, 0.02, DEPTH / 2 + 0.03],
     titleSize: 0.34, titleColor: '#ffffff',
     ports: () => ({ in: [[-2.1, 0, 0]], out: [[2.1, 0, 0]] }),
+    fields: (node) => titleField(node, -0.35, 0.02, 2.4, 0.34),
     build(node, h) {
       commonBuild(node, h, extrude(stadium(4.2, 1.5)));
       // Run button (start mode): a disc on the right end — a child pickable
@@ -115,6 +118,7 @@ registry.register({
     titleAt: () => [0, 0.16, DEPTH / 2 + 0.03],
     titleSize: 0.36, titleColor: '#ffffff',
     ports: () => ({ in: [[-2.2, 0, 0]], out: [[2.2, 0, 0]] }),
+    fields: (node) => titleField(node, 0, 0.16, 3.6, 0.36),
     build(node, h) {
       commonBuild(node, h, h.panelGeometry(4.4, 1.7, DEPTH, { radius: 0.3 }));
       node.subLabel = h.label(stepText(node), { size: 0.18, color: '#ffffff', weight: 500 }, [0, -0.35, DEPTH / 2 + 0.03], { detail: true });
@@ -162,6 +166,7 @@ registry.register({
     titleSize: 0.32, titleColor: '#ffffff',
     // inputs on the left edge (in at the tip, condition below it), outputs on the right edge (yes up, no down)
     ports: () => ({ in: [[-2.4, 0.0, 0], [-1.6, -0.45, 0]], out: [[1.6, 0.45, 0], [1.6, -0.45, 0]] }),
+    fields: (node) => titleField(node, 0, 0.18, 2.8, 0.32),
     build(node, h) {
       commonBuild(node, h, extrude(diamond(4.8, 2.6)));
       node.ruleLabel = h.label('', { size: 0.18, color: '#ffffff', weight: 500, maxWidth: 2.6 }, [0, -0.28, DEPTH / 2 + 0.03], { detail: true });

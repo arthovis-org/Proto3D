@@ -1,9 +1,10 @@
-// Sticky Note — a tilted square slab in a paper colour with the note text on its face. Edit the
-// text and colour in the panel or feed `text` from anything upstream; `text` passes it on.
+// Sticky Note — a tilted square slab in a paper colour with the note text on its face. Double-click
+// the note to write on it (Enter saves), or edit the text and colour in the panel, or feed `text`
+// from anything upstream; `text` passes it on.
 import * as THREE from 'three';
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
-import { clear, drawText } from '../../faces.js';
+import { clear, drawText, beginFields } from '../../faces.js';
 import { asText } from '../util.js';
 
 const S = 3.0, D = 0.1;
@@ -18,7 +19,7 @@ export default registry.register({
   inputs: [{ key: 'text', label: 'text', type: 'text', optional: true }],
   outputs: [{ key: 'text', label: 'text', type: 'text' }],
   params: [
-    { key: 'text', label: 'text', type: 'text', default: 'Remember to…' },
+    { key: 'text', label: 'text', type: 'text', default: 'Remember to…', multiline: true },
     { key: 'colour', label: 'colour', type: 'color', default: '#f5d76e' },
     { key: 'tilt', label: 'tilt (°)', type: 'number', default: -4, min: -30, max: 30, step: 1 },
   ],
@@ -46,12 +47,15 @@ export default registry.register({
   },
   evaluate({ inputs, params }) { return { text: inputs.text !== undefined ? asText(inputs.text) : String(params.text ?? '') }; },
   face: {
-    render(g, w, h, { params, outputs }) {
+    render(g, w, h, { params, outputs, inputs, instance }) {
       clear(g, w, h, params.colour || '#f5d76e', 6);
       // faint ruled lines like paper
       g.strokeStyle = 'rgba(0,0,0,0.06)'; g.lineWidth = 1.5;
       for (let y = 64; y < h; y += 44) { g.beginPath(); g.moveTo(24, y); g.lineTo(w - 24, y); g.stroke(); }
-      drawText(g, outputs.text ?? params.text ?? '', 26, 22, w - 52, h - 44, { size: 40, min: 16, weight: 600, color: ink(params.colour), align: 'left', valign: 'top', lineHeight: 1.3 });
+      const F = beginFields(instance);
+      const fed = inputs && inputs.text !== undefined;   // text arriving on the input is shown, not edited
+      if (!F.editing('text')) { const r = drawText(g, outputs.text ?? params.text ?? '', 26, 22, w - 52, h - 44, { size: 40, min: 16, weight: 600, color: ink(params.colour), align: 'left', valign: 'top', lineHeight: 1.3 }); if (instance) instance._notePx = r.px; }
+      if (!fed) F.add({ id: 'text', kind: 'multiline', param: 'text', label: 'note', rect: { x: 26, y: 22, w: w - 52, h: h - 44 }, placeholder: 'Write a note…', font: { size: instance?._notePx || 40, weight: 600, color: ink(params.colour), align: 'left', lineHeight: 1.3 }, bg: params.colour || '#f5d76e' });
     },
   },
 });

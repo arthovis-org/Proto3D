@@ -4,8 +4,8 @@
 // the mini toolbar above the selection, the command palette (Ctrl+K), the wiring switch,
 // navigation presets, first-run tour, LOD, the AI layer (providers, key vault, jobs) with its
 // Connections page, model browser and job tray, the performance stats, autosave, recent projects,
-// the 2D editing mode (plan view, key 2) with grid snapping and Auto-layout (L), the Showcase scene
-// and the render loop. Exposes window.__proto for debugging / tests.
+// the 2D editing mode (plan view, key 2) with grid snapping and Auto-layout (L), inline editing of
+// face fields (double-click text on a face), the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
 import { createWorkspace } from './workspace.js';
 import { registry } from './components/index.js';
@@ -30,7 +30,8 @@ import { MiniToolbar } from './ui/mini-toolbar.js';
 import { CommandPalette, menuCommands } from './ui/command-palette.js';
 import { CableChips } from './cable-chips.js';
 import { Guides } from './ui/guides.js';
-import { isPlanOn, setPlan, snap } from './plan.js';
+import { FieldEditor } from './ui/field-editor.js';
+import { isPlanOn, setPlan, snap, GRID_SIZES, SNAP_KINDS } from './plan.js';
 import { layoutPlan, layoutCommand, updateTweens, tweening } from './layout.js';
 import { examples, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
@@ -80,6 +81,9 @@ const interaction = new Interaction({
   onTogglePanel: () => togglePanel(),
   onOpenPanel: () => togglePanel(true),
 });
+// edit face fields where they are drawn (double-click a note, a prompt, a card title…): an HTML editor projected over the face region
+const fieldEditor = new FieldEditor({ ws, world, history, selection, interaction, overlays, els: { editor: $('field-editor'), hover: $('field-hover') } });
+interaction.fieldEditor = fieldEditor;
 // the Navigator may swap the camera (orthographic view): everyone who holds a camera follows
 ws.onCameraSwap((cam) => { interaction.camera = cam; overlays.camera = cam; gizmo.control.camera = cam; });
 function frameAll(opts = {}) { return ws.frameBlocks([...world.nodes.filter((n) => n.visible), ...world.groups.filter((g) => g.collapsed)], { insetLeft: leftBar?.isOpen ? 300 : 0, ...opts }); }
@@ -89,7 +93,7 @@ const panel = new Panel({
   el: $('panel'), world, engine, ws, gizmo, history, selection, interaction,
   flow: { isEnabled: isFlowEnabled, setEnabled: (v) => { setFlowEnabled(v); syncToolbar(); }, getSpeed: getFlowSpeed, setSpeed: setFlowSpeed },
   wiring: { isOn: isWiringOn, set: (v) => setWiring(v) },
-  plan: { isOn: isPlanOn, set: (v) => setPlanView(v), snap },
+  plan: { isOn: isPlanOn, set: (v) => setPlanView(v), snap, setSnapOption: (k, v) => setSnapOption(k, v), toggleSnap: () => toggleSnap(), GRID_SIZES, SNAP_KINDS },
   onGizmoToggle: () => syncToolbar(),
 });
 
@@ -314,6 +318,7 @@ tool('btn-wiring', 'flow', 'Wiring — show or hide ports and cables (P). Cables
 tool('btn-flow', 'connection', 'Flow animation on cables', 'Flow animation');
 tool('btn-gizmo', 'gizmo', 'Move / rotate / scale gizmo (G) · W move, E rotate, R scale', 'Gizmo');
 tool('btn-plan', 'plan', '2D editing mode (2) · a top-down plan: drag to box-select, middle-drag or Space+drag pans, the wheel zooms, blocks snap to the grid · press again for 3D', '2D editing mode').setAttribute('aria-pressed', 'false');
+tool('btn-snap', 'snap', 'Snap (M)', 'Snap').setAttribute('aria-pressed', 'false');
 toolSep();
 tool('btn-theme', 'sun', 'Switch light / dark theme (T)', 'Theme');
 tool('btn-frame', 'frame', 'Frame everything (Home) · F frames the selection', 'Frame all');
@@ -333,6 +338,9 @@ function syncToolbar() {
   tb['btn-gizmo'].title = isPlanOn() ? 'Gizmo — hidden in the 2D editing mode: drag blocks to move them' : 'Move / rotate / scale gizmo (G) · W move, E rotate, R scale';
   tb['btn-plan'].classList.toggle('on', isPlanOn());
   tb['btn-plan'].setAttribute('aria-pressed', String(isPlanOn()));
+  tb['btn-snap'].classList.toggle('on', snap.on);
+  tb['btn-snap'].setAttribute('aria-pressed', String(snap.on));
+  tb['btn-snap'].title = `${snap.summary()} · M toggles · Shift while dragging skips it, Ctrl halves the grid · View → Snap for the kinds`;
   tb['btn-theme'].title = getTheme() === 'dark' ? 'Switch to the light theme (T)' : 'Switch to the dark theme (T)';
   tb['btn-theme'].querySelector('i').innerHTML = getTheme() === 'dark' ? icons.sun : icons.moon;
   const panelShown = !document.body.classList.contains('panel-hidden');
@@ -350,6 +358,8 @@ tb['btn-wiring'].addEventListener('click', () => { toggleWiring(); overlays.toas
 tb['btn-theme'].addEventListener('click', () => toggleTheme());
 tb['btn-gizmo'].addEventListener('click', () => setGizmo(!gizmo.enabled));
 tb['btn-plan'].addEventListener('click', () => setPlanView(!isPlanOn()));
+tb['btn-snap'].addEventListener('click', () => toggleSnap());
+snap.onChange(() => { syncToolbar(); panel.refresh(); });
 tb['btn-panel'].addEventListener('click', () => togglePanel());
 tb['btn-frame'].addEventListener('click', () => frameAll());
 tb['btn-help'].addEventListener('click', () => toggleHelp());
@@ -378,6 +388,16 @@ function setPlanView(on, { toast = true } = {}) {
   }
   syncToolbar(); panel.refresh();
   if (toast) overlays.toast(on ? '2D editing mode · drag on empty space to box-select · middle-drag or Space+drag pans · wheel zooms · 2 returns to 3D' : '3D view', on ? 3200 : 1000);
+}
+/** The master snap switch (M, the magnet toggle, View → Snap → Snap): the kinds keep their own settings. */
+function toggleSnap() {
+  snap.toggle();
+  overlays.toast(snap.on ? `${snap.summary()} · Shift while dragging skips it` : 'Snap off · free movement', 1800);
+}
+/** One snap kind on / off (View → Snap ▸, the panel); `gridSize` takes a pitch. */
+function setSnapOption(key, v) {
+  snap.setOption(key, v);
+  overlays.toast(snap.summary(), 1400);
 }
 /** Edit → Auto-layout: arrange the selected blocks (two or more) or every block, one undoable animated command. */
 function autoLayoutSelection(nodes = null) {
@@ -429,6 +449,7 @@ window.addEventListener('keydown', (e) => {
   switch (e.key.toLowerCase()) {
     case 'h': toggleHelp(); break;
     case 'l': autoLayoutSelection(); break;
+    case 'm': toggleSnap(); break;
     case 't': toggleTheme(); break;
     case 'p': toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on' : 'Wiring off', 1000); break;
     case 'g': setGizmo(!gizmo.enabled); break;
@@ -506,7 +527,16 @@ const menubar = new MenuBar({
       { label: 'Flow animation', hint: 'on cables', checked: isFlowEnabled(), run: () => { setFlowEnabled(!isFlowEnabled()); syncToolbar(); panel.refresh(); } },
       { sep: true },
       { label: '2D editing mode', hint: 'top-down plan: box-select, snap, wire and arrange', shortcut: '2', checked: isPlanOn(), run: () => setPlanView(!isPlanOn()) },
-      { label: 'Snap to grid', hint: 'moved blocks land on the grid and on neighbours\' edges · Shift skips, Ctrl is finer', checked: snap.on, run: () => { snap.toggle(); panel.refresh(); overlays.toast(snap.on ? 'Snap to grid on · Shift while dragging skips it, Ctrl snaps to half units' : 'Snap to grid off', 1800); } },
+      { label: 'Snap', hint: snap.summary().replace(/^Snap( ·)? ?/, '') || undefined, items: () => [
+        { label: 'Snap on / off', shortcut: 'M', hint: 'the master switch · Shift while dragging skips it', checked: snap.on, run: toggleSnap },
+        { sep: true },
+        { label: 'Grid', hint: `blocks land on ${snap.gridSize}-unit steps · Ctrl halves it`, checked: snap.grid, run: () => setSnapOption('grid', !snap.grid) },
+        { label: 'Grid size', hint: `${snap.gridSize} units`, items: () => GRID_SIZES.map((g) => ({ label: `${g} unit${g === 1 ? '' : 's'}`, radio: true, checked: snap.gridSize === g, run: () => setSnapOption('gridSize', g) })) },
+        { label: 'Objects', hint: 'edges and centres line up with neighbours', checked: snap.objects, run: () => setSnapOption('objects', !snap.objects) },
+        { label: 'Ports', hint: 'a pin lands level with the pin it is wired to · cables run straight', checked: snap.ports, run: () => setSnapOption('ports', !snap.ports) },
+        { label: 'Rotation', hint: '15° steps on the gizmo', checked: snap.rotation, run: () => setSnapOption('rotation', !snap.rotation) },
+        { label: 'Scale', hint: '0.25 steps on the gizmo', checked: snap.scale, run: () => setSnapOption('scale', !snap.scale) },
+      ] },
       { sep: true },
       { label: 'Gizmo', shortcut: 'G', checked: gizmo.enabled, disabled: isPlanOn(), hint: isPlanOn() ? 'hidden in 2D: drag to move' : undefined, run: () => setGizmo(!gizmo.enabled) },
       { label: 'Gizmo mode', items: () => [['translate', 'Move', 'W'], ['rotate', 'Rotate', 'E'], ['scale', 'Scale', 'R']].map(([m, l, k]) => ({ label: l, shortcut: k, radio: true, checked: gizmo.mode === m, run: () => { if (!gizmo.enabled) setGizmo(true); gizmo.setMode(m); syncToolbar(); } })) },
@@ -623,6 +653,7 @@ function frame() {
   interaction.update(t, dt);
   overlays.update();
   guides.update();
+  fieldEditor.update();      // the inline editor and its hover outline follow the face
   miniBar.update();
   jobsTray.update();
   tour.update(dt);
@@ -637,9 +668,9 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, palette, stats, chips, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, palette, stats, chips, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
-  plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap },
+  plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS },
   layout: { arrange: autoLayoutSelection, plan: (nodes) => layoutPlan(world, nodes), tweening },
   newProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },
