@@ -291,25 +291,28 @@ ul.ports .pcount, ul.ports .pdir { font-size: 11px; }
 .mtb-btn.accent:hover { background: var(--accent-soft); }
 .mtb-btn .mtb-text { font-size: 11.5px; font-weight: 600; letter-spacing: 0.01em; }
 .mtb-btn[data-action="more"] { margin-left: 1px; }
+.mtb-btn[data-action="edit"].on { padding-right: 7px; }
 .mtb-btn[data-action="delete"] + .mtb-btn, .mtb-btn[data-action="frame"] { position: relative; }
 .mtb-btn[data-action="delete"] + .mtb-btn::before, .mtb-btn[data-action="frame"]::before { content: ""; position: absolute; left: -1px; top: 5px; bottom: 5px; width: 1px; background: var(--border-strong); }
 
-/* Inline face editing (ui/field-editor.js): a faint accent outline over the editable region under the pointer, and the editor —
-   an HTML field placed exactly over the face text, in the face's own type (Inter, the face size scaled to the screen) and colours */
-#field-hover { position: fixed; left: 0; top: 0; z-index: 4; pointer-events: none; border: 1px solid var(--accent); border-radius: 6px; opacity: 0.6; box-shadow: 0 0 0 3px var(--accent-soft); }
-#field-editor { position: fixed; left: 0; top: 0; z-index: 5; display: flex; flex-direction: column; align-items: stretch; --fe-pad: 6px; --fe-r: 6px; }
+/* Edit mode (ui/field-editor.js): the editor is sized and typeset in face px and laid onto the face plane by a matrix3d computed
+   from the field's projected corners each frame (transform-origin 0 0), so box, text and caret share the face's perspective;
+   the face's own type (Inter) and colours. The select list is a flat menu under the field. */
+#field-editor { position: fixed; left: 0; top: 0; z-index: 5; display: block; transform-origin: 0 0; will-change: transform; --fe-pad: 6px; --fe-r: 6px; }
 #field-editor .fe-input {
   display: block; width: 100%; min-width: 0; margin: 0; padding: var(--fe-pad); border: 0; resize: none; overflow: hidden; outline: none;
   background: var(--fe-bg); color: var(--fe-color); font: inherit; line-height: inherit; text-align: inherit; border-radius: var(--fe-r);
-  box-shadow: 0 0 0 1.5px var(--fe-ring), 0 10px 28px rgba(0, 0, 0, 0.28); caret-color: var(--fe-accent);
+  box-shadow: 0 0 0 0.12em var(--fe-ring), 0 0.6em 1.6em rgba(0, 0, 0, 0.28); caret-color: var(--fe-accent);
 }
 #field-editor .fe-input:focus, #field-editor .fe-input:focus-visible { outline: none; }
 #field-editor .fe-input::placeholder { color: var(--fe-dim); opacity: 1; }
 #field-editor .fe-input::selection { background: var(--fe-accent); color: #fff; }
 #field-editor input.fe-input[type="date"] { min-height: 0; }
-#field-editor.bad .fe-input { box-shadow: 0 0 0 1.5px var(--danger), 0 10px 28px rgba(0, 0, 0, 0.28); }
-#field-editor .fe-error { align-self: flex-start; margin-top: 4px; font-size: 11px; line-height: 1.3; font-weight: 500; color: #fff; background: var(--danger); border-radius: 999px; padding: 2px 9px; text-align: left; }
-#field-editor .fe-hint { align-self: flex-end; margin-top: 4px; font-size: 10.5px; line-height: 1.3; font-weight: 500; letter-spacing: 0.01em; color: var(--dim); background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; white-space: nowrap; text-align: left; backdrop-filter: blur(8px); }
+#field-editor.bad .fe-input { box-shadow: 0 0 0 0.12em var(--danger), 0 0.6em 1.6em rgba(0, 0, 0, 0.28); }
+#field-editor .fe-error { display: inline-block; margin-top: 0.3em; font-size: 0.7em; line-height: 1.3; font-weight: 500; color: #fff; background: var(--danger); border-radius: 999px; padding: 0.15em 0.7em; text-align: left; }
+#field-editor[data-kind="select"] { transform-origin: 0 0; }
+#edit-hint { position: fixed; left: 0; top: 0; z-index: 4; pointer-events: none; font-size: 10.5px; line-height: 1.3; font-weight: 500; letter-spacing: 0.01em; color: var(--dim); background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; white-space: nowrap; backdrop-filter: blur(8px); box-shadow: var(--shadow); }
+body.touring #edit-hint { opacity: 0; }
 #field-editor .fe-list { display: flex; flex-direction: column; gap: 2px; padding: 5px; outline: none; background: var(--panel-solid); border: 1px solid var(--border-strong); border-radius: var(--r-m); box-shadow: var(--shadow); font: 12.5px/1.4 "Inter", "SF Pro Text", "Segoe UI", system-ui, sans-serif; font-weight: 500; color: var(--text); text-align: left; max-height: 260px; overflow: auto; }
 #field-editor .fe-option { text-align: left; background: none; border: 0; border-radius: var(--r-s); padding: 6px 10px; color: var(--text); }
 #field-editor .fe-option:hover { background: var(--field-hover); }

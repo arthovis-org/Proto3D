@@ -515,7 +515,7 @@ bar faces (title on the bar), device screens (`drawScreen`: flat gradient, slim 
 Canvas labels (`makeLabel`) share the family and support `caps` + `spacing` for small caps (column
 titles, kind labels).
 
-## 8d. Face fields: editing in place (`faces.js`, `block3d.js`, `ui/field-editor.js`)
+## 8d. Face fields: edit mode and the projected editor (`faces.js`, `block3d.js`, `ui/field-editor.js`)
 
 The properties panel is optional for the text a face shows: a renderer declares **fields** and the
 user edits them where they are drawn. In `render`, `const F = beginFields(instance)` resets the
@@ -539,41 +539,75 @@ that text out (`if (!F.add({…}).editing) drawText(…)`) and nothing doubles u
 `Block3D.fields()` merges the three sources, `fieldAt({ uv, point })` hit-tests them (face fields by
 canvas uv, body fields by the hit point in local space; the smallest region wins, so a chip inside a
 text block is picked over the block) and `fieldCorners(field)` gives the world corners the editor
-projects. **Modes** decide what a press does: `edit` (default) captures the press — never a block
-drag — a click selects, a double-click edits, a click on an *empty* field with a placeholder edits;
-`open` edits on a single click (the checklist's and the board's "+" rows); `through` leaves presses,
-drags and clicks as they were and edits only on a double-click (cards still drag, the Input button
-still fires); `delay` captures the press and hands a single click to the face after the double-click
-window (a checklist row still toggles) unless a second click arrives (`Interaction._fieldClick`,
-`DBL_MS` 300). `Enter` with one block selected opens its first field.
+projects.
 
-**The editor** (`FieldEditor`, `#field-editor`, `#field-hover`): hovering a field shows a faint
-accent outline over its projected rect and a text cursor (hidden at the far LOD and while anything
-is dragged, `Interaction.fieldBusy`). `open(block, field)` builds an HTML control — a textarea that
-grows with its content for text and multiline, a text input with ↑ ↓ nudges (`step`, Shift ×10) for
-numbers, a themed list for select, a date input, nothing for a checkbox (it toggles at once) or an
-action (it runs: the Generate model chip opens the model browser) — and every frame `_place`
-re-projects the four corners (`screenRect`), so the box follows the camera in 3D and in the plan.
-It is sized to the region and typeset like the face: Inter (or the mono stack), the face font
-scaled by css px per face px at that spot and clamped to **11–28 px** (`FONT_MIN / FONT_MAX`; when
-the clamp raises the type the box grows around the region's centre), the face background and text
-colours (`--fe-bg`, `--fe-color`, or the field's `bg` / `font.color`: a note keeps its paper, a
-card its card colour), an accent focus ring and a small hint pill (*Enter saves · Esc cancels · Tab
-next*). Enter commits (Shift+Enter is a newline in multiline), Esc cancels, blur commits (an invalid
-value is dropped instead), Tab / Shift+Tab commit and open the next / previous field on the same
-block (`tabbable`). A commit parses (`parse`, the Data face's JSON) and validates (`validate`); an
-error shows under the field and keeps it open. Writes go through `cmd.setParam` (label *Edit
-<label>*), `cmd.setTitle` for `prop: 'title'`, or the field's own `set` (boards use `commitBoard`,
-the timeline its task command), so every edit undoes and the panel's live fields show it; an
-unchanged value leaves no history entry. While open, `Interaction.editing` hides the mini toolbar
-and `isTyping` keeps the workspace shortcuts off. Fields are wired on: Sticky Note (text, unless fed),
-Text (text in source mode, template in template mode), Data (JSON in value mode, with a face),
-Input (the button label, `through`), Display (caption), Person (name, role), Prompt (the template
-as multiline plus every variable chip as its name), the Generate faces (the fallback prompt while
-nothing is connected; the model chip as an action), Checklist (item text, `delay`; a "+" row that
-adds an item), Kanban board (card titles and column titles, `through`; the "+" tile types the new
+**Nothing shows in normal use.** Hovering text draws no outline and changes no cursor; a click
+selects, a drag moves, face buttons, checklist rows and cards behave as they always did (the
+`mode` no longer changes what a press does, except `open`: a "+" row enters edit mode on a single
+click). **Edit mode** is per block, one at a time, held by `FieldEditor.mode` (`editBlock`):
+
+- *enter* — a double-click anywhere on the block (`Interaction.onDblClick`; on a field it opens
+  that field at once), `Enter` with the block selected (opens its first field), the pencil in the
+  mini toolbar, *Edit → Edit content* (also in the command palette); entering on another block
+  switches. *Leave* — `Esc` (once the editor is closed), a press on empty space or another block,
+  the pencil again (*Done*), a mode switch (`Interaction.cancel`), the block leaving the world or
+  the selection.
+- *look* — `Block3D.setEditMode(on)` turns the rim into a solid frame in the block's **category
+  accent** (`_rimLook`, above the selection blue) and redraws the face; `renderFace` then runs
+  `_drawFieldMarkers` after the renderer: a faint tint and a thin underline over every field with a
+  `rect` (the face accent, or the field's own ink on a chip or note paper; not on the field being
+  edited, nor on checkboxes and actions). Because the markers are pixels of the face canvas they
+  are in perspective by construction. A hint pill (`#edit-hint`) under the block's projected AABB
+  names the keys; the mini toolbar stays up with the pencil in its *Done* state; the panel shows
+  the block as on any selection.
+- *pointer* — the press is captured on the block (`Interaction.pressField`, `controls` off): a
+  click on a field opens its editor (every kind, a checkbox toggles, an action runs), a click
+  elsewhere on the block does nothing, no drag starts (leave edit mode to move it — Blender's
+  object vs edit mode). The cursor is `text` over a field, plain over the rest.
+- *keys* (no editor open) — `Tab` / `Shift+Tab` open the next / previous field after the focused
+  one (`step`), `Enter` opens the focused field (`openFocused`), `Esc` leaves. With the editor
+  open the editor's own keys apply (below) and `Esc` only closes it.
+
+**The editor** (`#field-editor`) sits *on the face plane*. `open(block, field)` builds an HTML
+control — a textarea that grows with its content for text and multiline, a text input with ↑ ↓
+nudges (`step`, Shift ×10) for numbers, a themed list for select, a date input — sized and typeset
+in **face px** (the field's logical rect plus a padding of 0.35 em, the face font size, Inter or
+the mono stack, the face background and text colours through `--fe-bg` / `--fe-color`, or the
+field's `bg` / `font.color`). Every frame `_place` projects the field's four corners
+(`screenQuad`), solves the unit-square → quad homography (`squareToQuad`, the 8-DOF closed form)
+composed with the element's inner box (`quadMatrix`) and writes it as a CSS `matrix3d` with
+`transform-origin: 0 0`, so box, text, caret and selection share the face's perspective in 3D and
+in the plan (the harness measures the inner box's mapped corners against the projected corners:
+under 0.05 px). A select's list is a flat menu under the field instead. Multiline and long values
+open with the caret at the end; short single-line values are selected. Enter commits
+(Shift+Enter is a newline in multiline), Esc cancels, blur commits (an invalid value is dropped
+instead), Tab / Shift+Tab commit and open the next / previous field on the same block (`next`
+redraws the face first, since a renderer may hide fields under the one being edited — the Prompt's
+chips). A commit parses (`parse`, the Data face's JSON) and validates (`validate`); an error shows
+under the field and keeps it open. Writes go through `cmd.setParam` (label *Edit <label>*),
+`cmd.setTitle` for `prop: 'title'`, or the field's own `set` (boards use `commitBoard`, the
+timeline its task command), so every edit undoes and the panel's live fields show it; an unchanged
+value leaves no history entry. `isTyping` keeps the workspace shortcuts off while the editor has
+focus.
+
+**The glide.** When the field opens with its line of text under `MIN_LINE_PX` (11 css px, from
+the css px per face px along the field's edges) or the face turned more than `MAX_FACE_ANGLE`
+(55°) from the view, `_maybeGlide` flies the camera (`ws.flyTo`, `GLIDE_S` 0.35 s) to
+`facingPose`: out along the face normal, aimed at the **block's face centre**, at the distance
+where the face spans `FACE_FILL` (60 %) of the viewport height (75 % of its width when that is
+farther); only when the field's text would still be under 11 px there does it move in on the
+field, never closer than the face filling the viewport. A flat face (the plan) is seen from
+straight above with the plan's own tilt. The editor opens at once and rides the flight. The pose
+before the glide comes back when edit mode ends, unless a hand moved the camera meanwhile (the
+Navigator's `start` event). *View → Glide to text when editing* (`glideSetting`,
+`localStorage["proto3d.editGlide.v1"]`, default on) turns it off. Fields are wired on: Sticky
+Note (text, unless fed), Text (text in source mode, template in template mode), Data (JSON in
+value mode, with a face), Input (the button label), Display (caption), Person (name, role), Prompt
+(the template as multiline plus every variable chip as its name), the Generate faces (the fallback
+prompt while nothing is connected; the model chip as an action), Checklist (item text; a "+" row
+that adds an item), Kanban board (card titles and column titles; the "+" tile types the new
 card's title), Timeline (its own bars' labels), Milestone (title, date) and the flow shapes
-(their label = title).
+(their label = title). Body fields (`local`) get the editor and the frame but no canvas marker.
 
 ## 9. Interaction model (`interaction.js`, `ui/overlays.js`, `ui/tour.js`, `selection.js`, `gizmo.js`, `lod.js`)
 
@@ -605,9 +639,10 @@ took (it disables `controls` while dragging a block, as before).
 
 **Picking** (`pick()`): ports on blocks that show them (pin + shell meshes) > sub pickables > faces > bodies > connections
 (the `pickTube` and the end rings; the hit carries `end: 'from' | 'to' | null` from
-`Connection3D.endNear`) > group frames. A hit on a face, sub or body is first asked for a **field**
-(`_fieldAt` → `Block3D.fieldAt`, §8d): a field whose mode is not `through` captures the press
-(`pressField`, no block drag), and a double-click on any field opens the editor. Otherwise faces
+`Connection3D.endNear`) > group frames. When a block is in **edit mode** (§8d) a press on it is
+captured (`pressField`, no drag; a click on a field opens the editor) and a press anywhere else
+leaves edit mode first; outside it only an `open` field captures the press, and a double-click on a
+block enters edit mode (`onDblClick`; a double-click on a group still frames it). Otherwise faces
 receive `{ type: down | drag | up | click, u, v }`
 in canvas coordinates; a face that handles `down` captures the drag (slider), otherwise the press
 is a normal block drag and a click (no movement) is delivered on release (device tap, button).
@@ -718,7 +753,8 @@ What the menus add beyond the older controls, all in `main.js` and `serialize.js
   (with a selection), `Shift+?` for the shortcut sheet, `I` for the performance stats, `Ctrl+K`
   for the command palette (§9d; a capture-phase listener, so it also works from a panel field),
   `2` for the 2D editing mode, `L` for Auto-layout and `M` for the snap master switch (§9f).
-  `Enter` with one block selected edits its first face field in place (§8d).
+  `Enter` with one block selected enters edit mode on it and opens its first face field; in edit
+  mode `Tab` / `Shift+Tab` walk the fields and `Esc` leaves (§8d).
 - **Help pages** (`ui/help-dialogs.js`, on the Connections modal shell): the keyboard shortcut
   sheet (fixed keys from `GLOBAL_SHORTCUTS` plus the active preset's `nav.sheet()`) and About.
 
@@ -1034,7 +1070,7 @@ captured element in the DOM would drop its capture), ← → move focus, Delete 
   `portAnchors({ w, h })` (face px per port key) when it has an identifiable region per port, so
   the pins sit level with what they change (§7c); leave it out to get the centred stack. Register
   the text a user should be able to change on the face with `beginFields` in `render` (§8d), so
-  a double-click edits it in place and the panel is only needed for the rest.
+  a double-click enters edit mode and the panel is only needed for the rest.
 - **A custom 3D body**: add `body3d` to the definition (§8b) — `portAnchors(node)` in body units
   for content-aligned pins, or `ports(node)` for explicit positions; add `panel(api, block)` when
   it owns data the generic param controls cannot edit, and mark those params `hidden`.

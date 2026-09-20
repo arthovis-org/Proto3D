@@ -31,14 +31,14 @@
 // agrees; `position` stays the single source of truth and is what a document saves.
 import * as THREE from 'three';
 import {
-  palette, states, sizes, materials, makeLabel, refreshLabel, setLabelText, makeShadowBlob, onThemeChange, portColorFor,
+  palette, states, categories, sizes, materials, makeLabel, refreshLabel, setLabelText, makeShadowBlob, onThemeChange, portColorFor,
 } from './theme.js';
 import { panelGeometry } from './geometry.js';
 import { portsVisibleFor, onWiringChange } from './wiring.js';
 import { isPlanOn, onPlanChange } from './plan.js';
 import { defaultParams, clone } from './core/component.js';
 import { formatValue } from './core/types.js';
-import { clear as clearFace } from './faces.js';
+import { clear as clearFace, roundRect } from './faces.js';
 import { createSurface, baseFaceScale, fitTier } from './face-canvas.js';
 
 const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _rx = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
@@ -361,6 +361,7 @@ export class Block3D extends THREE.Group {
     this.subSelection = null;  // { kind, id } — a child pickable (card, column, item) the panel edits
     this._fields = null;       // editable regions the face registered on its last render (faces.js beginFields)
     this._editing = null;      // the field id the inline editor is open on (ui/field-editor.js)
+    this.editMode = false;     // in edit mode (ui/field-editor.js): accent frame, field markers drawn into the face
     this.world = null;
     this.portLabelSide = 'outside';  // port names ride the wire just outside the body; 'inside' for plain slabs with no content behind them
     this.dropTarget = false;         // a card is being dragged over this block (assign on drop)
@@ -550,7 +551,7 @@ export class Block3D extends THREE.Group {
     const F = this.def.face;
     if (!F || !this.face) return;
     const { g, texture, cw, ch } = this.face;
-    try { F.render(g, cw, ch, this._faceCtx(ctx || this.rt.ctx || {})); }
+    try { F.render(g, cw, ch, this._faceCtx(ctx || this.rt.ctx || {})); if (this.editMode) this._drawFieldMarkers(g); }
     catch (e) { clearFace(g, cw, ch); this.rt.error = e.message; }
     texture.needsUpdate = true;
     this.face.lastDrawAt = t;
@@ -620,6 +621,28 @@ export class Block3D extends THREE.Group {
   }
   /** The field editor is open on field `id` (null = none): renderers leave that text out and the body redraws. */
   setEditing(id) { const v = id || null; if (this._editing === v) return; this._editing = v; this.faceDirty = true; }
+  /** Edit mode on / off (ui/field-editor.js): the rim turns into the category-accent frame and the face redraws with its field markers. */
+  setEditMode(on) { on = !!on; if (this.editMode === on) return; this.editMode = on; this.faceDirty = true; this.applyVisual(); }
+  /**
+   * Edit-mode markers, drawn into the face canvas after the renderer (so they sit in perspective
+   * like the text): a faint tint over every editable region and a thin underline along its
+   * bottom, in the face accent (or the field's own ink on a coloured chip / paper). The field the
+   * editor is open on is skipped — the editor covers it.
+   */
+  _drawFieldMarkers(g) {
+    let list; try { list = this.fields(); } catch (_) { return; }
+    const rgba = (c, a) => { const m = /^#([0-9a-f]{6})$/i.exec(String(c || '')); if (!m) return c; const n = parseInt(m[1], 16); return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`; };
+    g.save();
+    for (const f of list) {
+      if (!f.rect || f.kind === 'action' || f.kind === 'checkbox' || f.id === this._editing) continue;
+      const r = f.rect, p = 4;
+      const own = f.bg && f.bg !== palette.faceBg;                 // a chip or a note keeps its ink instead of the accent
+      const ink = own ? (f.font?.color || palette.faceText) : palette.faceAccent;
+      g.fillStyle = rgba(ink, own ? 0.08 : 0.1); roundRect(g, r.x - p, r.y - p, r.w + 2 * p, r.h + 2 * p, 6); g.fill();
+      g.fillStyle = rgba(ink, own ? 0.5 : 0.65); g.fillRect(r.x - p, r.y + r.h + p - 2, r.w + 2 * p, 2);
+    }
+    g.restore();
+  }
 
   /* ---------- state / look ---------- */
   setTitle(text) { this.title = String(text); if (this.titleLabel) setLabelText(this.titleLabel, this.title); this.faceDirty = true; }
@@ -628,11 +651,12 @@ export class Block3D extends THREE.Group {
   setSelected(on) { if (!on) this.subSelection = null; if (this.selected !== on) { this.selected = on; this.applyVisual(); } }
   /** A card (or another block) is being dragged over this block and will act on it when dropped. */
   setDropTarget(on) { on = !!on; if (this.dropTarget !== on) { this.dropTarget = on; this.applyVisual(); } }
-  /** Rim priority: error > drop target > selected > hover > active. Ports grey out when disabled. */
+  /** Rim priority: error > drop target > edit mode (the category accent, solid) > selected > hover > active. Ports grey out when disabled. */
   _rimLook() {
     const s = this.derivedState;
     if (s === 'error') return [states.error, 0.6];
     if (this.dropTarget) return [states.active, 0.75];
+    if (this.editMode) return [(categories[this.def?.category] || {}).header ?? states.selected, 0.95];
     if (this.selected) return [states.selected, 0.55];
     if (this.hovered && s !== 'disabled') return [states.hover, 0.3];
     if (s === 'active') return [states.active, 0.2];

@@ -1,6 +1,6 @@
 // interaction.js — pointer + keyboard model for the 3D workspace.
 //   hover: ports > sub pickables > faces > bodies > connections (ends first) > group frames
-//   click: select (Shift adds / toggles) · click empty: clear · double-click: focus
+//   click: select (Shift adds / toggles) · click empty: clear · double-click a block: edit mode
 //   drag body: move every selected node (Shift: vertically)
 //   ports: hovering one explains it (tooltip: name, type, value, links) and lights every
 //          compatible port on other blocks while the rest dim; dragging from an output (or
@@ -14,9 +14,13 @@
 //   sub pickables (cards, tiles, handles owned by a Shape3D body) are picked right after ports:
 //   the owning block gets down / drag / drop / click through body3d.onSubPointer
 //   Shift+drag on empty floor: marquee select · drag on a live face: the component handles it
-//   face fields (faces.js beginFields, ui/field-editor.js): hovering an editable region shows a faint
-//          outline and a text cursor; a press on one never starts a block drag; a double-click (a
-//          single click on an empty field, Enter with the block selected) opens the inline editor
+//   edit mode (faces.js beginFields, ui/field-editor.js): nothing shows on hover; a double-click on
+//          a block (Enter with it selected, the pencil, Edit → Edit content) enters edit mode on it —
+//          the pointer then only edits: a click on a field opens its editor on the face plane, a
+//          press elsewhere on the block does nothing (no drag), a press on empty space or another
+//          block leaves; Tab / Shift+Tab walk the fields, Enter opens the focused one, Esc closes
+//          the editor and then leaves. Outside edit mode an `open` field ("+" rows) still enters
+//          on a single click
 //   snapping (plan.js `snap`, on by default, each kind its own toggle): a dragged set lands on the
 //          grid (Ctrl: half the pitch, Shift: off for this drag), on an edge / centre that lines up
 //          with a neighbour (objects, wins over the grid) or with a pin level with the pin it is
@@ -50,7 +54,6 @@ const GUIDE_TICK = 1.4;     // length of a grid tick beside the block (world uni
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const portName = (p) => `${p.owner.title}.${p.label}`;
 const FADE = 0.28;
-const DBL_MS = 300;         // a 'delay' field holds a single click this long so a double-click can open the editor instead
 
 export class Interaction {
   constructor({ camera, renderer, controls, world, selection, history, gizmo = null, createInstance, overlays = null, guides = null, onHoverConnection = () => {}, onFocus = () => {}, onFrameAll = () => {}, onGizmoMode = () => {}, onTogglePanel = () => {}, onOpenPanel = () => {} }) {
@@ -66,8 +69,7 @@ export class Interaction {
     this.faceDrag = null;    // { block, mesh }
     this.pressFace = null;   // { block, u, v } for click detection
     this.subDrag = null;     // { block, sub } while a child pickable is pressed
-    this.pressField = null;  // { block, field, hit } while an editable face region is pressed (never a block drag)
-    this._pendingClick = null; // a held single click on a 'delay' field (checklist row): fires unless a double-click follows
+    this.pressField = null;  // { block, field, hit, editMode } while a press is captured for editing (never a block drag)
     this.fieldEditor = null; // ui/field-editor.js, set by main.js
     this.hoveredSub = null;
     this.fading = [];        // preview cables fading out after a cancelled drag
@@ -93,8 +95,8 @@ export class Interaction {
   get gizmoBusy() { return !!(this.gizmo && (this.gizmo.dragging || this.gizmo.hot)); }
   /** The inline field editor is open. */
   get editing() { return !!this.fieldEditor?.active; }
-  /** Something is in flight that should hide the field hover affordance. */
-  get fieldBusy() { return !!(this.drag || this.connect || this.marquee || this.faceDrag || this.subDrag || this.pendingDetach || this.pressField || this.gizmoBusy || this.controls.drag); }
+  /** The block in edit mode (ui/field-editor.js), or null. */
+  get editBlock() { return this.fieldEditor?.editBlock || null; }
   /** The editable region under a pick (face fields by uv, body fields by the hit point), or null. */
   _fieldAt(hit) {
     if (!hit || !this.fieldEditor || !hit.target?.fieldAt) return null;
@@ -321,10 +323,9 @@ export class Interaction {
     this._setHoverSub(hit && hit.kind === 'sub' ? hit.sub : null);
     this._setHover(hit && hit.kind !== 'sub' ? hit.target : null, hit?.kind === 'connection' ? hit.end : null);
     if (hit?.kind === 'face' && hit.target.def.face?.onPointer) this._cursor('pointer');
-    // an editable region: faint outline + text cursor (hidden at the far LOD and while anything is dragged)
-    const field = this._fieldAt(hit);
-    this.fieldEditor?.hover(field ? hit.target : null, field);
-    if (field && hit.target.lodBlend <= 0.5) this._cursor('text');
+    // edit mode: a text cursor over the block's fields, a plain one over the rest of it (nothing shows outside edit mode)
+    const EB = this.editBlock;
+    if (EB && hit && hit.target === EB && (hit.kind === 'face' || hit.kind === 'block' || hit.kind === 'sub')) this._cursor(this._fieldAt(hit) ? 'text' : 'default');
   }
 
   onDown(e) {
@@ -348,10 +349,21 @@ export class Interaction {
     this.downPos.set(e.clientX, e.clientY);
     this.pressFace = null; this.pendingDetach = null;
     const hit = this.pick();
-    const field = this._fieldAt(hit);
-    if (field && (field.mode || 'edit') !== 'through') {
-      // an editable region: the press is captured (never a block or card drag); the release decides what a click means, a double-click opens the editor
-      this.pressField = { block: hit.target, field, hit };
+    const onBody = hit && (hit.kind === 'face' || hit.kind === 'block' || hit.kind === 'sub');
+    const EB = this.editBlock;
+    if (EB) {
+      if (onBody && hit.target === EB) {
+        // edit mode: the press is captured (never a block or card drag); a click on a field opens its editor, elsewhere on the block nothing happens
+        this.pressField = { block: EB, field: this._fieldAt(hit), hit, editMode: true };
+        this.controls.enabled = false;
+        return;
+      }
+      this.fieldEditor.leaveEdit();   // a press anywhere else leaves edit mode, then means what it always does
+    }
+    const field = onBody ? this._fieldAt(hit) : null;
+    if (field && field.mode === 'open') {
+      // a "+" row: a single click enters edit mode on it (the release decides)
+      this.pressField = { block: hit.target, field, hit, editMode: false };
       this.controls.enabled = false;
       if (!this.selection.has(hit.target)) this.select(hit.target, { toggle: this.add });
       return;
@@ -687,7 +699,7 @@ export class Interaction {
       return;
     }
     const moved = Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4;
-    if (this.pressField) { const P = this.pressField; this.pressField = null; if (!moved) this._fieldClick(P); this._cursor(this._hoverCursor(this.hovered, this.hoveredEnd)); return; }
+    if (this.pressField) { const P = this.pressField; this.pressField = null; if (!moved && P.field) { if (P.editMode) this.fieldEditor.open(P.block, P.field); else this.fieldEditor.enterEdit(P.block, { field: P.field }); } this._cursor(this._hoverCursor(this.hovered, this.hoveredEnd)); return; }
     if (this.marquee) { this._endMarquee(e); return; }
     if (this.subDrag) {
       const d = this.subDrag; this.subDrag = null;
@@ -726,31 +738,16 @@ export class Interaction {
     if (!moved && !this.gizmoBusy && !nav.isAddModifier(e)) { this._setPointer(e); if (!this.pick()) this.selection.clear(); }
   }
 
-  /**
-   * A click (no movement) on an editable region: 'open' fields and empty 'edit' fields open the
-   * editor at once; a 'delay' field (a checklist row) hands the click to the face after the
-   * double-click window unless a second click arrives first; other clicks just selected the block.
-   */
-  _fieldClick({ block, field, hit }) {
-    const FE = this.fieldEditor; if (!FE) return;
-    const mode = field.mode || 'edit';
-    const v = FE.valueOf(block, field);
-    if (mode === 'open' || (mode === 'edit' && field.placeholder && (v === undefined || v === null || String(v).trim() === ''))) { FE.open(block, field); return; }
-    if (mode === 'delay' && hit.kind === 'face') {
-      clearTimeout(this._pendingClick?.timer);
-      const uv = { u: hit.uv.x, v: 1 - hit.uv.y };
-      this._pendingClick = { block, timer: setTimeout(() => { this._pendingClick = null; block.onFacePointer({ type: 'click', ...uv, button: 0 }); }, DBL_MS) };
-    }
-  }
-
+  /** A double-click on a block enters edit mode on it (on the field under the pointer, when there is one); on a group it frames the group. */
   onDblClick(e) {
     this._setPointer(e);
     const hit = this.pick();
-    if (this._pendingClick) { clearTimeout(this._pendingClick.timer); this._pendingClick = null; }
-    const field = this._fieldAt(hit);
-    if (field && this.fieldEditor) { this.fieldEditor.open(hit.target, field); return; }
-    if (hit && (hit.kind === 'block' || hit.kind === 'face')) this.onFocus([hit.target]);
-    else if (hit && hit.kind === 'group') this.onFocus(hit.target.collapsed ? [hit.target] : hit.target.members);
+    if (hit && (hit.kind === 'block' || hit.kind === 'face' || hit.kind === 'sub') && this.fieldEditor) {
+      if (!this.fieldEditor.editable(hit.target)) return;
+      this.fieldEditor.enterEdit(hit.target, { field: this._fieldAt(hit) });
+      return;
+    }
+    if (hit && hit.kind === 'group') this.onFocus(hit.target.collapsed ? [hit.target] : hit.target.members);
   }
 
   /** Per frame: pulsing compatible ports, fading previews. */
@@ -863,8 +860,8 @@ export class Interaction {
   cancel() {
     this.pendingDetach = null;
     this.pressField = null;
-    if (this._pendingClick) { clearTimeout(this._pendingClick.timer); this._pendingClick = null; }
     this.fieldEditor?.cancel();
+    this.fieldEditor?.leaveEdit();
     if (this.connect) {
       const C = this.connect; this.connect = null;
       C.snapped?.setHover(false);
@@ -919,6 +916,13 @@ export class Interaction {
   onKey(e) {
     if (e.key === 'Shift') this.shift = true;
     if (isTyping(e)) return;
+    const FE = this.fieldEditor;
+    if (FE?.editBlock && !FE.active && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // edit mode with no editor open: Tab walks the fields, Enter opens the focused one, Esc leaves
+      if (e.key === 'Tab') { e.preventDefault(); FE.step(e.shiftKey ? -1 : 1); return; }
+      if (e.key === 'Enter') { e.preventDefault(); FE.openFocused(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); FE.leaveEdit(); return; }
+    }
     if (this._presetKey(e)) return;
     const mod = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
@@ -931,10 +935,10 @@ export class Interaction {
     switch (e.key) {
       case 'Escape': { const wasDragging = !!this.connect; this.cancel(); if (!wasDragging) this.selection.clear(); break; }
       case 'Enter': {
-        // edit the selected block's first field where it is drawn (Tab walks the rest)
+        // enter edit mode on the selected block and open its first field (Tab walks the rest)
         if (!this.fieldEditor || this.selection.nodes.length !== 1) break;
         const b = this.selection.nodes[0]; const f = this.fieldEditor.tabbable(b)[0];
-        if (f) { e.preventDefault(); this.fieldEditor.open(b, f); }
+        if (f) { e.preventDefault(); this.fieldEditor.enterEdit(b, { field: f }); }
         break;
       }
       case 'Delete': case 'Backspace': this.deleteSelection(); break;

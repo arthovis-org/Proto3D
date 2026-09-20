@@ -37,7 +37,7 @@ import { MiniToolbar } from './ui/mini-toolbar.js';
 import { CommandPalette, menuCommands } from './ui/command-palette.js';
 import { CableChips } from './cable-chips.js';
 import { Guides } from './ui/guides.js';
-import { FieldEditor } from './ui/field-editor.js';
+import { FieldEditor, glideSetting } from './ui/field-editor.js';
 import { isPlanOn, setPlan, snap, GRID_SIZES, SNAP_KINDS } from './plan.js';
 import { layoutPlan, layoutCommand, updateTweens, tweening } from './layout.js';
 import { examples, templates, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
@@ -90,8 +90,8 @@ const interaction = new Interaction({
   onTogglePanel: () => togglePanel(),
   onOpenPanel: () => togglePanel(true),
 });
-// edit face fields where they are drawn (double-click a note, a prompt, a card title…): an HTML editor projected over the face region
-const fieldEditor = new FieldEditor({ ws, world, history, selection, interaction, overlays, els: { editor: $('field-editor'), hover: $('field-hover') } });
+// edit mode: double-click a block (Enter, the pencil) to edit the text on its face where it is drawn — an HTML editor laid onto the face plane
+const fieldEditor = new FieldEditor({ ws, world, history, selection, interaction, overlays, els: { editor: $('field-editor'), hint: $('edit-hint') } });
 interaction.fieldEditor = fieldEditor;
 // the Navigator may swap the camera (orthographic view): everyone who holds a camera follows
 ws.onCameraSwap((cam) => { interaction.camera = cam; overlays.camera = cam; gizmo.control.camera = cam; });
@@ -632,6 +632,8 @@ const menubar = new MenuBar({
       { label: 'Group', shortcut: sc('Ctrl+G'), disabled: !selection.nodes.some((n) => !n.group), run: () => interaction.groupSelection() },
       { label: 'Ungroup', shortcut: sc('Ctrl+Shift+G'), disabled: !(selection.groups.length || selection.nodes.some((n) => n.group)), run: () => interaction.ungroupSelection() },
       { label: 'Collapse / expand group', shortcut: 'C', disabled: !(selection.groups.length || selection.nodes.some((n) => n.group)), run: () => interaction.toggleCollapseSelection() },
+      { sep: true },
+      { label: fieldEditor.editBlock ? 'Done editing' : 'Edit content', shortcut: fieldEditor.editBlock ? 'Esc' : 'Enter', hint: fieldEditor.editBlock ? `leave edit mode on ${fieldEditor.editBlock.title}` : 'edit the text on the selected block where it is drawn · double-click does too', disabled: !fieldEditor.editBlock && !(selection.nodes.length === 1 && fieldEditor.editable(selection.nodes[0])), run: () => fieldEditor.toggleEdit(fieldEditor.editBlock || selection.nodes[0]) },
     ] },
     { id: 'view', label: 'View', items: () => [
       { label: 'Light theme', shortcut: 'T', checked: getTheme() === 'light', run: () => toggleTheme() },
@@ -658,6 +660,7 @@ const menubar = new MenuBar({
         { label: 'Rotation', hint: '15° steps on the gizmo', checked: snap.rotation, run: () => setSnapOption('rotation', !snap.rotation) },
         { label: 'Scale', hint: '0.25 steps on the gizmo', checked: snap.scale, run: () => setSnapOption('scale', !snap.scale) },
       ] },
+      { label: 'Glide to text when editing', hint: 'the camera faces a field that is too small or too oblique to read, and comes back after', checked: glideSetting.on, run: () => { glideSetting.toggle(); overlays.toast(glideSetting.on ? 'Glide on · the camera faces a hard-to-read field while you edit it' : 'Glide off · the camera stays put while you edit', 1800); } },
       { sep: true },
       { label: 'Gizmo', shortcut: 'G', checked: gizmo.enabled, disabled: isPlanOn(), hint: isPlanOn() ? 'hidden in 2D: drag to move' : undefined, run: () => setGizmo(!gizmo.enabled) },
       { label: 'Gizmo mode', items: () => [['translate', 'Move', 'W'], ['rotate', 'Rotate', 'E'], ['scale', 'Scale', 'R']].map(([m, l, k]) => ({ label: l, shortcut: k, radio: true, checked: gizmo.mode === m, run: () => { if (!gizmo.enabled) setGizmo(true); gizmo.setMode(m); syncToolbar(); } })) },
@@ -776,7 +779,7 @@ function frame() {
   interaction.update(t, dt);
   overlays.update();
   guides.update();
-  fieldEditor.update();      // the inline editor and its hover outline follow the face
+  fieldEditor.update();      // the editor rides the face plane, the edit-mode hint follows the block
   miniBar.update();
   jobsTray.update();
   tour.update(dt);
@@ -792,7 +795,7 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, glideSetting, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
   plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS },
   layout: { arrange: autoLayoutSelection, plan: (nodes) => layoutPlan(world, nodes), tweening },

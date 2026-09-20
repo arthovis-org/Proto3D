@@ -177,8 +177,8 @@ export default registry.register({
     render(g, w, h, { outputs, instance }) {
       clear(g, w, h);
       drawText(g, outputs.out === undefined ? '—' : String(outputs.out), 0, 0, w, h - 28, { size: 64, mono: true });
-      // an editable field: double-click the strip at the bottom of the face to change `smoothing` right there
-      // (Enter saves, Esc cancels; the edit is undoable and the panel follows). Kinds: text, multiline, number, select, date, checkbox.
+      // an editable field: double-click the block to enter edit mode, then click the strip at the bottom of the face to change `smoothing`
+      // right there (Enter saves, Esc cancels; the edit is undoable and the panel follows). Kinds: text, multiline, number, select, date, checkbox.
       const F = beginFields(instance);
       if (!F.add({ id: 'alpha', kind: 'number', param: 'alpha', label: 'smoothing', min: 0.01, max: 1, step: 0.01, rect: { x: 12, y: h - 30, w: w - 24, h: 24 }, font: { size: 14, weight: 500, align: 'center' } }).editing) {
         drawText(g, `smoothing ${instance.params.alpha}`, 12, h - 30, w - 24, 24, { size: 14, weight: 500 });
@@ -200,8 +200,8 @@ except a flow shape's `next` / `yes` / `no`; a description is one plain sentence
 are pulsed with `ctx.emit(key, payload)` (or by returning a value for that key); `state` is a
 plain object that persists per instance and is saved when it is JSON-serializable;
 `face.onPointer(ctx, { type, u, v })` receives clicks and drags on the face in 3D; `beginFields(instance)`
-+ `F.add({ id, kind, param, rect, … })` in `render` makes a region editable in place (double-click it —
-see `docs/ARCHITECTURE.md` §8d for the spec, modes and the editor's keys); `onCreate` /
++ `F.add({ id, kind, param, rect, … })` in `render` makes a region editable in place (double-click the
+block for edit mode, then click the region — see `docs/ARCHITECTURE.md` §8d for the spec, edit mode and the editor's keys); `onCreate` /
 `onDestroy` are for listeners (the Input component's key mode uses them); `describeLink(fromPort,
 toDef, toPort, names)` may return a sentence for a cable leaving the component.
 
@@ -394,11 +394,11 @@ Everything else is the same in every preset:
 
 | Action | Input |
 | --- | --- |
-| Focus | `F` frames the selection · double-click a block · `Home` or **Frame all** frames everything (camera flights are smooth) |
+| Focus | `F` frames the selection · double-click a group · `Home` or **Frame all** frames everything (camera flights are smooth) |
 | Add | left toolbar → category → click a component (adds at the camera target on a free slot) or **drag it into the scene** (ghost footprint, drops where the ray hits the floor) · `Shift+A` opens search |
 | Move | drag a block (all selected blocks move together; `Shift` for height in 3D) · gizmo `G`, `W` / `E` / `R` · Transform fields in the panel |
 | Snap | `M` (or the magnet toggle in the menu bar) turns snapping on and off; *View → Snap ▸* (also the panel's *Snap* section) picks the kinds, each remembered: **grid** with a size of 0.25 / 0.5 / 1 / 2 units, **objects** (a dragged block's edges and centres line up with its neighbours', with guides), **ports** (a pin lands level with the pin it is wired to so the cable runs straight), **rotation** (15° steps on the gizmo) and **scale** (0.25 steps) · `Shift` while dragging skips snapping, `Ctrl` halves the grid · objects and ports win over the grid within their reach |
-| Edit in place | **double-click text on a face** — a Sticky Note, a Prompt (or one of its variable chips), a Text, a Data node's JSON, a Person's name or role, a Display caption, an Input button's label, a Checklist item, a Kanban card or column title, a Timeline bar, a Milestone's title or date, a flow shape's label — and type where it is: `Enter` saves (`Shift+Enter` for a new line), `Esc` cancels, `Tab` moves to the next field, `↑` / `↓` nudge a number · a click on an empty field or a "+" row (checklist, board column) starts typing at once · `Enter` with a block selected edits its first field · every edit undoes and the panel follows |
+| Edit in place | **double-click a block** (or select it and press `Enter`, or the pencil in the mini toolbar, or *Edit → Edit content*) to enter **edit mode**: the block gets a frame in its category colour and every editable text on its face — a Sticky Note, a Prompt (and each of its variable chips), a Text, a Data node's JSON, a Person's name or role, a Display caption, an Input button's label, a Checklist item, a Kanban card or column title, a Timeline bar, a Milestone's title or date, a flow shape's label — is marked; click one and type where it is, in perspective: `Enter` saves (`Shift+Enter` for a new line), `Esc` closes, `Tab` / `Shift+Tab` move to the next / previous field, `↑` / `↓` nudge a number · a double-click on text opens it straight away · the camera glides to face the text when it is too small or too oblique to read and comes back after (*View → Glide to text when editing*) · `Esc`, a click elsewhere or the pencil (*Done*) leaves edit mode; nothing drags while it is on · every edit undoes and the panel follows |
 | 2D | `2` (or the menu bar toggle, *View → 2D editing mode*) flips to a **top-down plan**: every block is a flat card with its face and pins, cables are flat splines under the cards, left-drag on empty space box-selects, middle-drag or `Space`+drag pans, the wheel zooms about the cursor; `2` again flies back to the 3D pose you left |
 | Arrange | `L` or *Edit → Auto-layout* arranges the selection (two or more) or everything as a left-to-right graph along the cables — groups stay together, unconnected blocks go in a grid below; one undoable, animated step, in 2D or 3D |
 | Link | **drop a component onto another** (a sentence shows what it will mean; a chooser appears when several links fit) · with wiring on: drag from an **OUT** pin to a lit **IN** pin (or backwards from an empty input); the cable snaps within ~1.2 units |
@@ -454,8 +454,8 @@ dimming and end labels stay. Orbit is off: left-drag on empty space box-selects 
 middle-drag or `Space`+drag pans, the wheel zooms about the cursor. Moving a block snaps by the
 kinds turned on under *View → Snap* (`M`): the grid (0.25–2 units; `Ctrl` halves it), the edges
 and centres of its neighbours with design-tool guides, and the pins it is wired to so cables run
-straight; `Shift` skips snapping for that drag. Double-clicking text on a flat card edits it in
-place exactly as in 3D. **Edit → Auto-layout** (`L`, or the mini toolbar
+straight; `Shift` skips snapping for that drag. Double-clicking a flat card enters edit mode
+exactly as in 3D and the editor lies on the card. **Edit → Auto-layout** (`L`, or the mini toolbar
 with several blocks selected) arranges blocks as a left-to-right layered graph along their cables,
 keeping groups together. Positions are shared between the modes (the plan's x / z are the room's
 x / z), the mode itself is never saved, and `2` again flies back to the 3D view you left.

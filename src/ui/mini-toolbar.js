@@ -2,10 +2,10 @@
 // 3D object) anchored to the selection's projected bounding box, re-placed every frame from the
 // world AABBs, clamped to the viewport, flipped below the selection when there is no room above,
 // and pushed clear of the job tray / stats. Hidden while a block, cable, marquee, face, sub or
-// gizmo drag is in flight, while a face field is pressed or edited in place, and while the camera
-// moves; fades in over 120 ms once things are still.
+// gizmo drag is in flight, while a face field is pressed, and while the camera moves; fades in
+// over 120 ms once things are still. It stays up in edit mode (the pencil reads Done).
 //
-//   Duplicate · Delete · Ports (follow / show / hide, per-block override) · Auto-layout (two or
+//   Edit (one block with fields: enter / leave edit mode, ui/field-editor.js) · Duplicate · Delete · Ports (follow / show / hide, per-block override) · Auto-layout (two or
 //   more blocks) · Collapse / expand
 //   (groups, or the group the block is in) · Run (components with a run / trigger: Generate faces,
 //   Input buttons and toggles, Flow Terminals, Actions and anything with an event input named
@@ -67,7 +67,7 @@ export class MiniToolbar {
   /** Something is in flight: the toolbar keeps out of the way. */
   get busy() {
     const I = this.interaction, C = this.ws.controls;
-    return !!(I.drag || I.connect || I.marquee || I.subDrag || I.faceDrag || I.pendingDetach || I.pressField || I.editing || (this.gizmo && (this.gizmo.dragging || this.gizmo.hot)) || C.drag || C.moving || this.ws.inFlight?.());
+    return !!(I.drag || I.connect || I.marquee || I.subDrag || I.faceDrag || I.pendingDetach || I.pressField || (this.gizmo && (this.gizmo.dragging || this.gizmo.hot)) || C.drag || C.moving || this.ws.inFlight?.());
   }
   _items() { return this.selection.items.filter((i) => i.kind !== 'connection'); }
 
@@ -79,6 +79,11 @@ export class MiniToolbar {
     const allInGroups = groupsOf.length === items.length;
     const list = [];
     const sc = shortcutText;
+    const FE = this.interaction.fieldEditor;
+    if (FE && items.length === 1 && nodes.length === 1 && FE.editable(nodes[0])) {
+      const on = FE.editBlock === nodes[0];
+      list.push({ id: 'edit', icon: 'edit', label: on ? 'Done' : 'Edit', text: on, hint: on ? 'leave edit mode' : 'edit the text on this block where it is drawn (double-click does too)', shortcut: on ? 'Esc' : 'Enter', on, run: () => FE.toggleEdit(nodes[0]) });
+    }
     list.push({ id: 'duplicate', icon: 'copy', label: 'Duplicate', shortcut: sc('Ctrl+D'), run: () => this.interaction.duplicateSelection() });
     list.push({ id: 'delete', icon: 'trash', label: 'Delete', shortcut: 'Del', danger: true, run: () => this.interaction.deleteSelection() });
     if (nodes.length === items.length) {
@@ -110,7 +115,7 @@ export class MiniToolbar {
     for (const a of this.actions(items)) {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'mtb-btn'; b.dataset.action = a.id;
       if (a.danger) b.classList.add('danger'); if (a.accent) b.classList.add('accent'); if (a.on) b.classList.add('on'); if (a.off) b.classList.add('off');
-      b.innerHTML = `${icons[a.icon] || icons.node}${a.id === 'run' ? `<span class="mtb-text">${a.label}</span>` : ''}`;
+      b.innerHTML = `${icons[a.icon] || icons.node}${a.id === 'run' || a.text ? `<span class="mtb-text">${a.label}</span>` : ''}`;
       b.title = `${a.label}${a.hint ? ` · ${a.hint}` : ''}${a.shortcut ? ` (${a.shortcut})` : ''}`;
       b.setAttribute('aria-label', a.label);
       b.addEventListener('click', (e) => { e.stopPropagation(); a.run(); this.sig = ''; });
@@ -118,7 +123,8 @@ export class MiniToolbar {
     }
   }
   _signature(items) {
-    return items.map((i) => `${i.uid}:${i.kind === 'group' ? (i.collapsed ? 'c' : 'e') : `${i.showPorts}/${i.portsVisible ? 1 : 0}/${i.group ? (i.group.collapsed ? 'c' : 'e') : '-'}/${runSpecFor(i, this.engine)?.label || ''}`}`).join('|');
+    const EB = this.interaction.fieldEditor?.editBlock;
+    return items.map((i) => `${i.uid}:${i === EB ? 'E' : '-'}${i.kind === 'group' ? (i.collapsed ? 'c' : 'e') : `${i.showPorts}/${i.portsVisible ? 1 : 0}/${i.group ? (i.group.collapsed ? 'c' : 'e') : '-'}/${runSpecFor(i, this.engine)?.label || ''}`}`).join('|');
   }
 
   /* ---------- geometry ---------- */

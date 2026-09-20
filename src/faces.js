@@ -58,18 +58,19 @@ export function bitmapFailed(src) { return !!bitmaps.get(src)?.failed; }
  * Editable regions on a face. Call at the start of `render` — `const F = beginFields(instance)` —
  * then `F.add({ id, kind, param | prop | get/set, rect: { x, y, w, h }, font?, placeholder?, … })`
  * for every region the pointer may edit (face logical px, the coordinates `render` draws in). The
- * interaction layer hit-tests the list (`Block3D.fieldAt`), shows a hover affordance and opens the
- * field editor (ui/field-editor.js) on a double-click. `add` returns the spec with `editing` set
- * while the editor is open on that field, so the renderer leaves that text out (the HTML editor
- * sits exactly over it): `if (!F.add({...}).editing) drawText(...)`.
+ * interaction layer hit-tests the list (`Block3D.fieldAt`); in edit mode (ui/field-editor.js: a
+ * double-click on the block, Enter, the pencil) `Block3D.renderFace` marks every region in the
+ * canvas and a click on one opens the field editor, laid onto the face plane. `add` returns the
+ * spec with `editing` set while the editor is open on that field, so the renderer leaves that text
+ * out (the editor sits exactly over it): `if (!F.add({...}).editing) drawText(...)`.
  *
  *   kind     text | multiline | number | select (options) | date | checkbox | action (run(block))
  *   value    `param: 'key'` (undoable setParam), `prop: 'title'` (the block title) or `get(block)` / `set(value, api)`
  *   font     { size, weight, align, color, mono, lineHeight } in face px — the editor matches it on screen
- *   mode     edit (default: press captured, double-click edits, a click on an empty field edits) ·
- *            open (a single click edits: "+" rows) · through (presses and clicks behave as before,
- *            only a double-click edits: cards, buttons) · delay (a single click reaches the face
- *            after the double-click window: checklist rows)
+ *   mode     edit (default) · through · delay: outside edit mode the press behaves as it always did
+ *            (select, drag, a card drags, a checklist row toggles) and a double-click enters edit
+ *            mode on the region · open: a single click enters edit mode on it at once ("+" rows).
+ *            In edit mode every kind opens on a single click.
  */
 export function beginFields(instance) {
   const list = [];

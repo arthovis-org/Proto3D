@@ -82,6 +82,7 @@ export const icons = {
   activity: svg('<path d="M3 12h4l3-7 4 14 3-7h4"/>'),
   camera: svg('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.2"/>'),
   // mini toolbar / command palette
+  edit: svg('<path d="M4 20h4l10.5-10.5a2.1 2.1 0 000-3L17.5 5.5a2.1 2.1 0 00-3 0L4 16v4z"/><path d="M13.5 6.5l4 4"/>'),
   copy: svg('<rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4.5A1.5 1.5 0 013 13.5v-9A1.5 1.5 0 014.5 3h9A1.5 1.5 0 0115 4.5V5"/>'),
   trash: svg('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>'),
   more: svg('<circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/>'),
