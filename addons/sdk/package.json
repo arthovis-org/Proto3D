@@ -1,0 +1,20 @@
+{
+  "name": "@proto3d/addon-sdk",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Versioned host API, page shell, storage isolation and test kit for Proto3D add-ons.",
+  "type": "module",
+  "main": "./host.js",
+  "exports": {
+    ".": "./host.js",
+    "./host.js": "./host.js",
+    "./shell.js": "./shell.js",
+    "./storage.js": "./storage.js",
+    "./manifest.js": "./manifest.js",
+    "./testing/*": "./testing/*"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "test:browser": "node --test \"test/browser/*.test.js\""
+  }
+}

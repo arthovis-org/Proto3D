@@ -1,5 +1,5 @@
-// example.js — the bundled sample graph, in the same builder shape as src/examples/project.js
-// (built through buildExample's { add, connect, group } API, examples/index.js:12-32):
+// example.js — the bundled sample graph, in the core example shape ({ id, label, camera, focus,
+// build({ add, connect, group }) }), loaded through host.examples.build():
 //   Input "New ticket" → gw-llm "Summarize" (Anthropic, standard tier, Gateway credits)
 //   → gw-tool "Web search" (Brave Search) → gw-llm "Draft reply" (OpenAI GPT-5 mini, Own key → one
 //   bypassed row) → Log "Reply log"; a gw-budget for the workflow and a gw-meter beside them.

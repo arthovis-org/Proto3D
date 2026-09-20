@@ -1,0 +1,11 @@
+{
+  "addons": [
+    {
+      "id": "gateway-credits",
+      "dir": "gateway-credits",
+      "name": "Gateway Credits",
+      "version": "0.2.0",
+      "description": "A shared prepaid credit balance for provider-calling nodes: metering (hold / settle / refund), routing policy, budgets and an admin ledger. Simulated providers."
+    }
+  ]
+}

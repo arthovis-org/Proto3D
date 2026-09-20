@@ -2,13 +2,19 @@
 //   { id, label, kind: 'model' | 'tool', models: [modelId], estimate(params, prompt, route) → { credits, units },
 //     call(params, prompt, route, opts) → Promise<{ result, usage, credits, units }> }
 // Every adapter here is SIMULATED: random latency (300–1500 ms), token counts derived from the
-// prompt length, and an optional 10% failure when the fallback policy is on. Nothing in this
+// prompt length, and an optional 10% failure when the fallback policy is on (all through `sim`,
+// so tests can pin them). Nothing in this
 // file performs network I/O and no key is ever read or embedded. `params.apiKey` in 'Own key'
 // mode is only checked for presence; it is never sent anywhere.
 import { MODELS, TOOLS, PROVIDERS, estimateModel, estimateTool, TYPICAL } from './rates.js';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const rnd = (a, b) => a + Math.random() * (b - a);
+/**
+ * Simulation knobs. Tests make the adapters deterministic by replacing them
+ * (`configureSimulation({ sleep: () => Promise.resolve(), random: () => 0.5 })`).
+ */
+export const sim = { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), random: () => Math.random(), latency: [300, 1500], toolLatency: [300, 1200], modelFailureRate: 0.10, toolFailureRate: 0.05 };
+export function configureSimulation(patch = {}) { Object.assign(sim, patch); return sim; }
+const rnd = (a, b) => a + sim.random() * (b - a);
 const rndi = (a, b) => Math.floor(rnd(a, b + 1));
 const approxTokens = (text) => Math.max(8, Math.ceil(String(text || '').length / 4));
 
@@ -44,8 +50,8 @@ function simulatedModelAdapter(providerId) {
     },
     async call(params, prompt, route, opts = {}) {
       const m = route.model;
-      await sleep(rnd(300, 1500));
-      if (opts.simulateFailure && Math.random() < 0.10) throw Object.assign(new Error(`${p.label} 503 (simulated provider error)`), { status: 503, retryable: true });
+      await sim.sleep(rnd(...sim.latency));
+      if (opts.simulateFailure && sim.random() < sim.modelFailureRate) throw Object.assign(new Error(`${p.label} 503 (simulated provider error)`), { status: 503, retryable: true });
       const tin = (prompt ? approxTokens(prompt) + 120 : rndi(400, 2500));
       const tout = rndi(120, 800);
       const credits = estimateModel(m, tin, tout);
@@ -71,8 +77,8 @@ function simulatedToolAdapter(toolId) {
     id: toolId, label: p.label, kind: 'tool', simulated: true, models: [], unit: t.unit,
     estimate(params) { const units = Math.max(1, Math.round(Number(params.units) || 1)); return { credits: estimateTool(t, units), units: `${units} ${t.unit}${units > 1 ? 's' : ''}` }; },
     async call(params, query, route, opts = {}) {
-      await sleep(rnd(300, 1200));
-      if (opts.simulateFailure && Math.random() < 0.05) throw Object.assign(new Error(`${p.label} 429 (simulated rate limit)`), { status: 429, retryable: true });
+      await sim.sleep(rnd(...sim.toolLatency));
+      if (opts.simulateFailure && sim.random() < sim.toolFailureRate) throw Object.assign(new Error(`${p.label} 429 (simulated rate limit)`), { status: 429, retryable: true });
       const units = Math.max(1, Math.round(Number(params.units) || 1));
       const q = String(query || '').trim().slice(0, 60) || 'ticket keywords';
       const result = `[${p.label}] ${units} ${t.unit}${units > 1 ? 's' : ''} for "${q}": 3 simulated results (no network call was made).`;

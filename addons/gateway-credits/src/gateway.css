@@ -1,27 +1,10 @@
-/* gateway.css — Gateway Credits add-on. Uses only the core theme tokens from ../../styles.css
-   (--panel, --panel-solid, --border, --field, --text, --dim, --accent, --accent-soft, --danger)
-   plus a few add-on status tokens, so light and dark themes both work. */
+/* gateway.css — Gateway Credits add-on. Styles only the add-on's own DOM (the admin section and
+   the node panel section) with the core theme tokens (--panel, --panel-solid, --border, --field,
+   --text, --dim, --accent, --accent-soft, --danger) plus a few add-on status tokens, so light and
+   dark themes both work. The Credits menu is rendered by the core menu bar; the page badge by the
+   SDK shell. Linked by the shell from addon.json "styles". */
 :root { --gw-good: #34c99a; --gw-warn: #f5b942; --gw-credit: #2dd4bf; --gw-bad: var(--danger); }
 :root[data-theme="light"] { --gw-good: #1f9d74; --gw-warn: #b97a00; --gw-credit: #128f80; }
-
-/* badge: bottom right of the viewport, links back to the core app */
-#gw-badge {
-  position: fixed; z-index: 2; bottom: 18px; right: calc(var(--panel-w) + 20px);
-  display: inline-flex; align-items: center; gap: 8px; font-size: 11px; color: var(--dim); text-decoration: none;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; backdrop-filter: blur(8px);
-}
-body.panel-hidden #gw-badge { right: 20px; }
-#gw-badge b { color: var(--text); font-weight: 600; }
-#gw-badge i { width: 8px; height: 8px; border-radius: 50%; background: var(--gw-credit); display: inline-block; }
-#gw-badge span.link { color: var(--accent); }
-#gw-badge:hover { border-color: var(--accent); }
-
-/* Credits ▾ menu */
-.gw-menu { min-width: 260px; }
-.gw-menu-balance { padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 4px; display: flex; flex-direction: column; gap: 2px; }
-.gw-menu-balance b { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.gw-menu-balance small { color: var(--dim); font-size: 11px; }
-#gw-btn-credits { font-variant-numeric: tabular-nums; }
 
 /* admin block */
 .gw-admin { padding: 6px 14px 10px; }

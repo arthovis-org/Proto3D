@@ -1,0 +1,3 @@
+/* _template/addon.css — styles for the add-on's own DOM only. Use the core theme tokens
+   (--panel, --border, --text, --dim, --accent …) so light and dark work; never restyle core ids. */
+.tpl-hint { font-size: 11px; color: var(--dim); line-height: 1.4; }

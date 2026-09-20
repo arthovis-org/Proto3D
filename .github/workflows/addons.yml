@@ -1,0 +1,80 @@
+# Add-on workspace CI. The core (index.html, src/**, styles.css) has no build and no tests of its
+# own here; these jobs prove that every add-on works against today's core without touching it.
+#   sdk         the SDK's own tests, including the core contract test (core drift fails here first)
+#   addons      one matrix job per directory under addons/ that has an addon.json (template included):
+#               unit + engine tests under plain `node --test`
+#   browser     Playwright: every add-on page boots on the real core with zero errors, isolated storage
+#   core-smoke  Playwright: the core page itself boots with zero errors and no add-on types
+name: addons
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    name: sdk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run test:sdk
+      - name: drift guard (CLI form)
+        run: node addons/sdk/testing/drift-guard.js
+
+  discover:
+    name: discover add-ons
+    runs-on: ubuntu-latest
+    outputs:
+      addons: ${{ steps.list.outputs.addons }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - id: list
+        run: echo "addons=$(node addons/sdk/testing/run-addons.js --list)" >> "$GITHUB_OUTPUT"
+
+  addons:
+    name: addon ${{ matrix.addon }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        addon: ${{ fromJSON(needs.discover.outputs.addons) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: node addons/sdk/testing/run-addons.js ${{ matrix.addon }}
+
+  browser:
+    name: browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: add-on pages on the real core
+        run: node addons/sdk/testing/run-addons.js --browser
+
+  core-smoke:
+    name: core-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: core page boots with zero errors
+        run: node --test addons/sdk/test/browser/core-smoke.test.js

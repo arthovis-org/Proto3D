@@ -1,0 +1,10 @@
+{
+  "id": "template",
+  "name": "Template add-on",
+  "version": "0.1.0",
+  "prefix": "tpl",
+  "sdk": 1,
+  "entry": "./addon.js",
+  "description": "The smallest complete add-on: one node type, one menu, one panel section, namespaced storage. Copy this directory to start a new add-on.",
+  "styles": ["./addon.css"]
+}

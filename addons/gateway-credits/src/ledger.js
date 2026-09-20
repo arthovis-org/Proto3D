@@ -1,52 +1,57 @@
-// ledger.js — the shared prepaid balance. Append-only entries in localStorage; balance, holds,
-// spend and budgets are all DERIVED from the entries (never stored as separate numbers), so the
-// ledger cannot drift. Storage key is the add-on's own; the core app never reads it.
+// ledger.js — the shared prepaid balance. Append-only entries persisted through the host's
+// namespaced storage (proto3d.addon.gateway-credits.ledger.v1 from the SDK's point of view; on the
+// add-on page the storage shim prefixes that again, so the core page never sees it). Balance,
+// holds, spend and budgets are all DERIVED from the entries (never stored as separate numbers),
+// so the ledger cannot drift.
 //
 // Entry kinds:  open | topup | auto-topup | adjust | hold | settle | refund | decline | bypass
 // A request lifecycle is hold → settle (actual cost) or hold → refund (provider error / node
 // removed / engine error). Declines and own-key bypasses are rows too, so every decision is
 // visible. `idem` (idempotency key) makes hold() a no-op for a pulse already processed.
-export const LEDGER_KEY = 'proto3d.gateway.ledger.v1';
-export const SETTINGS_KEY = 'proto3d.gateway.settings.v1';
+//
+// `createLedger(storage, { now })` takes any { get(key, fallback), set(key, value) } JSON store
+// (host.storage in the page, a Map-backed fake in tests) and an injectable clock.
+export const LEDGER_KEY = 'ledger.v1';
+export const SETTINGS_KEY = 'settings.v1';
 export const OPENING_BALANCE = 2300;
 
 const DEFAULT_SETTINGS = { autoTopUp: { enabled: false, threshold: 100, target: 1000, monthlyCap: 5000 }, policy: { preferCheapest: false, fallback: true } };
 
-const load = (key, fallback) => { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : fallback; } catch (_) { return fallback; } };
-const store = (key, v) => { try { localStorage.setItem(key, JSON.stringify(v)); return true; } catch (_) { return false; } };
 let seq = 0;
 const newId = (p = 'e') => `${p}${Date.now().toString(36)}${(seq++).toString(36)}`;
 const monthKey = (iso) => iso.slice(0, 7);
 const dayKey = (iso) => iso.slice(0, 10);
-const nowIso = () => new Date().toISOString();
 
-class Ledger {
-  constructor() {
-    this.entries = load(LEDGER_KEY, null);
-    if (!Array.isArray(this.entries) || !this.entries.length) this.entries = [{ id: newId(), at: nowIso(), kind: 'open', credits: OPENING_BALANCE, note: 'opening balance (demo)' }], this._persist();
-    const s = load(SETTINGS_KEY, {});
+export class Ledger {
+  constructor(storage, { now = () => new Date() } = {}) {
+    if (!storage || typeof storage.get !== 'function' || typeof storage.set !== 'function') throw new Error('Ledger: storage with get(key, fallback) / set(key, value) required (host.storage)');
+    this.storage = storage; this.now = now;
+    this.entries = storage.get(LEDGER_KEY, null);
+    if (!Array.isArray(this.entries) || !this.entries.length) { this.entries = [{ id: newId(), at: this.nowIso(), kind: 'open', credits: OPENING_BALANCE, note: 'opening balance (demo)' }]; this._persist(); }
+    const s = storage.get(SETTINGS_KEY, {}) || {};
     this.settings = { autoTopUp: { ...DEFAULT_SETTINGS.autoTopUp, ...(s.autoTopUp || {}) }, policy: { ...DEFAULT_SETTINGS.policy, ...(s.policy || {}) } };
     this._listeners = new Set();
     this._recompute();
   }
+  nowIso() { return this.now().toISOString(); }
 
   /* ---------- events ---------- */
   on(cb) { this._listeners.add(cb); return () => this._listeners.delete(cb); }
   _emit(type, payload) { this._listeners.forEach((cb) => { try { cb(type, payload, this); } catch (e) { console.warn('ledger listener', e); } }); }
 
   /* ---------- storage ---------- */
-  _persist() { store(LEDGER_KEY, this.entries); }
+  _persist() { this.storage.set(LEDGER_KEY, this.entries); }
   _append(entry) {
-    const e = { id: newId(), at: nowIso(), ...entry };
+    const e = { id: newId(), at: this.nowIso(), ...entry };
     this.entries.push(e);
     this._recompute();
     this._persist();
     this._emit(e.kind, e);
     return e;
   }
-  saveSettings() { store(SETTINGS_KEY, this.settings); this._emit('settings', this.settings); }
+  saveSettings() { this.storage.set(SETTINGS_KEY, this.settings); this._emit('settings', this.settings); }
   reset() {
-    this.entries = [{ id: newId(), at: nowIso(), kind: 'open', credits: OPENING_BALANCE, note: 'ledger reset (demo)' }];
+    this.entries = [{ id: newId(), at: this.nowIso(), kind: 'open', credits: OPENING_BALANCE, note: 'ledger reset (demo)' }];
     this._recompute(); this._persist(); this._emit('reset', null);
   }
 
@@ -75,7 +80,7 @@ class Ledger {
   isOpen(holdId) { return this._holds.has(holdId); }
   hasIdem(idem) { return this.entries.some((e) => e.idem === idem && (e.kind === 'hold' || e.kind === 'bypass' || e.kind === 'decline')); }
 
-  _inPeriod(e, period = 'monthly', ref = nowIso()) { return period === 'daily' ? dayKey(e.at) === dayKey(ref) : monthKey(e.at) === monthKey(ref); }
+  _inPeriod(e, period = 'monthly', ref = this.nowIso()) { return period === 'daily' ? dayKey(e.at) === dayKey(ref) : monthKey(e.at) === monthKey(ref); }
   settledEntries(period = 'monthly') { return this.entries.filter((e) => e.kind === 'settle' && this._inPeriod(e, period)); }
   spend(period = 'monthly') { return this.settledEntries(period).reduce((a, e) => a + e.credits, 0); }
   requests(period = 'monthly') { return this.entries.filter((e) => (e.kind === 'settle' || e.kind === 'bypass') && this._inPeriod(e, period)).length; }
@@ -184,6 +189,10 @@ class Ledger {
 export const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(2) : Math.abs(v) >= 1 ? v.toFixed(3) : (+v || 0).toFixed(4));
 export const fmtBal = (v) => (+v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-/** One ledger per page (module singleton), shared by the nodes and the admin UI. */
-export const ledger = new Ledger();
-export default ledger;
+/** One ledger per page, created by index.js `register(host)` from `host.storage`. */
+export function createLedger(storage, opts) { return new Ledger(storage, opts); }
+
+/** A Map-backed store with the host.storage shape, for tests. */
+export function memoryStore(init = new Map()) {
+  return { get: (k, fb = null) => (init.has(k) ? JSON.parse(init.get(k)) : fb), set: (k, v) => { init.set(k, JSON.stringify(v)); return true; }, remove: (k) => init.delete(k), keys: () => [...init.keys()], raw: init };
+}

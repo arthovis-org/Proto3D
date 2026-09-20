@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Proto3D add-ons</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #0f1218; --card: #171b23; --text: #e8ecf2; --dim: #98a2b3; --accent: #6ea8ff; --border: #2a3140; }
+    @media (prefers-color-scheme: light) { :root { --bg: #f5f6f8; --card: #fff; --text: #1a1f29; --dim: #5d6673; --accent: #2a6fdb; --border: #dde2ea; } }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 Inter, system-ui, sans-serif; padding: 48px 16px; }
+    main { max-width: 760px; margin: 0 auto; }
+    h1 { font-size: 26px; margin: 0 0 4px; } p.lead { color: var(--dim); margin: 0 0 28px; }
+    a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+    .card { display: block; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; color: inherit; }
+    .card b { font-size: 17px; } .card small { color: var(--dim); margin-left: 8px; } .card p { margin: 6px 0 0; color: var(--dim); }
+    footer { margin-top: 32px; color: var(--dim); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Proto3D add-ons</h1>
+    <p class="lead">Each add-on runs on the unchanged core through the versioned SDK, with its own storage. <a href="../">← core app</a></p>
+    <div id="list"><p class="lead">Loading…</p></div>
+    <footer>Listing from <code>addons/registry.json</code> · how add-ons work: <a href="https://github.com/arthovis-org/empty1/blob/main/addons/README.md">addons/README.md</a></footer>
+  </main>
+  <script>
+    fetch('./registry.json', { cache: 'no-cache' }).then((r) => r.json()).then(({ addons }) => {
+      const list = document.getElementById('list'); list.innerHTML = '';
+      for (const a of addons) {
+        const card = document.createElement('a'); card.className = 'card'; card.href = `./${a.dir}/`;
+        const b = document.createElement('b'); b.textContent = a.name; const s = document.createElement('small'); s.textContent = `v${a.version}`; const p = document.createElement('p'); p.textContent = a.description;
+        card.append(b, s, p); list.appendChild(card);
+      }
+      if (!addons.length) list.innerHTML = '<p class="lead">No add-ons listed.</p>';
+    }).catch((e) => { document.getElementById('list').textContent = `Could not load registry.json: ${e.message}`; });
+  </script>
+</body>
+</html>

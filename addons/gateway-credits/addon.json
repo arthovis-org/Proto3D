@@ -1,0 +1,10 @@
+{
+  "id": "gateway-credits",
+  "name": "Gateway Credits",
+  "version": "0.2.0",
+  "prefix": "gw",
+  "sdk": 1,
+  "entry": "./src/index.js",
+  "description": "A shared prepaid credit balance for provider-calling nodes: metering (hold / settle / refund), routing policy, budgets and an admin ledger. Simulated providers.",
+  "styles": ["./src/gateway.css"]
+}

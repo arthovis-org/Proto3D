@@ -1,0 +1,25 @@
+{
+  "name": "proto3d-workspace",
+  "private": true,
+  "description": "Tooling-only workspace for the Proto3D add-on system. The served pages (core and add-ons) are plain ES modules and need none of this; the root package exists so add-ons and the SDK can be tested in isolation.",
+  "type": "module",
+  "workspaces": [
+    "addons/sdk",
+    "addons/*"
+  ],
+  "scripts": {
+    "test": "npm run test:sdk && npm run test:addons",
+    "test:sdk": "node --test \"addons/sdk/test/*.test.js\"",
+    "test:addons": "node addons/sdk/testing/run-addons.js",
+    "test:browser": "node --test --test-concurrency=1 \"addons/sdk/test/browser/*.test.js\" \"addons/*/test/browser/*.test.js\"",
+    "test:all": "npm test && npm run test:browser",
+    "drift-guard": "node addons/sdk/testing/drift-guard.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.1",
+    "three": "0.160.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
