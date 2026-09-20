@@ -1,8 +1,8 @@
 // serialize.js — the world as JSON: components (type id, params, serializable state, transform),
 // connections (node uid + port key), groups (member uids, collapsed) and the camera. Also a
 // selection-only document (copy / export selection), an undoable import that merges a document
-// into the current world (paste / File → Import), the debounced localStorage autosave, the recent
-// projects list behind File → Open recent, and download / file-picker helpers for the menus.
+// into the current world (paste / File → Import) and download / file-picker helpers for the menus.
+// Autosave, recent projects and version history live in tabs.js over project-store.js (IndexedDB).
 import { registry } from './core/registry.js';
 import { createInstance } from './instance.js';
 import { Group3D } from './groups.js';
@@ -10,8 +10,6 @@ import { bumpUidCounter } from './block3d.js';
 import { isWiringOn, setWiring } from './wiring.js';
 
 export const FORMAT_VERSION = 2;
-export const AUTOSAVE_KEY = 'proto3d.world.v2';
-export const RECENT_KEY = 'proto3d.recent.v1';
 /** Port keys renamed when the project ports got plain names; older documents still reconnect. */
 const LEGACY_PORTS = {
   'kanban-board': { in: { addCard: 'addTask', move: 'moveTask' }, out: { cardMoved: 'moved', stats: 'progress', cards: 'tasks' } },
@@ -160,65 +158,3 @@ export function safeFileName(name, ext = '.json') {
   return base.toLowerCase().endsWith(ext) ? base : base + ext;
 }
 
-
-/** Debounced autosave into localStorage on every world change. */
-export class AutoSave {
-  constructor(world, { key = AUTOSAVE_KEY, delay = 600, extras = () => ({}) } = {}) {
-    this.world = world; this.key = key; this.delay = delay; this.extras = extras;
-    this._t = null; this.enabled = true; this.lastSavedAt = null;
-    world.onChange(() => this.schedule());
-  }
-  schedule() {
-    if (!this.enabled) return;
-    clearTimeout(this._t);
-    this._t = setTimeout(() => this.save(), this.delay);
-  }
-  save() {
-    try { localStorage.setItem(this.key, JSON.stringify(serializeWorld(this.world, this.extras()))); this.lastSavedAt = Date.now(); return true; }
-    catch (_) { return false; }
-  }
-  load() { try { const s = localStorage.getItem(this.key); return s ? JSON.parse(s) : null; } catch (_) { return null; } }
-  clear() { try { localStorage.removeItem(this.key); } catch (_) { /* ignore */ } }
-}
-
-/**
- * The projects behind File → Open recent: the last few documents saved, opened or replaced,
- * newest first, each with its full JSON so it can be reopened without a file. A project is keyed
- * by name (saving it again replaces its entry); untitled scenes carry the time in their name.
- * Everything lives in one localStorage key; when the quota is hit the oldest entries are dropped.
- */
-export class RecentProjects {
-  constructor({ key = RECENT_KEY, limit = 8, maxBytes = 3 * 1024 * 1024 } = {}) {
-    this.key = key; this.limit = limit; this.maxBytes = maxBytes;
-    this._listeners = new Set();
-    this.entries = [];
-    try { const s = localStorage.getItem(key); const arr = s ? JSON.parse(s) : []; if (Array.isArray(arr)) this.entries = arr.filter((e) => e && e.id && e.doc); } catch (_) { this.entries = []; }
-  }
-  onChange(cb) { this._listeners.add(cb); return () => this._listeners.delete(cb); }
-  _notify() { this._listeners.forEach((cb) => cb(this)); }
-  /** Newest first: [{ id, name, savedAt, nodes, connections }] (without the documents). */
-  list() { return this.entries.map(({ doc, ...meta }) => meta); }
-  get(id) { return this.entries.find((e) => e.id === id) || null; }
-  /** Store `doc` under `name`, replacing an entry of the same name. Returns false when it is too large to keep. */
-  remember(name, doc) {
-    if (!doc || !Array.isArray(doc.nodes) || !doc.nodes.length) return false;
-    const json = JSON.stringify(doc);
-    if (json.length > this.maxBytes) return false;
-    const top = this.entries[0];
-    if (top && top.name === name && JSON.stringify({ ...top.doc, savedAt: 0 }) === JSON.stringify({ ...doc, savedAt: 0 })) return true;   // unchanged since last time
-    this.entries = this.entries.filter((e) => e.name !== name);
-    this.entries.unshift({ id: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, savedAt: doc.savedAt || new Date().toISOString(), nodes: doc.nodes.length, connections: (doc.connections || []).length, doc });
-    this.entries = this.entries.slice(0, this.limit);
-    this._persist();
-    this._notify();
-    return true;
-  }
-  remove(id) { const n = this.entries.length; this.entries = this.entries.filter((e) => e.id !== id); if (this.entries.length !== n) { this._persist(); this._notify(); } }
-  clear() { this.entries = []; this._persist(); this._notify(); }
-  _persist() {
-    for (;;) {
-      try { localStorage.setItem(this.key, JSON.stringify(this.entries)); return true; }
-      catch (_) { if (!this.entries.length) return false; this.entries.pop(); }   // quota: drop the oldest and try again
-    }
-  }
-}

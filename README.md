@@ -55,8 +55,8 @@ Three.js r160 comes from `https://unpkg.com/three@0.160.0/` through the import m
 import-map entries at it. Inter is loaded from Google Fonts when online; offline the type stack
 falls back to the system sans. The first load shows the **Showcase** with wiring off and starts a
 short five-step tour (once; **? → Show tour** replays it); after that the workspace restores your
-autosaved world from `localStorage` — including its wiring setting (**File → New** clears it and
-shows an empty-scene hint).
+open **project tabs** from the browser's IndexedDB — every tab's scene, camera and 2D mode, with
+the active one in front (**File → New** opens an empty project in a new tab).
 
 ## Try it in one minute
 
@@ -120,7 +120,8 @@ The full design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The short 
 | **Engine** | `core/engine.js` | Evaluates every frame in topological order (cycles: back-edges use previous-frame values), pulls values along connections (multi inputs → arrays; several links into one input → most recently changed wins), coerces, runs the event bus so pulses propagate within the pass, caches values on connections and tracks `changedAt` per output. `ctx.upstream(key)` / `ctx.downstream(key)` hand a component the instances on the other end of its cables. |
 | **World** | `core/world.js` | `nodes`, `connections`, `groups` and the low-level mutations; `layoutVersion` bumps when anything moves so connections re-route. |
 | **Commands / History** | `core/commands.js`, `core/history.js` | Every edit (add, remove, move, param, connect, group, collapse, duplicate, rename, enable) is a command; `History` gives undo / redo and coalesces rapid param edits. |
-| **Serialization** | `serialize.js` | World ↔ JSON (`version 2`): components (type, params, serializable state, transform), connections (node uid + port key), groups, camera. Debounced autosave to `localStorage`. |
+| **Serialization** | `serialize.js` | World ↔ JSON (`version 2`): components (type, params, serializable state, transform), connections (node uid + port key), groups, camera. |
+| **Persistence** | `tabs.js`, `project-store.js`, `ui/tab-strip.js`, `ui/version-history.js` | Project tabs over one World (detached scenes, per-tab history and view), debounced autosave into IndexedDB with an indicator, version snapshots with diff summaries, recent projects with thumbnails. |
 | **UI** | `ui/menubar.js`, `ui/toolbar-left.js`, `panel.js`, `interaction.js`, `ui/overlays.js`, `ui/tour.js` | Menu bar with its quick toggles, Add toolbar, properties panel, the pointer / keyboard model (selection, marquee, drag, cable drags and re-routing, face clicks), the HTML guidance layers and the first-run tour. |
 
 ### Component schema, worked example
@@ -384,12 +385,40 @@ Everything else is the same in every preset:
 | Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the menu bar's quick toggles have undo / redo |
 | Group | `Ctrl+G` group the selection · `C` collapse / expand · `Ctrl+Shift+G` ungroup · drag the frame to move the whole group · rename in the panel |
 | Interact | click a device screen (`tap`), an Input face (button, toggle, slider) or press the configured key · click / drag a **card** on a Kanban board (drop it on a **Person** or into a lane to assign it), click the **+** tile, click a checklist row, press the **Run** disc on a Flow Terminal, drag a Timeline bar's end handle |
-| File | menu bar **File** → New project · Open… (`Ctrl+O`) · Open recent · Save (`Ctrl+S`) · Save as… (`Ctrl+Shift+S`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave to `localStorage` on every change |
+| File | menu bar **File** → New project (`Alt+N`, a new tab) · Open… (`Ctrl+O`) · Open recent (thumbnails, last opened) · Save (`Ctrl+S`, downloads JSON) · Save as… · Rename project… · Version history… · Close tab (`Alt+W`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave into the browser 1.5 s after every change |
+| Tabs | one tab per open project under the menu bar · click / `Ctrl+Tab` (`Alt+]` where the browser keeps it) switch · `+` new · drag to reorder · middle-click or × closes (a dirty tab asks Save / Discard / Cancel) · double-click renames · dot = unsaved changes · the indicator at the right end shows Saved · just now / Saving… / Unsaved changes and offers Save now, Download JSON, Version history |
 | Edit | menu bar **Edit** → Undo / Redo · Cut / Copy / Paste (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`, also between tabs) · Duplicate · Delete · Select all · Deselect · Auto-layout (`L`) · Group / Ungroup · Collapse |
 | View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · 2D editing mode (`2`) · Snap ▸ (`M`, grid size, objects, ports, rotation, scale) · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
 | Help | menu bar **Help** → tour · keyboard shortcuts (`Shift+?`) · help & legend (`H`) · documentation · About |
 
 Shortcuts are ignored while typing in a panel field.
+
+## Projects: tabs, autosave and version history
+
+Every open project is a **tab** in the slim strip under the menu bar — its own scene, undo
+history, camera, 2D mode and selection; switching swaps them into the one renderer without a
+reload (background scenes stay in memory, detached; up to 8 tabs). **File → New** opens a tab;
+**Open…**, **Open recent** and **Examples** open in a new tab unless the current one is an
+untouched empty project. A dot on a tab means unsaved changes (changes since the last Save or
+open); closing such a tab asks **Save** (downloads JSON) / **Discard** / **Cancel** in a themed
+dialog. A reload brings every tab back, the active one in front.
+
+**Autosave** writes the active project to this browser (IndexedDB) 1.5 s after you stop; the
+indicator at the right end of the strip says *Saved · 2 min ago*, *Saving…*, *Unsaved changes* or
+*Autosave off* (hover it for the time, where it saves, **Save now**, **Download JSON**, a switch and
+**Version history**). `Ctrl+S` still downloads a JSON file. Older documents in `localStorage`
+migrate on the first load.
+
+**File → Version history…** opens a drawer with the project's snapshots: taken automatically on
+autosave when the content changed (at most one every 2 minutes), on every manual save, before a
+restore and with **Snapshot now**. Each shows when, its kind, size and a one-line diff ("+2
+components · 1 renamed · 3 cables changed · 4 params changed"); give one a **name** to keep it
+past the 50-version cap. **Preview** opens it read-only in a temporary tab, **Restore** replaces
+the project as one undoable step, **Duplicate as tab** makes a new project of it, **Delete** and
+**Clear older than…** free space. The footer shows what the project and all projects take and how
+much of the browser's storage quota this site uses, with a warning near the limit. **File → Open
+recent** lists every project in the browser with a thumbnail and when it was last opened; open
+ones come to the front.
 
 ## 2D editing mode
 

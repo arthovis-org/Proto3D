@@ -2,6 +2,10 @@
 const svg = (inner, extra = '') => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" ${extra}>${inner}</svg>`;
 
 export const icons = {
+  // project tabs, autosave, version history
+  history: svg('<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4.5v4h4"/><path d="M12 8v4.2l3 1.8"/>'),
+  save: svg('<path d="M5 3.5h10.5L19 7v13.5H5z"/><path d="M8 3.5v5h7v-5M8 20.5v-6h8v6"/>'),
+  download: svg('<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M4 19.5h16"/>'),
   // categories / components
   media: svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M21 16l-5.5-5.5L7 19"/>'),
   'media-grid': svg('<rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/>'),

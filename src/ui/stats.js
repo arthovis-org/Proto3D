@@ -86,7 +86,7 @@ export class StatsOverlay {
         <section>
           <h4>Scene</h4>
           ${row('comps', 'components')}${row('links', 'connections')}${row('lod', 'far LOD', 'Blocks drawn in the far level of detail (past sizes.lod.far)')}${row('faces', 'faces above 1×', 'Canvas surfaces re-baked above their base density because they are close to the camera')}
-          ${row('storage', 'browser storage', 'navigator.storage.estimate(): everything this origin stores (localStorage autosave, IndexedDB key vault, caches) against the quota')}${row('local', 'localStorage', 'Autosave, recent projects and settings in localStorage')}
+          ${row('storage', 'browser storage', 'navigator.storage.estimate(): everything this origin stores (IndexedDB projects, versions and key vault, localStorage settings, caches) against the quota')}${row('local', 'localStorage', 'Settings (theme, snap, navigation, the open tab set) in localStorage; projects live in IndexedDB')}
         </section>
       </div>`;
     this.k = {}; this.el.querySelectorAll('[data-k]').forEach((n) => { this.k[n.dataset.k] = n; });

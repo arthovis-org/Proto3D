@@ -134,6 +134,38 @@ export class World {
     if (Math.abs(h - this._posHash) > 1e-6) { this._posHash = h; this.bumpLayout(); return true; }
     return false;
   }
+  /**
+   * Take the whole content out of the scene without disposing it (a project tab going to the
+   * background keeps its live objects): returns { nodes, connections, groups, named } for `attach`.
+   */
+  detach() {
+    this.selection?.clear?.();
+    const snap = { nodes: this.nodes, connections: this.connections, groups: this.groups, named: this.named || {} };
+    snap.groups.forEach((g) => this.scene.remove(g));
+    snap.connections.forEach((c) => this.scene.remove(c));
+    snap.nodes.forEach((n) => this.scene.remove(n));
+    this.nodes = []; this.connections = []; this.groups = []; this.named = {};
+    this.bumpLayout();
+    this.changed('detach');
+    return snap;
+  }
+  /** Put a detached content back (the world must be empty). */
+  attach(snap) {
+    if (this.nodes.length || this.connections.length || this.groups.length) this.clear();
+    this.nodes = snap.nodes; this.connections = snap.connections; this.groups = snap.groups; this.named = snap.named || {};
+    this.nodes.forEach((n) => { n.world = this; this.scene.add(n); });
+    this.connections.forEach((c) => { c.world = this; this.scene.add(c); });
+    this.groups.forEach((g) => { g.world = this; this.scene.add(g); });
+    this.bumpLayout();
+    this.changed('attach');
+  }
+  /** Free a detached content for good (its tab closed). */
+  static disposeDetached(snap) {
+    if (!snap) return;
+    snap.connections.forEach((c) => c.dispose?.());
+    snap.nodes.forEach((n) => n.dispose?.());
+    snap.groups.forEach((g) => g.dispose?.());
+  }
   clear() {
     this.selection?.clear?.();
     [...this.groups].forEach((g) => this.removeGroup(g));

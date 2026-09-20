@@ -3,7 +3,8 @@
 // toolbar, the menu bar (File · Edit · View · Add · Help) with its quick toggles at the right end,
 // the mini toolbar above the selection, the command palette (Ctrl+K), the wiring switch,
 // navigation presets, first-run tour, LOD, the AI layer (providers, key vault, jobs) with its
-// Connections page, model browser and job tray, the performance stats, autosave, recent projects,
+// Connections page, model browser and job tray, the performance stats, the project tabs (each with
+// its own scene, history and view), autosave into IndexedDB with its indicator, version history, recent projects,
 // the 2D editing mode (plan view, key 2) with grid snapping and Auto-layout (L), inline editing of
 // face fields (double-click text on a face), the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
@@ -22,7 +23,12 @@ import { Overlays } from './ui/overlays.js';
 import { Tour, tourSeen } from './ui/tour.js';
 import { createInstance } from './instance.js';
 import { updateLOD } from './lod.js';
-import { serializeWorld, serializeSelection, importCommand, loadWorld, downloadJSON, pickJSONFile, safeFileName, AutoSave, RecentProjects } from './serialize.js';
+import { serializeWorld, serializeSelection, importCommand, loadWorld, downloadJSON, pickJSONFile, safeFileName } from './serialize.js';
+import { Tabs } from './tabs.js';
+import { projectStore } from './project-store.js';
+import { TabStrip, timeAgo } from './ui/tab-strip.js';
+import { VersionHistory } from './ui/version-history.js';
+import { confirmDialog, promptDialog, isDialogOpen } from './ui/confirm.js';
 import { MenuBar, shortcutText } from './ui/menubar.js';
 import { ShortcutsSheet, AboutDialog, REPO_URL } from './ui/help-dialogs.js';
 import { StatsOverlay } from './ui/stats.js';
@@ -118,72 +124,140 @@ function addComponent(def, position) {
 }
 const leftBar = new LeftToolbar({ el: $('left-bar'), ws, world, interaction, onAdd: addComponent });
 
-/* ---- Project: name, autosave, recent projects, save / open / import / export ---- */
+/* ---- Projects: tabs (tabs.js), autosave into IndexedDB, version history, save / open / import / export ---- */
 // the 2D editing mode is a view setting: a document written while it is on carries the remembered 3D camera
 const cameraPose = () => (isPlanOn() && ws.planSaved ? { position: ws.planSaved.position, target: ws.planSaved.target } : null);
-const autosave = new AutoSave(world, { extras: () => ({ camera: ws.camera, controls: ws.controls, pose: cameraPose(), name: project.name || 'untitled' }) });
-const recent = new RecentProjects();
-const project = { name: null };
 const insetLeft = () => (leftBar?.isOpen ? 300 : 0);
 const dateStamp = () => new Date().toISOString().slice(0, 10);
-function setProjectName(name) { project.name = name ? String(name).trim() || null : null; document.title = `${project.name || 'Untitled'} — Proto3D`; }
+const v3 = (a) => new THREE.Vector3().fromArray(a);
+const arr = (v) => v.toArray().map((x) => +x.toFixed(2));
+/** The active tab's name (null while untitled); `document.title` follows it. */
+const project = { get name() { return tabs.active?.name || null; } };
 function currentDoc(name = project.name || 'untitled') { return serializeWorld(world, { camera: ws.camera, controls: ws.controls, pose: cameraPose(), name }); }
-/** A document's camera arrived while the plan is on: keep it as the 3D pose to return to and frame the plan over everything. */
-function afterLoadInPlan(doc) {
-  if (!isPlanOn()) return;
-  if (doc?.camera) ws.planSaved = { position: new THREE.Vector3().fromArray(doc.camera.position), target: new THREE.Vector3().fromArray(doc.camera.target), ortho: false };
-  frameAll({ instant: true });
+function syncTitle(tab = tabs.active) { document.title = `${tab?.name || 'Untitled'}${tab?.preview ? ' (preview)' : ''} — Proto3D`; }
+function setProjectName(name) { if (tabs.active) tabs.rename(tabs.activeId, name); syncTitle(); }
+let lastLoad = null;   // what the last loadWorld reported (unknown components skipped)
+/* the viewport as a small JPEG for Open recent: drawn from the canvas right after a render (frame() below), so it costs one 256 px blit */
+let thumbResolve = null, thumbCanvas = null;
+function requestThumb() { return new Promise((resolve) => { thumbResolve = resolve; setTimeout(() => { if (thumbResolve === resolve) { thumbResolve = null; resolve(null); } }, 500); }); }
+function captureThumb() {
+  const r = thumbResolve; thumbResolve = null;
+  try {
+    const src = ws.renderer.domElement, w = 256, h = Math.max(1, Math.round(w * src.height / Math.max(1, src.width)));
+    const c = thumbCanvas || (thumbCanvas = document.createElement('canvas')); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(src, 0, 0, w, h);
+    r(c.toDataURL('image/jpeg', 0.7));
+  } catch (_) { r(null); }
 }
-/** Keep the scene on the recent list before it is replaced (New, Open, an example); untitled scenes get a timestamp for a name. */
-function rememberCurrent() {
-  if (!world.nodes.length) return;
-  const name = project.name || `Untitled · ${new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
-  recent.remember(name, currentDoc(name));
-}
+const tabs = new Tabs({
+  world, history, selection, store: projectStore,
+  hooks: {
+    serialize: (name) => currentDoc(name || 'untitled'),
+    load: (doc) => { lastLoad = loadWorld(world, doc, { camera: ws.camera, controls: ws.controls }); return lastLoad; },
+    /** Camera (the 3D pose, the plan pose while the 2D mode is on), 2D mode and projection of the active tab. */
+    captureView: () => {
+      const plan = isPlanOn();
+      const pose = plan && ws.planSaved ? ws.planSaved : { position: ws.camera.position, target: ws.controls.target };
+      return { camera: { position: arr(pose.position), target: arr(pose.target) }, ortho: plan ? !!ws.planSaved?.ortho : ws.controls.isOrtho, plan, planCamera: plan ? { position: arr(ws.camera.position), target: arr(ws.controls.target) } : null };
+    },
+    /** Put a tab's view back, instantly: 2D mode first, then the camera (a document's camera when the tab has no view yet). */
+    applyView: (view, doc) => {
+      const pose = view?.camera || doc?.camera || null;
+      const wantPlan = !!view?.plan;
+      if (isPlanOn() !== wantPlan) setPlanView(wantPlan, { toast: false, instant: true });
+      if (wantPlan) {
+        if (pose) ws.planSaved = { position: v3(pose.position), target: v3(pose.target), ortho: !!view?.ortho };
+        if (view?.planCamera) { ws.camera.position.fromArray(view.planCamera.position); ws.controls.target.fromArray(view.planCamera.target); ws.controls.update(); }
+        else frameAll({ instant: true });
+      } else if (pose) { ws.controls.setOrtho(!!view?.ortho); ws.flyTo(v3(pose.position), v3(pose.target), 0); }
+      else frameAll({ instant: true });
+    },
+    beforeSwitch: () => { interaction.cancel(); fieldEditor.cancel(); menubar?.close(); hoveredConnection = null; connLabel.hidden = true; },
+    afterSwitch: (tab) => { syncTitle(tab); gizmo.setTarget(selection.nodes[selection.nodes.length - 1] || null); engine.evaluate(); overlays.setEmptyHint(world.nodes.length === 0); syncToolbar(); panel.build(); refreshRecent(); },
+    thumbnail: () => requestThumb(),
+    confirmClose: (tab) => confirmDialog({
+      icon: icons.file, title: `Save changes to ${tabs.displayName(tab)}?`,
+      text: tab.baseDoc?.nodes?.length ? 'Save downloads a JSON file. Discard closes the tab and keeps the project in Open recent as it was last saved or opened.' : 'Save downloads a JSON file. Discard closes the tab and removes this never-saved project from browser storage.',
+      buttons: [{ id: 'discard', label: 'Discard', kind: 'danger' }, { id: 'cancel', label: 'Cancel' }, { id: 'save', label: 'Save', kind: 'primary', default: true }],
+    }),
+    download: (doc, name) => downloadJSON(doc, safeFileName(name)),
+    defaultName: () => `proto3d-${dateStamp()}`,
+    toast: (t, ms) => overlays.toast(t, ms),
+  },
+});
+/* File → Open recent reads a cached list (menus build synchronously); it refreshes after every save and tab change */
+let recentCache = [], recentTimer = 0;
+function refreshRecent() { clearTimeout(recentTimer); recentTimer = setTimeout(() => tabs.recent().then((l) => { recentCache = l; }), 150); }
+tabs.onStatus((st) => { if (st.state === 'saved') refreshRecent(); });
+tabs.onChange(() => refreshRecent());
+/** An example scene: into the active tab when it is an untouched empty project, else a new tab; framed on its focus blocks. */
 function loadExample(id) {
   const ex = exampleById(id); if (!ex) return null;
-  rememberCurrent();
-  selection.clear(); history.clear();
-  const named = buildExample(world, ex, { camera: ws.camera, controls: ws.controls });
-  engine.evaluate();
-  setProjectName(null);
+  let named = null;
+  const tab = tabs.replaceActive(() => { named = buildExample(world, ex, { camera: ws.camera, controls: ws.controls }); engine.evaluate(); }, { name: null });
+  if (!tab) return null;
   const focus = ex.focus ? ex.focus(named).filter(Boolean) : [];
   if (isPlanOn()) frameAll({ instant: true });
   else if (focus.length) ws.frameBlocks(focus, { instant: true, fill: 0.7, insetLeft: insetLeft() }); else frameAll({ instant: true });
   return named;
 }
-function newProject() { rememberCurrent(); selection.clear(); history.clear(); world.clear(); world.named = {}; setProjectName(null); }
-/** Save = download the project as JSON under its name (a dated name the first time); Save as… asks for the name. */
+/** File → New: an empty project in a new tab (an untouched empty tab is already one). */
+function newProject() {
+  if (tabs.active && tabs.isUntouchedEmpty(tabs.active)) { overlays.toast('This tab is already an empty project', 1400); return tabs.active; }
+  const t = tabs.newTab();
+  if (t) overlays.toast('New project · Save as… names it, Alt+W closes the tab', 1600);
+  return t;
+}
+function closeTab(id = tabs.activeId) { return tabs.close(id); }
+async function renameProject() {
+  const tab = tabs.active; if (!tab || tab.preview) return;
+  const name = await promptDialog({ icon: icons.text, title: 'Rename project', text: 'The tab, the window title and the next Save use this name.', value: tab.name || '', placeholder: 'Untitled', ok: 'Rename' });
+  if (name !== null) tabs.rename(tab.id, name.replace(/\.json$/i, ''));
+}
+/** Save = download the project as JSON under its name (a dated name the first time) and mark the tab saved; Save as… asks for the name. */
 function saveProject() {
-  const name = project.name || `proto3d-${dateStamp()}`;
+  const tab = tabs.active; if (!tab) return;
+  if (tab.preview) { overlays.toast('This is a read-only preview · restore it or duplicate it as a tab first', 2200); return; }
+  const name = tab.name || `proto3d-${dateStamp()}`;
   const doc = currentDoc(name);
   downloadJSON(doc, safeFileName(name));
-  recent.remember(name, doc);
-  setProjectName(name);
+  tabs.markSaved(name, doc);
   overlays.toast(`Saved ${safeFileName(name)}`, 1600);
 }
-function saveProjectAs() {
-  const name = window.prompt('Save project as', project.name || `proto3d-${dateStamp()}`);
-  if (name === null || !name.trim()) return;
-  setProjectName(name.trim().replace(/\.json$/i, ''));
+async function saveProjectAs() {
+  const tab = tabs.active; if (!tab || tab.preview) { saveProject(); return; }
+  const name = await promptDialog({ icon: icons.save, title: 'Save project as', text: 'Downloads a JSON file under this name; the tab takes the name too.', value: tab.name || `proto3d-${dateStamp()}`, ok: 'Save' });
+  if (name === null || !name) return;
+  tabs.rename(tab.id, name.replace(/\.json$/i, ''));
   saveProject();
 }
-/** Replace the scene with a document (Open…, Open recent). */
+/** Open a document (Open…, a file): a new tab, or the active tab when it is an untouched empty project. */
 function openDoc(doc, name) {
-  rememberCurrent();
-  selection.clear(); history.clear();
-  const r = loadWorld(world, doc, { camera: ws.camera, controls: ws.controls });
-  setProjectName(name || doc.name);
-  recent.remember(project.name || 'Untitled', doc);
+  const tab = tabs.openDoc(doc, { name: name || (doc?.name && doc.name !== 'untitled' ? doc.name : null) });
+  if (!tab) return null;
+  const r = lastLoad;
   if (!doc.camera) frameAll({ instant: true });
-  afterLoadInPlan(doc);
-  if (r.skipped.length) overlays.toast(`Opened · ${r.skipped.length} unknown component${r.skipped.length > 1 ? 's' : ''} skipped`, 2400);
-  else overlays.toast(`Opened ${project.name || 'project'} · ${r.nodes} components`, 1600);
+  if (r?.skipped?.length) overlays.toast(`Opened · ${r.skipped.length} unknown component${r.skipped.length > 1 ? 's' : ''} skipped`, 2400);
+  else overlays.toast(`Opened ${tabs.displayName(tab)} · ${world.nodes.length} components`, 1600);
+  return tab;
 }
 function openProject() {
-  pickJSONFile({ withName: true }).then(({ doc, name }) => openDoc(doc, name)).catch((e) => { if (e.message !== 'cancelled') alert(`Could not open: ${e.message}`); });
+  pickJSONFile({ withName: true }).then(({ doc, name }) => openDoc(doc, name)).catch((e) => { if (e.message !== 'cancelled') overlays.toast(`Could not open: ${e.message}`, 2600); });
 }
-function openRecent(id) { const e = recent.get(id); if (e) openDoc(e.doc, e.name); }
+/** File → Open recent: a stored project comes to the front when it is open, else opens in a tab. */
+async function openRecent(id) {
+  const rec = await projectStore.getProject(id);
+  if (!rec) { overlays.toast('That project is no longer in this browser', 1800); refreshRecent(); return null; }
+  const tab = tabs.openRecord(rec);
+  if (tab) overlays.toast(`Opened ${tabs.displayName(tab)} · ${world.nodes.length} components`, 1400);
+  return tab;
+}
+async function clearRecent() {
+  const n = recentCache.filter((p) => !p.open).length;
+  if (!n) { overlays.toast('No closed projects to remove', 1400); return; }
+  const ok = await confirmDialog({ icon: icons.trash, title: `Remove ${n} closed project${n > 1 ? 's' : ''} from this browser?`, text: 'Open tabs stay. Their versions go with them; downloaded JSON files are not affected.', buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Remove', kind: 'danger', default: true }] });
+  if (ok === 'ok') { await tabs.forgetClosed(); refreshRecent(); overlays.toast(`${n} project${n > 1 ? 's' : ''} removed`, 1400); }
+}
 /** Merge a document into the scene, undoable; the new blocks land to the right of everything and get selected and framed. */
 function importDoc(doc, label) {
   const c = importCommand(world, doc, { label });
@@ -237,9 +311,10 @@ setUIHooks({
 });
 const shortcutsSheet = new ShortcutsSheet();
 const aboutDialog = new AboutDialog();
+const versions = new VersionHistory({ tabs, toast: (t, ms) => overlays.toast(t, ms) });
 const stats = new StatsOverlay({ el: $('stats'), ws, world });
 let palette = null;   // the command palette, built after the menu bar (it reads the menu model)
-const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen || !!palette?.isOpen;
+const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen || !!palette?.isOpen || isDialogOpen();
 // with an OpenRouter key present, fetch its model list once so estimates and the panel price are live
 vault.ready.then(() => { if (providerStatus('openrouter') === 'connected') providerRegistry.get('openrouter').listModels({ key: vault.keyFor('openrouter'), proxy: vault.proxyFor('openrouter') }).then(() => panel.refresh()).catch(() => {}); });
 
@@ -372,18 +447,18 @@ tb['btn-palette'].addEventListener('click', () => palette.toggle());
  * goes orthographic (workspace.enterPlan), the gizmo hides; off, everything stands up again and
  * the camera flies back to the remembered 3D pose. A view setting — nothing about it is saved.
  */
-function setPlanView(on, { toast = true } = {}) {
+function setPlanView(on, { toast = true, instant = false } = {}) {
   on = !!on;
   if (on === isPlanOn()) return;
   interaction.cancel();
   if (on) {
     const focus = selection.nodes.length || selection.groups.length ? selectedNodes() : world.nodes.filter((n) => n.visible);
     setPlan(true);                                        // blocks, groups and cables follow
-    ws.enterPlan(focus, { insetLeft: insetLeft() });
+    ws.enterPlan(focus, { insetLeft: insetLeft(), instant });
     gizmo.setSuspended(true);
   } else {
     setPlan(false);
-    ws.exitPlan();
+    ws.exitPlan({ instant });
     gizmo.setSuspended(false);
   }
   syncToolbar(); panel.refresh();
@@ -425,6 +500,19 @@ function toggleHelp() {
   if (help.open) { togglePanel(true); help.scrollIntoView({ block: 'nearest' }); }
   syncToolbar();
 }
+/* Project tabs: Ctrl+Tab / Ctrl+Shift+Tab cycle (Alt+] / Alt+[ where the browser keeps Ctrl+Tab), Alt+W closes (Ctrl+W too when the browser lets it through), Alt+N opens a new one */
+window.addEventListener('keydown', (e) => {
+  if (isTyping(e) || anyModalOpen()) return;
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); tabs.cycle(e.shiftKey ? -1 : 1); return; }
+  if (e.altKey && !mod && !e.shiftKey) {
+    if (e.code === 'BracketRight' || e.code === 'BracketLeft') { e.preventDefault(); e.stopPropagation(); tabs.cycle(e.code === 'BracketRight' ? 1 : -1); }
+    else if (e.code === 'KeyW') { e.preventDefault(); e.stopPropagation(); closeTab(); }
+    else if (e.code === 'KeyN') { e.preventDefault(); e.stopPropagation(); newProject(); }
+    return;
+  }
+  if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') { e.preventDefault(); e.stopPropagation(); closeTab(); }
+}, true);
 window.addEventListener('keydown', (e) => {
   if (isTyping(e) || anyModalOpen() || e.altKey) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
@@ -466,22 +554,29 @@ syncToolbar();
 const sc = shortcutText;
 const toggleRail = () => { document.body.classList.toggle('rail-hidden'); ws.resize(); };
 const setPortsOnSelection = (v) => { if (selection.nodes.length) history.execute(cmd.setShowPorts(world, selection.nodes, v)); panel.refresh(); };
-const timeAgo = (iso) => { const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
 const undoLabel = (stack, verb) => { const c = stack[stack.length - 1]; return c?.label ? `${verb} ${c.label}` : verb; };
 const menubar = new MenuBar({
   el: $('menubar'), tools,
   menus: [
     { id: 'file', label: 'File', items: () => [
-      { label: 'New project', hint: 'empty scene', run: newProject },
-      { label: 'Open…', shortcut: sc('Ctrl+O'), run: openProject },
+      { label: 'New project', shortcut: 'Alt+N', hint: 'in a new tab', run: newProject },
+      { label: 'Open…', shortcut: sc('Ctrl+O'), hint: 'a JSON file, in a new tab', run: openProject },
       { label: 'Open recent', items: () => {
-        const list = recent.list();
+        const list = recentCache;
         if (!list.length) return [{ label: 'No recent projects', disabled: true }];
-        return [...list.map((e) => ({ label: e.name, hint: `${e.nodes} components · ${timeAgo(e.savedAt)}`, run: () => openRecent(e.id) })), { sep: true }, { label: 'Clear recent', run: () => recent.clear() }];
+        return [
+          ...list.slice(0, 12).map((e) => ({ label: e.name || 'Untitled', icon: e.thumb ? `<img class="mnu-thumb" src="${e.thumb}" alt="">` : icons.file, hint: `${e.nodes} component${e.nodes === 1 ? '' : 's'} · ${e.open ? (e.active ? 'this tab' : 'open in a tab') : `opened ${timeAgo(e.openedAt)}`}`, checked: e.open ? true : undefined, run: () => openRecent(e.id) })),
+          { sep: true },
+          { label: 'Remove closed projects…', hint: 'from this browser', disabled: !list.some((e) => !e.open), run: clearRecent },
+        ];
       } },
       { sep: true },
-      { label: 'Save', shortcut: sc('Ctrl+S'), hint: project.name ? `${safeFileName(project.name)}` : 'downloads JSON', run: saveProject },
-      { label: 'Save as…', shortcut: sc('Ctrl+Shift+S'), run: saveProjectAs },
+      { label: 'Save', shortcut: sc('Ctrl+S'), hint: project.name ? `${safeFileName(project.name)}` : 'downloads JSON', disabled: !!tabs.active?.preview, run: saveProject },
+      { label: 'Save as…', shortcut: sc('Ctrl+Shift+S'), disabled: !!tabs.active?.preview, run: saveProjectAs },
+      { label: 'Rename project…', disabled: !!tabs.active?.preview, run: renameProject },
+      { sep: true },
+      { label: 'Version history…', hint: `${tabs.active?.preview ? 'previewing an earlier version' : 'snapshots of this project, in this browser'}`, checked: versions.isOpen, run: () => versions.toggle() },
+      { label: 'Close tab', shortcut: 'Alt+W', hint: tabs.active?.dirty ? 'asks about unsaved changes' : tabs.tabs.length === 1 ? 'leaves an empty project' : undefined, run: () => closeTab() },
       { sep: true },
       { label: 'Import…', hint: 'merge a JSON file into this scene', run: importFile },
       { label: 'Export', items: () => [
@@ -577,7 +672,9 @@ const goTo = (n) => { selection.set([n]); ws.frameBlocks([n], { fill: 0.6, inset
 palette = new CommandPalette({
   canvas: ws.renderer.domElement,
   sources: () => [
-    ...menuCommands(menubar.menus, { skip: (menuId, label, it) => (menuId === 'add' && !!it.items) || label === 'No recent projects' || label === 'Command palette…' }),
+    ...menuCommands(menubar.menus, { skip: (menuId, label, it) => (menuId === 'add' && !!it.items) || label === 'No recent projects' || label === 'Command palette…' || label.startsWith('Open recent ›') }),
+    ...tabs.tabs.filter((t) => t.id !== tabs.activeId).map((t) => ({ id: `tab:${t.id}`, kind: 'command', group: 'Tabs', label: `Switch to ${tabs.displayName(t)}`, hint: t.preview ? 'read-only preview' : t.dirty ? 'unsaved changes' : 'open project', icon: icons.file, run: () => tabs.activate(t.id) })),
+    ...recentCache.filter((e) => !e.open).slice(0, 8).map((e) => ({ id: `recent:${e.id}`, kind: 'command', group: 'File', label: `Open recent › ${e.name || 'Untitled'}`, hint: `${e.nodes} components · opened ${timeAgo(e.openedAt)}`, icon: icons.file, run: () => openRecent(e.id) })),
     ...registry.all().map((def) => ({ id: `add:${def.id}`, kind: 'add', group: 'Add', label: `Add ${def.label}`, hint: `${registry.category(def.category).label} · ${def.description}`, icon: def.icon || icons.node, run: () => addComponent(def, null) })),
     ...world.nodes.map((n) => ({ id: `goto:${n.uid}`, kind: 'goto', group: 'Go to', label: `Go to ${n.title}`, hint: `${n.def.label}${n.group ? ` · in ${n.group.title}` : ''}`, icon: n.def.icon || icons.node, run: () => goTo(n) })),
   ],
@@ -598,15 +695,12 @@ const miniBar = new MiniToolbar({
   onMore: () => { togglePanel(true); const body = $('panel'); body.scrollTop = 0; const f = body.querySelector('#prop-name, #panel-body input, #panel-body select, #panel-body textarea'); f?.focus({ preventScroll: true }); },
 });
 
-/* ---- First scene: the autosave if there is one, otherwise the Showcase ---- */
-const saved = autosave.load();
+/* ---- First scene: the saved tabs (IndexedDB; the round-5 localStorage autosave migrates once), otherwise the Showcase in a first tab ---- */
+const tabStrip = new TabStrip({ el: $('tabstrip'), tabs, onNew: newProject, onDownload: saveProject, onVersions: () => versions.open() });
 let restored = false;
-if (saved && saved.nodes && saved.nodes.length) {
-  try { loadWorld(world, saved, { camera: ws.camera, controls: ws.controls }); restored = true; } catch (e) { console.warn('autosave ignored:', e.message); }
-}
+try { restored = await tabs.init(); } catch (e) { console.warn('project store unavailable:', e.message); }
 if (!restored) loadExample(DEFAULT_EXAMPLE);
-else setProjectName(saved.name && saved.name !== 'untitled' ? saved.name : null);
-autosave.enabled = true;
+refreshRecent();
 overlays.setEmptyHint(world.nodes.length === 0);
 
 /* ---- First-run tour: once per browser, re-openable from "?" → Show tour ---- */
@@ -661,6 +755,7 @@ function frame() {
   panelAcc += dt;
   if (panelAcc >= 0.1) { panel.refresh(); panelAcc = 0; }
   ws.renderer.render(ws.scene, ws.camera);
+  if (thumbResolve) captureThumb();   // Open recent thumbnail: one small blit right after the render
   stats.frame(dt);   // after the render so renderer.info holds this frame's counts
   requestAnimationFrame(frame);
 }
@@ -668,11 +763,11 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, palette, stats, chips, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
   plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS },
   layout: { arrange: autoLayoutSelection, plan: (nodes) => layoutPlan(world, nodes), tweening },
-  newProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
+  newProject, closeTab, renameProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },
   ai: { vault, jobs, spend, store, providers: providerRegistry, providerStatus, connections, modelBrowser, jobsTray },
   serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls, pose: cameraPose() }),

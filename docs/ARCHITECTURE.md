@@ -10,6 +10,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ UI          ui/menubar.js (menus + quick toggles)  ui/toolbar-left.js  panel.js  interaction.js  ui/field-editor.js │
 │             ui/mini-toolbar.js (above the selection)  ui/command-palette.js (Ctrl+K)          │
+│             ui/tab-strip.js (project tabs + autosave indicator)  ui/version-history.js  ui/confirm.js │
 │             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
 │             ui/guides.js (snap guides)  layout.js (Auto-layout)  plan.js (2D mode + snap settings) │
 │             controls/presets.js + controls/navigation.js (camera + bindings) │
@@ -18,6 +19,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 │ Scene       block3d.js → node3d.js / device3d.js / shape3d.js   connection3d.js  cable-chips.js │
 │             routing.js  groups.js  faces.js  face-canvas.js  workspace.js  theme.js │
 │             geometry.js (panelGeometry)  wiring.js (the Wiring switch)       │
+│ Persistence tabs.js (open projects, autosave, snapshots)  project-store.js (IndexedDB)  serialize.js │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Core        core/component.js  core/registry.js  core/types.js              │
 │             core/engine.js  core/world.js  core/commands.js  core/history.js │
@@ -672,12 +674,14 @@ fold into one ☰ button whose menu lists the five menus as submenus.
 
 What the menus add beyond the older controls, all in `main.js` and `serialize.js`:
 
-- **Project name and recent projects.** `project.name` (also in `document.title`) is set by *Save
-  as…*, *Open…* (the file name) and *Open recent*; *Save* downloads under it (`safeFileName`) and
-  a dated name the first time. `RecentProjects` (`localStorage["proto3d.recent.v1"]`, newest
-  first, eight entries, the whole document in each so it reopens without a file) is fed by Save,
-  Open and by `rememberCurrent()` before New, Open or an example replaces a non-empty scene —
-  untitled scenes get a timestamp for a name, so *File → New* never loses work.
+- **Projects.** Every open project is a tab (§10b): *New project* opens one, *Open…* / *Open
+  recent* / *Examples* open in a new tab unless the active tab is an untouched empty project,
+  *Save* downloads under the tab's name (`safeFileName`, a dated name the first time) and marks
+  it saved, *Save as…* and *Rename project…* ask in a themed prompt, *Version history…* opens the
+  drawer, *Close tab* asks about unsaved changes. *Open recent* lists every project in the
+  browser's IndexedDB with a thumbnail, its component count and when it was last opened; open
+  ones are checked and come to the front. `project.name` (also `document.title`) is the active
+  tab's name.
 - **Import and clipboard.** `serializeSelection(world, nodes)` is a document holding only those
   blocks plus the links and groups among them (Copy, *Export → Selection as JSON…*);
   `importCommand(world, doc)` is one undoable command that builds fresh instances (new uids),
@@ -876,10 +880,83 @@ afterLoadInPlan`).
 
 `loadWorld` clears the world, instantiates known types (unknown ids are reported in `skipped`),
 reconnects by uid + port key, rebuilds groups (collapsing after their members exist) and restores
-the camera. `AutoSave` debounces `world.onChange` into `localStorage["proto3d.world.v2"]`.
+the camera. Autosave and the recent list moved to `tabs.js` / `project-store.js` (§10b).
 
-Also in `serialize.js`: `serializeSelection`, `importCommand`, `RecentProjects`, `safeFileName`
-and `pickJSONFile({ withName })` (§9b).
+Also in `serialize.js`: `serializeSelection`, `importCommand`, `safeFileName` and
+`pickJSONFile({ withName })` (§9b).
+
+## 10b. Persistence: project tabs, autosave and version history (`tabs.js`, `project-store.js`)
+
+**One World, many tabs.** There is a single `World`, `Engine`, `History`, `Selection` and
+renderer. Each open project is a *tab* in `Tabs` (`tabs.js`); the active tab's content is in the
+world, every other tab keeps its scene objects detached (`World.detach()` removes nodes,
+connections and groups from the scene without disposing them; `World.attach()` puts them back —
+no render cost, no rebuild, uids and instances survive), its undo / redo stacks
+(`History.swap()`), its camera pose (the remembered 3D pose while the 2D mode is on, plus the
+plan camera), 2D mode, orthographic flag, selection (by uid) and wiring setting. Switching parks
+the active tab (`_park`: capture view, serialize, detach, swap stacks) and shows the next
+(`_show`: attach or `loadWorld` from its stored document, swap stacks back, apply the view
+instantly, reselect). `main.js` hands `Tabs` hooks for what only it can do: `serialize`, `load`,
+`captureView` / `applyView` (2D mode through `setPlanView(on, { instant })`), `beforeSwitch` /
+`afterSwitch` (cancel interactions, title, toolbar, panel), `thumbnail`, `confirmClose`,
+`download`, `toast`. At most 8 tabs; the 9th is refused with a toast and the "+" is disabled.
+
+- **Dirty** means the document differs from the one last saved (*Save* / *Save as…*) or opened
+  (`docHash` of the content: nodes, connections, groups — not the camera, name, time or wiring).
+  It is the dot on the tab and what the close dialog (`ui/confirm.js`, Save / Discard / Cancel)
+  asks about. *Discard* keeps the project in *Open recent* as it was last saved or opened
+  (`baseDoc`) or, for a never-saved project, removes it from the browser.
+- **Untouched empty**: a new, unnamed, never edited tab. Documents open into it instead of beside it.
+- **Preview**: a read-only tab showing an old version — `history.locked` refuses `execute`, it is
+  never persisted, the indicator says *Read-only preview*, the drawer offers *Restore this
+  version* and *Close preview*.
+
+**Autosave** (`Tabs._onWorldChange` → `saveNow`) writes the active tab 1.5 s after the last
+change (`autosaveDelay`, a test hook) into IndexedDB and reports its state to the strip's
+indicator: *Unsaved changes → Saving… → Saved · just now*, *Autosave off* (the switch in the hover
+card, `localStorage["proto3d.autosave.v1"]`), *No browser storage*, *Could not save*. `Ctrl+S`
+still downloads JSON and marks the tab saved (a manual snapshot follows). A late save never
+reports *Saved* over a newer change (a change sequence number).
+
+**IndexedDB `proto3d-projects` v1** (`project-store.js`, best effort — without IndexedDB the app
+runs in memory and says so):
+
+```
+projects   keyPath id, index openedAt
+           { id, name, doc, baseDoc, dirty, view: { camera: { position, target }, ortho, plan, planCamera },
+             savedAt, autosavedAt, openedAt, createdAt, thumb (256 px JPEG data URL), bytes, nodes, connections,
+             lastSnapshotAt, lastSnapshotHash }
+snapshots  keyPath id, index project (projectId)
+           { id, projectId, at, kind: 'auto' | 'manual' | 'before', label, doc, bytes, name, nodes, connections,
+             summary: { added, removed, renamed, connections, params, moved, groups, first, text } }
+localStorage["proto3d.tabs.v1"]  { open: [projectId…], active }   — the open tab set (small settings stay in localStorage)
+```
+
+The round-5 keys `proto3d.world.v2` (autosave) and `proto3d.recent.v1` (recents) are migrated
+once on boot (`readLegacy`: the autosave becomes the first tab, each recent entry a closed
+project) and removed. A reload restores every tab from its record and the active one; background
+tabs load their document lazily when first switched to.
+
+**Version history** (`ui/version-history.js`, *File → Version history…*, a right-side drawer over
+the properties panel). A snapshot is taken on autosave when the content hash changed and the last
+snapshot is older than `snapshotInterval` (2 minutes, a test hook), on every manual save, before
+a restore (`kind: 'before'`) and by hand (*Snapshot now*). Each row: time, kind (*Auto*, *Saved*,
+*Before restore*, *Named*), size, a one-line diff against the previous snapshot
+(`summarizeDiff`: "+2 components · −1 component · 1 renamed · 3 cables changed · 4 params changed",
+"First version · 33 components", "No content change") and an optional label (*Name…*; named
+versions are never pruned). Actions: *Preview* (a read-only tab), *Restore* (one undoable
+*Restore version* command holding both documents, camera kept, a *before* snapshot first),
+*Duplicate as tab*, *Delete*, *Clear older than…* (1 h / 1 d / 7 d / every unnamed one, confirmed).
+At most 50 unnamed snapshots per project (`pruneSnapshots` drops the oldest). The footer shows
+the project's bytes, all projects' bytes and `navigator.storage.estimate()` as a bar, turning to a
+warning above 80 % of the quota. The thumbnail for *Open recent* is one 256 px `drawImage` of the
+canvas right after a render (`captureThumb` in the render loop), at most every 10 s per tab.
+
+**Keys**: `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle tabs and `Ctrl+W` closes when the browser hands the
+key to the page (Chrome keeps both for its own tabs); the fallbacks that always work are `Alt+]`
+/ `Alt+[` and `Alt+W`, `Alt+N` opens a new project. In the strip: click activates, middle-click or
+× closes, double-click or F2 renames inline, a pointer drag reorders (window listeners: moving a
+captured element in the DOM would drop its capture), ← → move focus, Delete closes.
 
 ## 11. Adding to the platform
 
