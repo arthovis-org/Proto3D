@@ -26,4 +26,8 @@ import './project/milestone.js';
 import './project/sticky-note.js';
 import './project/checklist.js';
 import './project/project-dashboard.js';
+// generate (AI): prompt editor + text / image / video / audio generation
+import './generate/prompt.js';
+import './generate/generate-text.js';
+import './generate/generate-media.js';
 export { registry } from '../core/registry.js';

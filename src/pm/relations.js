@@ -136,6 +136,11 @@ const TABLE = {
   'flow-decision.yes>*': (n) => `If ${n.from} says yes, ${n.to} runs`,
   'flow-decision.no>*': (n) => `If ${n.from} says no, ${n.to} runs`,
   'sticky-note.text>*': (n) => `${n.fromPoss} note text goes to ${n.to}`,
+  // generate: prompts in, results out (the components also carry describeLink for their own outputs)
+  '*>prompt.variables': (n) => `${n.from} is a {variable} in ${n.to}`,
+  '*>prompt.text': (n) => `${n.from} is the {text} of ${n.to}`,
+  'input.trigger>*': (n, f, t) => (t.key === 'run' ? `Pressing ${n.from} runs ${n.to}` : `Pressing ${n.from} fires ${n.to}`),
+  '*>kanban-board.cover': (n) => `${n.fromPoss} media becomes a card cover on ${n.to}`,
 };
 
 /* ---------------- drop-to-link: relationships without cables ---------------- */
@@ -155,6 +160,15 @@ export const DROP_LINKS = [
   'input.trigger>kanban-board.addTask', '*.tap>flow-terminal.in',
   'text.text>*.screen', 'text.text>display.in', 'action.result>*.screen', 'action.result>display.in', 'action.result>text.in',
   'project-dashboard.progress>display.in', 'sticky-note.text>display.in', 'sticky-note.text>*.screen',
+  // generate: a Prompt dropped on a Generate component prompts it; results drop onto grids, screens, displays, boards; an Input runs a job
+  'prompt.prompt>generate-text.prompt', 'prompt.prompt>generate-image.prompt', 'prompt.prompt>generate-video.prompt', 'prompt.prompt>generate-audio.prompt',
+  'text.text>generate-text.prompt', 'text.text>generate-image.prompt', 'text.text>prompt.variables', 'data.value>prompt.variables', 'data.data>prompt.variables', 'milestone.milestone>prompt.variables', 'person.person>prompt.variables', 'kanban-board.tasks>prompt.variables',
+  'generate-text.text>display.in', 'generate-text.text>*.screen', 'generate-text.text>text.in', 'generate-text.text>prompt.variables', 'generate-text.done>kanban-board.addTask', 'generate-text.text>generate-image.prompt',
+  'generate-image.media>media-grid.items', 'generate-image.media>*.screen', 'generate-image.media>display.in', 'generate-image.media>kanban-board.cover', 'generate-image.media>generate-video.reference',
+  'generate-video.media>media-grid.items', 'generate-video.media>*.screen', 'generate-video.media>display.in', 'generate-video.media>kanban-board.cover',
+  'generate-audio.media>media-grid.items', 'generate-audio.media>*.screen', 'generate-audio.media>display.in',
+  'media.media>kanban-board.cover', 'media.media>generate-image.reference', 'media.media>generate-text.image',
+  'input.trigger>generate-text.run', 'input.trigger>generate-image.run', 'input.trigger>generate-video.run', 'input.trigger>generate-audio.run',
 ];
 const FLOW_OUT = new Set(['out', 'next', 'yes', 'no', 'done', 'tap', 'trigger', 'reached']);
 const FLOW_IN = new Set(['in', 'start', 'trigger']);

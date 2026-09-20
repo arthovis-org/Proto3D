@@ -4,7 +4,7 @@
 // helpers, so the same card is a slab on a board, a bar on a Gantt and a count on a dashboard.
 //
 //   Card      { id, title, description, assignee, due, priority, tags[], checklist[{text,done}],
-//               estimate, createdAt, movedAt, blockedBy[] }
+//               estimate, createdAt, movedAt, blockedBy[], cover? { kind, src, title, storeId?, hosted? } }
 //   Column    { id, title, wipLimit?, cards: [Card] }
 //   Board     { columns: [Column] }
 //   Person    { id, name, role, colour, capacity }
@@ -47,8 +47,11 @@ export function createCard(o = {}) {
     createdAt: o.createdAt || now,
     movedAt: o.movedAt || now,
     blockedBy: Array.isArray(o.blockedBy) ? o.blockedBy.map(String) : [],
+    ...(o.cover && typeof o.cover === 'object' && typeof o.cover.src === 'string' ? { cover: coverRecord(o.cover) } : {}),
   };
 }
+/** The part of a media object a card keeps as its cover (a reference, never the pixels). */
+export const coverRecord = (m) => ({ kind: m.kind || 'image', src: m.src, title: m.title || '', ...(m.storeId ? { storeId: m.storeId } : {}), ...(m.hosted ? { hosted: m.hosted } : {}), ...(m.w ? { w: m.w, h: m.h } : {}) });
 export function createColumn(o = {}) {
   return { id: o.id || newId('k'), title: String(o.title ?? 'Column'), wipLimit: Number.isFinite(+o.wipLimit) && +o.wipLimit > 0 ? +o.wipLimit : 0, cards: (o.cards || []).map(createCard) };
 }

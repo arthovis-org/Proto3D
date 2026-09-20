@@ -1,6 +1,7 @@
 // main.js — boots the platform: theme, workspace, registry (all core components), world model,
 // engine, history, selection, gizmo, interaction, guidance overlays, properties panel, Add
-// toolbar, File / help menus, the wiring switch, navigation presets, first-run tour, LOD,
+// toolbar, File / help menus, the wiring switch, navigation presets, first-run tour, LOD, the AI
+// layer (providers, key vault, jobs) with its Connections page, model browser and job tray,
 // autosave, the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
 import { createWorkspace } from './workspace.js';
@@ -30,6 +31,16 @@ import { isWiringOn, setWiring, toggleWiring, onWiringChange } from './wiring.js
 import { nav } from './controls/navigation.js';
 import { PRESET_IDS } from './controls/presets.js';
 import { icons } from './icons.js';
+import './ai/providers/index.js';
+import { store } from './ai/store.js';
+import { vault } from './ai/vault.js';
+import { jobs } from './ai/jobs.js';
+import { spend } from './ai/pricing.js';
+import { providerRegistry, providerStatus } from './ai/providers/index.js';
+import { setUIHooks } from './ai/ui-hooks.js';
+import { Connections } from './ui/connections.js';
+import { ModelBrowser } from './ui/model-browser.js';
+import { JobsTray } from './ui/jobs-tray.js';
 
 const $ = (id) => document.getElementById(id);
 const container = $('viewport');
@@ -108,6 +119,20 @@ const fileMenu = new FileMenu({
   onExample: (id) => loadExample(id),
 });
 
+/* ---- AI generation: Connections page, model browser, job tray; the components reach them through ui-hooks ---- */
+const connections = new Connections({ onChange: () => { syncToolbar(); panel.refresh(); } });
+const modelBrowser = new ModelBrowser();
+const jobsTray = new JobsTray({ el: $('jobs-tray'), onFocus: (uid) => { const n = world.nodeByUid(uid); if (n) { selection.set([n]); ws.frameBlocks([n], { fill: 0.6, insetLeft: leftBar?.isOpen ? 300 : 0 }); togglePanel(true); } } });
+setUIHooks({
+  openConnections: (id) => { connections.open(id || null); return true; },
+  openModelBrowser: (o) => { modelBrowser.open(o); return true; },
+  focusBlock: (uid) => { const n = world.nodeByUid(uid); if (!n) return false; selection.set([n]); ws.frameBlocks([n], { fill: 0.6 }); return true; },
+  toast: (text, ms) => { overlays.toast(text, ms); return true; },
+});
+$('btn-connections').addEventListener('click', () => connections.toggle());
+// with an OpenRouter key present, fetch its model list once so estimates and the panel price are live
+vault.ready.then(() => { if (providerStatus('openrouter') === 'connected') providerRegistry.get('openrouter').listModels({ key: vault.keyFor('openrouter'), proxy: vault.proxyFor('openrouter') }).then(() => panel.refresh()).catch(() => {}); });
+
 /* ---- Legend swatches come from the theme so the overlay never drifts from the 3D language ---- */
 const SHAPE_SVG = {
   chevron: (c, filled) => `<svg viewBox="0 0 16 12"><path d="M1 1h8l6 5-6 5H1z" fill="${filled ? c : 'none'}" stroke="${c}" stroke-width="1.6"/></svg>`,
@@ -181,6 +206,9 @@ function syncToolbar() {
   $('btn-theme').querySelector('span').textContent = getTheme() === 'dark' ? 'Light' : 'Dark';
   $('btn-theme').querySelector('i').innerHTML = getTheme() === 'dark' ? icons.sun : icons.moon;
   $('btn-panel').classList.toggle('on', !document.body.classList.contains('panel-hidden'));
+  const live = providerRegistry.all().filter((p) => p.needsKey && providerStatus(p.id) === 'connected').length;
+  $('btn-connections').classList.toggle('on', live > 0);
+  $('btn-connections').title = live ? `Connections — ${live} provider${live > 1 ? 's' : ''} connected` : 'Connections — API keys for OpenRouter, fal.ai and kie.ai; the Demo provider works without any';
   $('btn-undo').disabled = !history.canUndo; $('btn-redo').disabled = !history.canRedo;
 }
 history.onChange(syncToolbar);
@@ -196,6 +224,7 @@ const closeHelpMenu = () => { helpMenu.hidden = true; $('btn-help').classList.re
 $('btn-help').addEventListener('click', (e) => { e.stopPropagation(); helpMenu.hidden = !helpMenu.hidden; $('btn-help').classList.toggle('on', !helpMenu.hidden); });
 helpMenu.querySelector('[data-action="help"]').addEventListener('click', () => { closeHelpMenu(); toggleHelp(); });
 helpMenu.querySelector('[data-action="tour"]').addEventListener('click', () => { closeHelpMenu(); tour.start(); });
+helpMenu.querySelector('[data-action="connections"]').addEventListener('click', () => { closeHelpMenu(); connections.open(); });
 helpMenu.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => { nav.setPreset(b.dataset.preset); closeHelpMenu(); overlays.toast(`${nav.preset.label} controls · ${nav.binding('orbit')} orbits`, 2000); }));
 window.addEventListener('pointerdown', (e) => { if (!helpMenu.contains(e.target) && e.target !== $('btn-help')) closeHelpMenu(); });
 $('btn-undo').addEventListener('click', () => { history.undo(); selection.prune(world); });
@@ -219,6 +248,7 @@ function toggleHelp() {
 }
 window.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
+  if (connections.isOpen || modelBrowser.isOpen) return;   // modals own the keyboard
   if (nav.keyAction(e)) return;   // the navigation preset owns this key (interaction.js handles it)
   if (e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); leftBar.open('search'); return; }
   if (e.shiftKey) return;
@@ -283,6 +313,7 @@ function frame() {
   world.connections.forEach((c) => c.update(dt));
   interaction.update(t, dt);
   overlays.update();
+  jobsTray.update();
   tour.update(dt);
   updateConnectionLabel();
   panelAcc += dt;
@@ -297,6 +328,7 @@ window.__proto = {
   ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, fileMenu, registry, autosave, examples, THREE, overlays, tour, nav, icons,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },
+  ai: { vault, jobs, spend, store, providers: providerRegistry, providerStatus, connections, modelBrowser, jobsTray },
   serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls }),
   load: (doc) => loadWorld(world, doc, { camera: ws.camera, controls: ws.controls }),
 };

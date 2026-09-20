@@ -20,15 +20,19 @@ document describes the layers, the invariants each one keeps and how they fit to
 │ Core        core/component.js  core/registry.js  core/types.js              │
 │             core/engine.js  core/world.js  core/commands.js  core/history.js │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Components  components/<category>/<name>.js  (17 core + 10 project)        │
+│ Components  components/<category>/<name>.js  (17 core + 10 project + 5 generate) │
 │ PM layer    pm/model.js (data)  pm/relations.js (links → meaning)  pm/board-ops.js  pm/panel-pm.js │
+│ AI layer    ai/providers/* (openrouter, fal, kie, demo)  ai/vault.js  ai/jobs.js  ai/pricing.js  ai/store.js  ai/http.js │
+│             ui/connections.js  ui/model-browser.js  ui/jobs-tray.js  (reached through ai/ui-hooks.js) │
 │ Examples    examples/showcase.js (the default scene) + examples/index.js     │
 │ Persistence serialize.js                                                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Dependencies point downward: components import only `core/*`, `icons.js`, `faces.js` and
-`theme.js` (project components also `pm/*` and `shape3d.js`'s canvas-plane helper); the scene
+`theme.js` (project components also `pm/*` and `shape3d.js`'s canvas-plane helper; generate
+components also `ai/*`, which has no Three.js and reaches the UI only through `ai/ui-hooks.js`,
+see `docs/AI-GENERATION.md`); the scene
 layer imports core; the UI imports everything. `main.js` is the only module that knows about all
 of them.
 
@@ -530,10 +534,26 @@ the camera. `AutoSave` debounces `world.onChange` into `localStorage["proto3d.wo
   pair up without a row.
 - **A navigation preset**: an entry in `PRESETS` (`controls/presets.js`); the panel select, the
   ? menu, the help sheet and the tour hint pick it up.
+- **An AI provider or model**: `registerProvider({...})` in a file under `ai/providers/` (import it
+  in `providers/index.js`), or a row in `FAL_MODELS` / `KIE_MODELS` — see `AI-GENERATION.md` §6.
 - **A body**: build it from `panelGeometry` / `slabGeometry` (`h.panelGeometry` inside `body3d`)
   and `materials.panel`; use `outlineGeometry` for its rim.
 - **A param control**: extend `PARAM_TYPES` in `core/component.js` and `_buildBlock` in `panel.js`.
 - **An undoable operation**: a command in `core/commands.js` built from `World` mutations.
+
+## 11b. AI generation (`ai/`, `components/generate/`)
+
+Provider adapters (`ai/providers/base.js` interface: `testKey`, `listModels`, `estimateCost`,
+`run`), the encrypted key vault (`ai/vault.js`, WebCrypto AES-GCM, PBKDF2 from a passphrase or a
+device secret), the job queue (`ai/jobs.js`: states, progress, logs, cancel through
+`AbortSignal`, retry, concurrency), pricing and session spend (`ai/pricing.js`), the IndexedDB
+blob store for generated media (`ai/store.js`, `faces.setBitmapFallback`) and the shared
+component lifecycle / face / panel (`components/generate/common.js`) are described in
+[`AI-GENERATION.md`](AI-GENERATION.md). Invariants: keys are never in `params`, `state` or the
+world JSON; live job handles stay on the instance (`_job`, `_approval`, `_err`), results in
+`state.current / history`; `when done` is emitted from `evaluate` on the frame after a job
+finishes so it travels the normal event bus; cards may carry a `cover` media record
+(`pm/model.js → coverRecord`), set through the board's `cover` input.
 
 ## 12. Invariants worth keeping
 

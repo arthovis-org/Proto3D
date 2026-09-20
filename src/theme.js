@@ -13,7 +13,7 @@ import * as THREE from 'three';
 /** Scale: 1 scene unit = 10 cm. A small node is 36 cm wide. */
 export const UNIT_CM = 10;
 
-const CATEGORY_KEYS = ['media', 'text', 'data', 'input', 'logic', 'action', 'transform', 'layout', 'output', 'project', 'devices'];
+const CATEGORY_KEYS = ['media', 'text', 'data', 'input', 'logic', 'action', 'transform', 'layout', 'output', 'project', 'generate', 'devices'];
 const TYPE_KEYS = ['number', 'text', 'boolean', 'data', 'media', 'event', 'any'];
 /** Project subtypes of `data`: their own hues so a person cable never looks like a stats cable. */
 const SUBTYPE_KEYS = ['person', 'task', 'tasks', 'board', 'milestone', 'stats', 'layout'];
@@ -58,7 +58,7 @@ export const palettes = {
     env: ['#4a5c80', '#1c2536', '#0a0d14'],   // environment gradient: sky, horizon, ground
     categories: {
       media: 0xff8a5b, text: 0xf5b942, data: 0x8b7cf6, input: 0x34c99a, logic: 0x5aa9ff,
-      action: 0xe25aa6, transform: 0x7d9cc6, layout: 0xb59cf5, output: 0x9aa7bb, project: 0x2dd4bf, devices: 0x6f8bb0,
+      action: 0xe25aa6, transform: 0x7d9cc6, layout: 0xb59cf5, output: 0x9aa7bb, project: 0x2dd4bf, generate: 0xc084fc, devices: 0x6f8bb0,
     },
     portTypes: { number: 0x2dd4bf, text: 0xf5b942, boolean: 0xe25aa6, data: 0x8b7cf6, media: 0xff8a5b, event: 0xf4f6fa, any: 0x9aa7bb },
     subtypes: { person: 0xff8fa3, task: 0x34c99a, tasks: 0x34c99a, board: 0x6d7cff, milestone: 0xffd36b, stats: 0x7d9cc6, layout: 0xb59cf5 },
@@ -101,7 +101,7 @@ export const palettes = {
     env: ['#ffffff', '#e3ded4', '#8f8a80'],
     categories: {
       media: 0xd9633a, text: 0xc07f0c, data: 0x6a5cd6, input: 0x13906a, logic: 0x2b7fe0,
-      action: 0xc2388a, transform: 0x4d6a94, layout: 0x7a5fd0, output: 0x6b7788, project: 0x0f9f8f, devices: 0x556a8a,
+      action: 0xc2388a, transform: 0x4d6a94, layout: 0x7a5fd0, output: 0x6b7788, project: 0x0f9f8f, generate: 0x8e44d6, devices: 0x556a8a,
     },
     portTypes: { number: 0x0f9f8f, text: 0xc07f0c, boolean: 0xc2388a, data: 0x6a5cd6, media: 0xd9633a, event: 0x48556b, any: 0x6b7788 },
     subtypes: { person: 0xd6456a, task: 0x13906a, tasks: 0x13906a, board: 0x4655d6, milestone: 0xb88a12, stats: 0x4d6a94, layout: 0x7a5fd0 },

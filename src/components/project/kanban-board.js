@@ -16,11 +16,11 @@ import * as THREE from 'three';
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { palette, states, sizes, hex, setLabelText, materials } from '../../theme.js';
-import { roundRect, font, drawChip, fitLine, tabular } from '../../faces.js';
+import { roundRect, font, drawChip, fitLine, tabular, bitmapFor } from '../../faces.js';
 import { panelGeometry, slabGeometry, outlineGeometry } from '../../geometry.js';
 import {
   normalizeBoard, boardStats, flatCards, pushBurndown, addCard, moveCard, updateCard, findCard, findColumn, isBlocked, isOverdue,
-  initials, checklistRatio, PRIORITY_COLOURS, fmtDate, lastColumn, daysUntil,
+  initials, checklistRatio, PRIORITY_COLOURS, fmtDate, lastColumn, daysUntil, coverRecord,
 } from '../../pm/model.js';
 import { commitBoard } from '../../pm/board-ops.js';
 import { buildBoardPanel } from '../../pm/panel-pm.js';
@@ -89,9 +89,22 @@ export function drawCard(g, w, h, card, { blocked = false, overdue = false, sele
   if (selected || hovered) { g.strokeStyle = hex(selected ? states.selected : states.hover); g.lineWidth = selected ? 4 : 2.5; roundRect(g, 2, 2, w - 4, h - 4, 12); g.stroke(); }
   const text = palette.pmCardText, dim = palette.pmCardDim;
   const P = 22;
+  // cover: a rounded thumbnail on the right (a generated key visual, an attached image)
+  let coverW = 0;
+  if (card.cover && card.cover.src) {
+    const cs = h - 24, cx = w - 12 - cs, cy = 12;
+    coverW = cs + 12;
+    const bmp = card.cover.kind !== 'audio' ? bitmapFor(card.cover.src, card.cover) : null;
+    g.save(); roundRect(g, cx, cy, cs, cs, 10); g.clip();
+    g.fillStyle = 'rgba(128,140,160,0.18)'; g.fillRect(cx, cy, cs, cs);
+    if (bmp) { const bw = bmp.width || bmp.naturalWidth || 1, bh = bmp.height || bmp.naturalHeight || 1; const sc = Math.max(cs / bw, cs / bh); g.drawImage(bmp, cx + (cs - bw * sc) / 2, cy + (cs - bh * sc) / 2, bw * sc, bh * sc); }
+    else { g.strokeStyle = dim; g.lineWidth = 1.5; g.setLineDash([4, 4]); roundRect(g, cx + 4, cy + 4, cs - 8, cs - 8, 8); g.stroke(); g.setLineDash([]); }
+    if (card.cover.kind === 'video') { g.fillStyle = 'rgba(0,0,0,0.45)'; g.beginPath(); g.arc(cx + cs / 2, cy + cs / 2, cs * 0.2, 0, Math.PI * 2); g.fill(); g.fillStyle = '#fff'; g.beginPath(); g.moveTo(cx + cs / 2 - cs * 0.07, cy + cs / 2 - cs * 0.1); g.lineTo(cx + cs / 2 + cs * 0.11, cy + cs / 2); g.lineTo(cx + cs / 2 - cs * 0.07, cy + cs / 2 + cs * 0.1); g.closePath(); g.fill(); }
+    g.restore();
+  }
   // title (up to 2 lines)
   g.fillStyle = done ? dim : text; g.font = font(25, 600); g.textBaseline = 'top'; g.textAlign = 'left';
-  const maxW = w - P - 18 - (blocked ? 34 : 0) - (flag ? 26 : 0);
+  const maxW = w - P - 18 - (blocked ? 34 : 0) - (flag ? 26 : 0) - coverW;
   const words = card.title.split(' '); const lines = []; let line = '';
   for (const wd of words) { const t = line ? line + ' ' + wd : wd; if (g.measureText(t).width <= maxW || !line) line = t; else { lines.push(line); line = wd; } if (lines.length === 2) break; }
   if (lines.length < 2) lines.push(line);
@@ -100,7 +113,7 @@ export function drawCard(g, w, h, card, { blocked = false, overdue = false, sele
   lines.forEach((l, i) => g.fillText(l, P, 16 + i * 30));
   if (done) { g.strokeStyle = dim; g.lineWidth = 1.5; g.beginPath(); g.moveTo(P, 29); g.lineTo(P + Math.min(maxW, g.measureText(lines[0]).width), 29); g.stroke(); }
   // lock glyph when blocked, small flag when due after the milestone
-  let gx = w - 34;
+  let gx = w - 34 - coverW;
   if (blocked) {
     const x = gx, y = 16; g.strokeStyle = PRIORITY_COLOURS.urgent; g.lineWidth = 2.5; g.fillStyle = PRIORITY_COLOURS.urgent;
     g.beginPath(); g.arc(x + 9, y + 7, 6, Math.PI, 0); g.stroke(); roundRect(g, x, y + 7, 18, 13, 3); g.fill();
@@ -135,10 +148,10 @@ export function drawCard(g, w, h, card, { blocked = false, overdue = false, sele
   }
   for (const tag2 of card.tags || []) {
     g.font = font(12, 600); const tw = g.measureText(tag2).width + 16;
-    if (x + tw > w - 14 - (card.estimate ? 30 : 0)) break;
+    if (x + tw > w - 14 - coverW - (card.estimate ? 30 : 0)) break;
     x += drawChip(g, tag2, x, by + (ch - 20) / 2, { h: 20, size: 12, bg: 'rgba(90,169,255,0.14)', color: hex(palette.pmToday), padX: 8 }) + 6;
   }
-  if (card.estimate && x < w - 50) { g.fillStyle = dim; g.font = font(13, 500); g.textAlign = 'right'; g.fillText(`${card.estimate}d`, w - 14, by + ch / 2); }
+  if (card.estimate && x < w - 50 - coverW) { g.fillStyle = dim; g.font = font(13, 500); g.textAlign = 'right'; g.fillText(`${card.estimate}d`, w - 14 - coverW, by + ch / 2); }
 }
 
 /* ---------------- the 3D body ---------------- */
@@ -504,6 +517,7 @@ const def = registry.register({
     { key: 'milestone', label: 'milestone', type: 'data', subtype: 'milestone', optional: true },
     { key: 'addTask', label: 'add task', type: 'event', optional: true },
     { key: 'moveTask', label: 'move task', type: 'event', optional: true },
+    { key: 'cover', label: 'cover', type: 'media', optional: true },
   ],
   outputs: [
     { key: 'moved', label: 'when a card moves', type: 'event' },
@@ -515,6 +529,7 @@ const def = registry.register({
     { key: 'board', label: 'board', type: 'json', default: { columns: ['To do', 'In progress', 'Review', 'Done'].map((title) => ({ title })) }, hidden: true },
     { key: 'peopleView', label: 'people view', type: 'select', options: ['auto', 'highlight', 'filter', 'swimlanes'], default: 'auto' },
     { key: 'showArcs', label: 'dependency arcs', type: 'boolean', default: true },
+    { key: 'coverCard', label: 'cover → card', type: 'text', default: '' },   // title or id of the card that takes the `cover` input; empty = the first card
   ],
   body3d,
   panel: buildBoardPanel,
@@ -533,7 +548,13 @@ const def = registry.register({
     }
   },
   evaluate({ params, state, instance, inputs }) {
-    const board = boardOf(instance);
+    let board = boardOf(instance);
+    // a media object on `cover` becomes the cover of the named card (or the first card); engine-driven, not undoable
+    const cv = inputs.cover;
+    if (cv && typeof cv.src === 'string') {
+      const hit = params.coverCard ? findCard(board, params.coverCard) : (board.columns.find((c) => c.cards.length)?.cards[0] ? findCard(board, board.columns.find((c) => c.cards.length).cards[0].id) : null);
+      if (hit && hit.card.cover?.src !== cv.src) { const res = updateCard(board, hit.card.id, { cover: coverRecord(cv) }); if (res) { commitBoard(instance, null, res); board = res.board; } }
+    }
     const stats = boardStats(board);
     state.history = pushBurndown(state.history, stats);
     // relationships that change the layout: who is plugged into `people`, which milestone is set

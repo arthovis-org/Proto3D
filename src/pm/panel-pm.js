@@ -105,6 +105,17 @@ function buildCardEditor(api, b, id) {
     commitBoard(b, api.history, moveCard(boardOf(b), id, to.id), 'Move card'); api.rebuild();
   }, 'cardColumn');
   api.readonly(s, 'created', () => { const c = get(); return c ? `${fmtDate(c.createdAt)} · moved ${fmtDate(c.movedAt)}` : ''; });
+  // cover: a generated image (Generate Image → board `cover`) or any media; shown as a thumbnail on the card
+  const cvRow = api.row(s, 'cover'); const cvBox = api.h('div', 'cover-box'); cvRow.appendChild(cvBox);
+  const renderCover = () => {
+    const c = get()?.cover; const sig = c ? c.src : '';
+    if (cvBox.dataset.sig === sig) return; cvBox.dataset.sig = sig; cvBox.innerHTML = '';
+    if (!c) { cvBox.appendChild(api.h('span', 'pm-hint', 'none — plug a Generate Image or Media into the board\'s cover input')); return; }
+    const img = api.h('img'); img.alt = c.title || 'cover'; img.src = c.src; cvBox.appendChild(img);
+    const t = api.h('span', null, c.title || c.kind); cvBox.appendChild(t);
+    const x = api.h('button', null, 'Remove'); x.type = 'button'; x.addEventListener('click', () => patch({ cover: null }, 'Remove cover')); cvBox.appendChild(x);
+  };
+  renderCover(); api.live(renderCover);
 
   // checklist
   const ck = api.section('Checklist');

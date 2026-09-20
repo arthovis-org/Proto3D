@@ -44,12 +44,13 @@
     </span>
     <span class="tb-sep"></span>
     <span class="tb-group">
-      <button id="btn-wiring" type="button" class="tb" title="Wiring — show or hide ports and cables (P). Cables are optional: drop a component onto another to link them" aria-pressed="false"><i data-icon="plug"></i><span>Wiring</span></button>
-      <button id="btn-flow" type="button" class="tb" title="Flow animation on cables"><i data-icon="flow"></i><span>Flow</span></button>
+      <button id="btn-wiring" type="button" class="tb" title="Wiring — show or hide ports and cables (P). Cables are optional: drop a component onto another to link them" aria-pressed="false"><i data-icon="flow"></i><span>Wiring</span></button>
+      <button id="btn-flow" type="button" class="tb" title="Flow animation on cables"><i data-icon="connection"></i><span>Flow</span></button>
       <button id="btn-gizmo" type="button" class="tb" title="Move / rotate / scale gizmo (G) · W move, E rotate, R scale"><i data-icon="gizmo"></i><span>Gizmo</span></button>
     </span>
     <span class="tb-sep"></span>
     <span class="tb-group">
+      <button id="btn-connections" type="button" class="tb" title="Connections — API keys for OpenRouter, fal.ai and kie.ai; the Demo provider works without any"><i data-icon="plug"></i><span>Connections</span></button>
       <button id="btn-theme" type="button" class="tb" title="Switch light / dark theme (T)"><i data-icon="sun"></i><span>Light</span></button>
       <button id="btn-frame" type="button" class="tb" title="Frame everything (Home) · F frames the selection"><i data-icon="frame"></i><span>Frame all</span></button>
     </span>
@@ -60,6 +61,7 @@
         <div id="help-menu" class="menu" hidden>
           <button type="button" data-action="help">Help &amp; legend <kbd>H</kbd></button>
           <button type="button" data-action="tour">Show tour</button>
+          <button type="button" data-action="connections">Connections <small>API keys</small></button>
           <div class="menu-sep">Controls</div>
           <button type="button" data-preset="blender">Blender <small>middle-drag orbits</small></button>
           <button type="button" data-preset="unreal">Unreal <small>right-drag looks, WASD flies</small></button>
@@ -120,6 +122,7 @@
   </aside>
 
   <div id="selection" class="overlay">Nothing selected</div>
+  <div id="jobs-tray" hidden></div>
   <div id="conn-label" hidden></div>
   <div id="marquee" hidden></div>
 
@@ -137,7 +140,7 @@
   <div id="tour" hidden>
     <div class="tour-spot" hidden></div>
     <div class="tour-card" role="dialog" aria-live="polite">
-      <div class="tour-step">1 / 5</div>
+      <div class="tour-step">1 / 6</div>
       <h3 class="tour-title"></h3>
       <p class="tour-text"></p>
       <div class="tour-btns">

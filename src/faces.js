@@ -20,18 +20,34 @@ const readyListeners = new Set();
 export function onBitmapReady(cb) { readyListeners.add(cb); return () => readyListeners.delete(cb); }
 /** Register a pre-rendered canvas for a src (generated samples: synchronous, no network). */
 export function registerBitmap(src, canvas) { bitmaps.set(src, { image: canvas, ready: true }); }
-/** Bitmap for a media src, or null while loading / on failure. */
-export function bitmapFor(src) {
+/** A resolver for a src that failed to load: `(media) → Promise<Blob | canvas | null>` (ai/store.js sets it: blob URLs from a previous page life are looked up by `storeId`). */
+let bitmapFallback = null, bitmapStale = null;
+/** `isStale(src, media)` says a URL should not even be tried (a blob URL from a previous page life): the fallback runs at once. */
+export function setBitmapFallback(fn, isStale = null) { bitmapFallback = fn; bitmapStale = isStale; }
+/** Bitmap for a media src, or null while loading / on failure. `media` lets a failed load fall back to the store. */
+export function bitmapFor(src, media = null) {
   if (!src) return null;
   let e = bitmaps.get(src);
   if (!e) {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (!/^(blob|data):/.test(src)) img.crossOrigin = 'anonymous';
     e = { image: img, ready: false, failed: false };
     bitmaps.set(src, e);
     img.onload = () => { e.ready = true; readyListeners.forEach((cb) => cb(src)); };
-    img.onerror = () => { e.failed = true; readyListeners.forEach((cb) => cb(src)); };
-    img.src = src;
+    const stale = !!(media && bitmapStale && bitmapFallback && bitmapStale(src, media));
+    img.onerror = () => {
+      if (media && bitmapFallback && !e.fellBack) {
+        e.fellBack = true;
+        Promise.resolve(bitmapFallback(media)).then((alt) => {
+          if (!alt) { e.failed = true; readyListeners.forEach((cb) => cb(src)); return; }
+          if (alt instanceof Blob) { const u = URL.createObjectURL(alt); const im = new Image(); im.onload = () => { e.image = im; e.ready = true; readyListeners.forEach((cb) => cb(src)); }; im.onerror = () => { e.failed = true; readyListeners.forEach((cb) => cb(src)); }; im.src = u; }
+          else { e.image = alt; e.ready = true; readyListeners.forEach((cb) => cb(src)); }
+        }).catch(() => { e.failed = true; readyListeners.forEach((cb) => cb(src)); });
+        return;
+      }
+      e.failed = true; readyListeners.forEach((cb) => cb(src));
+    };
+    if (stale) img.onerror(); else img.src = src;   // a dead blob URL goes straight to the store, no failed request
   }
   return e.ready ? e.image : null;
 }
@@ -164,7 +180,7 @@ export function drawMedia(g, media, x, y, w, h, { fit = 'cover', time = 0, radiu
   g.save();
   roundRect(g, x, y, w, h, radius); g.clip();
   g.fillStyle = palette.faceCard; g.fillRect(x, y, w, h);
-  const bmp = media && media.kind !== 'audio' ? bitmapFor(media.src) : null;
+  const bmp = media && media.kind !== 'audio' ? bitmapFor(media.src, media) : null;
   if (bmp) {
     const bw = bmp.width || bmp.naturalWidth || 1, bh = bmp.height || bmp.naturalHeight || 1;
     const s = fit === 'contain' ? Math.min(w / bw, h / bh) : Math.max(w / bw, h / bh);

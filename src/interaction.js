@@ -29,7 +29,8 @@ import { nav } from './controls/navigation.js';
 /** True when the key event comes from a text field (panel) — ignore shortcuts then. */
 export const isTyping = (e) => {
   const t = e.target;
-  return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+  // a focused field, or anything inside an open modal (Connections, model browser): the workspace keeps its hands off
+  return !!(t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable || t.closest?.('.modal-backdrop')));
 };
 const _v = new THREE.Vector3();
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

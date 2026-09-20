@@ -9,6 +9,11 @@
 //              team" → urgent? → yes: an Action passes the card to a Text template → the laptop
 //              reads "Shipped: <title>"; no: the Log records it — and a Media Grid of four launch
 //              assets shown on a Monitor.
+//   Generate   Offline Demo provider, no keys: a Data node picks the first card's title → Prompt
+//              "Write a launch tweet for {Card title}" → Generate Text → a Display, and `when done`
+//              adds the tweet as a card; the Milestone → Prompt "Key visual for {Public launch}"
+//              → Generate Image → the Media Grid (and the Monitor) and the board's card cover.
+//              Connections (top bar) is where real keys go.
 //
 // Wiring is off by default so the scene reads as a clean workspace; P reveals the system.
 import { isoDate, addDays } from '../pm/model.js';
@@ -18,7 +23,7 @@ const d = (n) => addDays(today, n);
 
 export default {
   id: 'showcase', label: 'Showcase',
-  description: 'A product launch: board with people, milestone, timeline, dashboard, checklist, a Done flow to a laptop, a phone, a hotfix button and a media wall',
+  description: 'A product launch: board with people, milestone, timeline, dashboard, checklist, a Done flow to a laptop, a phone, a hotfix button, a media wall and an AI Generate zone (offline Demo)',
   camera: { position: [-6, 26, 46], target: [-8, 2, 2] },
   /** What the camera frames first: the planning zone (the board and the people plugged into it). */
   focus: (named) => [named.board, ...(named.people || [])],
@@ -31,6 +36,7 @@ export default {
       title: 'Launch board',
       state: { history },
       params: {
+        coverCard: 'Write launch announcement',   // the generated key visual lands on this card
         board: {
           columns: [
             { id: 'todo', title: 'To do', cards: [
@@ -105,9 +111,30 @@ export default {
     media.forEach((m) => connect(m, 'media', grid, 'items'));
     connect(grid, 'layout', monitor, 'screen');
 
+    /* ---- Generate: Demo provider, runs without keys ---- */
+    const cardTitle = add('data', [-30, null, 34], { title: 'Card title', params: { mode: 'pick', path: '[0].title' } });
+    const tweetPrompt = add('prompt', [-21, null, 34], { title: 'Tweet prompt', params: { template: 'Write a short, upbeat launch tweet for {Card title}. One sentence, one emoji, two hashtags.' } });
+    const tweet = add('generate-text', [-12, null, 34], { title: 'Launch tweet', params: { provider: 'demo', model: 'demo/writer', maxTokens: 120 } });
+    const tweetDisplay = add('display', [-3.5, null, 34], { title: 'Tweet preview' });
+    const visualPrompt = add('prompt', [-21, null, 43], { title: 'Visual prompt', params: { template: 'Key visual for {Public launch}: a bold, minimal poster, deep blue and coral, product on a soft gradient.' } });
+    const visual = add('generate-image', [-12, null, 43], { title: 'Key visual', params: { provider: 'demo', model: 'demo/painter' } });
+    const runBoth = add('input', [-30, null, 43], { title: 'Generate', params: { mode: 'button', label: 'Generate' } });
+    connect(board, 'tasks', cardTitle, 'in');
+    connect(cardTitle, 'value', tweetPrompt, 'variables');
+    connect(tweetPrompt, 'prompt', tweet, 'prompt');
+    connect(tweet, 'text', tweetDisplay, 'in');
+    connect(tweet, 'done', board, 'addTask');
+    connect(milestone, 'milestone', visualPrompt, 'variables');
+    connect(visualPrompt, 'prompt', visual, 'prompt');
+    connect(visual, 'media', grid, 'items');
+    connect(visual, 'media', board, 'cover');
+    connect(runBoth, 'trigger', tweet, 'run');
+    connect(runBoth, 'trigger', visual, 'run');
+
     group('Planning', [board, ...people, milestone, hotfix, note1, note2]);
     group('Tracking', [timeline, dashboard, checklist]);
     group('Outputs', [start, notify, decide, shipped, template, laptop, log, phone, hotfixCard, ...media, grid, monitor]);
-    return { board, people, milestone, hotfix, note1, note2, timeline, dashboard, checklist, start, notify, decide, shipped, template, laptop, log, phone, hotfixCard, media, grid, monitor };
+    group('Generate', [cardTitle, tweetPrompt, tweet, tweetDisplay, visualPrompt, visual, runBoth]);
+    return { board, people, milestone, hotfix, note1, note2, timeline, dashboard, checklist, start, notify, decide, shipped, template, laptop, log, phone, hotfixCard, media, grid, monitor, cardTitle, tweetPrompt, tweet, tweetDisplay, visualPrompt, visual, runBoth };
   },
 };

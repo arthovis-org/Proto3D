@@ -5,8 +5,9 @@ and **actually run**: a dataflow engine evaluates the graph every frame. The sce
 is the **Showcase** — a product launch as a project-management system: a standing 3D Kanban board
 with draggable cards and a lane per person, a milestone, a Gantt timeline, a dashboard, a
 checklist, sticky notes, an executable Done flow that writes on a laptop, a phone that ships a
-hotfix, a button that adds a card and a media wall on a monitor — all ordinary components in the
-same registry (see [Project management](#project-management)).
+hotfix, a button that adds a card and a media wall on a monitor, plus a **Generate** zone that
+writes a launch tweet and paints a key visual with the offline Demo provider — all ordinary
+components in the same registry (see [Project management](#project-management)).
 
 **Cables are optional.** Relationships are made by **dropping one component onto another** (a
 Person onto the board, the Board onto the Timeline); the workspace says what the link means and
@@ -14,6 +15,13 @@ you can undo it. Turn **Wiring** on (`P`) and every block shows its typed pins a
 appears, for the people who want to see or edit the graph (see [Wiring is optional](#wiring-is-optional)).
 Navigation follows **Blender by default** (middle-drag orbits, Shift pans, numpad views) with
 **Unreal**, **Maya** and **Simple** presets under **? → Controls** (see [Controls](#controls)).
+
+**Generate content with AI.** A **Generate** category adds a Prompt editor with `{variables}` and
+Generate Text / Image / Video / Audio components that call **OpenRouter** (language models),
+**fal.ai** and **kie.ai** (images, video, audio) or an offline **Demo** provider; keys live
+encrypted in this browser behind a **Connections** page, jobs stream onto the faces with progress,
+cost and a history strip, and results feed every other component (see
+[Generate content with AI](#generate-content-with-ai)).
 
 Underneath is a **platform**: one component schema, a registry that drives the toolbar / panel /
 engine / serialization, six port types with strict compatibility, an event bus, groups that
@@ -95,7 +103,11 @@ src/
   interaction.js  pointer model: hover guidance, cable drags (forward / backward), cable-end re-route, selection emphasis
   selection.js, lod.js, serialize.js, gizmo.js, panel.js, workspace.js, theme.js
   ui/           toolbar-left.js (Add toolbar), file-menu.js, overlays.js (tooltips, drag label, toast, end labels, empty hint), tour.js
+                connections.js (API keys), model-browser.js, jobs-tray.js
+  ai/           providers/ (openrouter, fal, kie, demo + the adapter interface), vault.js (encrypted keys), jobs.js (queue), pricing.js, store.js (IndexedDB), http.js
+  components/generate/  prompt.js, generate-text.js, generate-media.js (image / video / audio), common.js
   examples/     showcase.js (the default scene) + the tiny builder API
+proxy/cloudflare-worker.js   optional CORS proxy (allow-listed provider hosts, injects nothing)
 ```
 
 The full design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The short version:
@@ -193,7 +205,7 @@ and milestones.
 
 | id | Size · body | Inputs | Outputs | Params | What it does |
 | --- | --- | --- | --- | --- | --- |
-| `kanban-board` | XL · standing board | `people` person\* · `milestone` milestone · `add task` event · `move task` event | `when a card moves` event · `when a card is done` event · `progress` stats · `tasks` tasks | board (columns, WIP limits, cards — edited in the panel) · people view auto / highlight / filter / swimlanes · dependency arcs | Columns are translucent panels on a plinth; cards are slabs stacked top-down (title, priority stripe, assignee initials, due date — red when overdue, tag pills, checklist progress, lock glyph when blocked, a flag when due after the milestone). **People plugged into `people`** change the layout: one connected person highlights their cards, two or more give a **swimlane per person** (the board grows taller), `filter` shows only theirs. Click a card to edit it, **drag it** to another column / lane (a lane change re-assigns), **drop it on a Person** to assign it, click the **+** tile to add one. The milestone shows in the header with its countdown. Far away, columns collapse to count bars. |
+| `kanban-board` | XL · standing board | `people` person\* · `milestone` milestone · `add task` event · `move task` event · `cover` media | `when a card moves` event · `when a card is done` event · `progress` stats · `tasks` tasks | board (columns, WIP limits, cards — edited in the panel) · people view auto / highlight / filter / swimlanes · dependency arcs | Columns are translucent panels on a plinth; cards are slabs stacked top-down (title, priority stripe, assignee initials, due date — red when overdue, tag pills, checklist progress, lock glyph when blocked, a flag when due after the milestone). **People plugged into `people`** change the layout: one connected person highlights their cards, two or more give a **swimlane per person** (the board grows taller), `filter` shows only theirs. Click a card to edit it, **drag it** to another column / lane (a lane change re-assigns), **drop it on a Person** to assign it, click the **+** tile to add one. The milestone shows in the header with its countdown. Far away, columns collapse to count bars. |
 | `flow-terminal` | M · stadium | `start` event | `next` event | mode start / end · payload | Start: the **Run** disc or a trigger emits a token. End: counts arrivals. |
 | `flow-step` | M · rounded box | `start` event | `next` event | duration ms | Passes the token on (after an optional delay, with a progress bar); flashes as it goes. |
 | `flow-decision` | M · diamond | `start` event · `condition` boolean | `yes` event · `no` event | payload field · op · value | Routes the token by the boolean input or by a test on the payload (`priority = urgent`). |
@@ -276,6 +288,52 @@ person's lane to re-assign, or on a Person block to assign). Click a column pane
 WIP limit); the Board section adds, reorders and removes columns and lists every card. Click the
 **+** tile → new card in that column. Every edit is one undoable command (`Ctrl+Z`); engine-driven
 edits (event inputs) are not undoable but still autosave.
+
+## Generate content with AI
+
+The **Generate** category (toolbar glyph: a sparkle; accent violet) brings hosted AI into the
+same registry as everything else: typed ports, params, `evaluate`, a live face — so a generated
+tweet is just `text` and a generated poster is just `media`.
+
+| id | Inputs | Outputs | What it does |
+| --- | --- | --- | --- |
+| `prompt` | `variables` any\* · `text` text | `prompt` text | A prompt template. Every component plugged into `variables` becomes a variable named after its title (`{Card title}`, `{Public launch}`); `{1}` picks by position, `{Name.path}` reaches into an object, `{text}` is the text input. The face typesets the template with the resolved values as chips; the panel has a proper editor with insert chips and a resolved preview. |
+| `generate-text` | `prompt` text · `context` any\* · `image` media · `run` event | `text` · `data` · `when done` · `usage` | Asks a language model through **OpenRouter** (hundreds of models, live per-token pricing) or **Demo**. The answer streams onto the face and the `text` output as it arrives; `context` inputs become system context, `image` goes to vision models, **JSON mode** parses the answer into `data`, `when done` pulses with the text (→ a board's `add task` makes a card), `usage` carries tokens and cost. |
+| `generate-image` · `generate-video` · `generate-audio` | `prompt` text · `reference` media · `run` event | `image / video / audio` media · `all` data · `when done` · `usage` | Text (and an optional reference) to media through **fal.ai** (FLUX, Recraft, Ideogram, Kling, MiniMax, Luma, Stable Audio, Kokoro TTS…), **kie.ai** (Nano Banana, FLUX 2, Veo 3, Kling 2.1, Suno…) or **Demo**. Model options are schema-driven per model (size, aspect, duration, voice, steps, seed, count). The face shows queue position, progress with the provider's log line, the result preview and a history strip; Cancel and Retry work on the face, in the panel and in the job tray. |
+
+**Connections** (top bar plug icon, **? → Connections**, or the *Open Connections* action any
+Generate component shows when it lacks a key) is a settings page with one card per provider:
+description, masked key field, **Test** (latency, balance where the API gives one), an optional
+**proxy URL**, and a status chip. Keys are encrypted with WebCrypto **AES-GCM** in this browser's
+`localStorage` — with a random device key by default (which only obfuscates) or a **passphrase**
+you set (PBKDF2; the vault locks after a reload until you enter it). Keys are never written into
+world files and go only to the provider (or to the proxy you configured). **Demo** needs no key
+and costs nothing: every Generate component starts on it, which is how the Showcase's Generate
+zone runs out of the box.
+
+**Cost controls.** Each component estimates a run before it starts (OpenRouter live prices, fal /
+kie curated prices) and asks for approval on its face above a per-component threshold (**approve
+above $**, default $0.05); `run` is an event input, so an Input button or a Flow Decision gates an
+expensive job with a click. The **job tray** (bottom right) lists running and queued jobs with
+progress, cancel and the **session spend**; clicking a job frames its component. The **model
+browser** (the model row in the panel or the model chip on the face) searches, filters by
+provider / price band / context / vision, sorts, keeps favourites and shows prices per 1M tokens or
+per run with *recommended* badges.
+
+**Results are values.** Generated text feeds Display, Text, screens, Kanban `add task` (via
+`when done`), another Prompt or Generate; generated media feeds Media Grid, screens, Display, a
+Generate Video's `reference` and a board's new **`cover`** input (the card named in *cover goes to
+card* — else the first card — shows the picture as a thumbnail; the card editor has a cover row).
+All of these are drop-to-link pairs too. Stored results (Demo output, and provider files fetched
+into the page) live in **IndexedDB** so a reload keeps them; the world JSON holds the media record
+with its `storeId`, never a key.
+
+The endpoint shapes for OpenRouter, fal.ai and kie.ai follow their public docs from memory (the
+docs were not reachable while this was built); curated model ids and prices are marked
+*unverified* in the model browser until run against the live API. If a network blocks a provider,
+deploy `proxy/cloudflare-worker.js` (a minimal allow-listed CORS proxy that injects nothing) and
+paste its URL on the provider's card. Design notes, the security model and how to add a provider
+or a model: [`docs/AI-GENERATION.md`](docs/AI-GENERATION.md).
 
 ## Controls
 
@@ -456,7 +514,7 @@ dashboard** has stat tiles, a ring, bars, a burndown and people / checklist bars
 palette. The HTML shell (top bar, left rail, flyout, panel, tooltips, toasts, chooser, tour cards,
 menus) uses the same type stack, 8-pt spacing, 10–12 px radii, subtle borders, 18 px stroke icons,
 hover states and focus rings; the top bar groups *File · Undo/Redo | Wiring · Flow · Gizmo |
-Theme · Frame all | ? · Properties*.
+Connections · Theme · Frame all | ? · Properties*.
 
 **States** are derived by the engine, never hard-coded: `disabled` (unchecked *enabled*) >
 `error` (invalid link attached or `evaluate` threw) > `active` (an output changed / pulsed within
