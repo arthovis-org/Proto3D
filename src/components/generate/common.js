@@ -193,6 +193,20 @@ const TILE = 44, TILE_GAP = 6;
 const providerTag = (id) => (id === 'demo' ? 'DEMO' : providerRegistry.get(id)?.label || id);
 
 /**
+ * Port anchors for a Generate face (face logical px): `prompt` beside the prompt preview line,
+ * `context` / `image` / `reference` beside the result body, `run` beside the Run button; the
+ * result output beside the body, `data` / `all` a little lower, `when done` and `usage` beside the
+ * Run button and the cost line (alignPorts pushes them apart).
+ */
+export function generateAnchors({ h }) {
+  const py = PAD - 4 + 44, by = py + 30, bh = h - by - BTN.h - PAD - 16, yb = h - PAD - BTN.h / 2;
+  return {
+    in: { prompt: py, context: by + bh * 0.3, image: by + bh * 0.6, reference: by + bh * 0.6, run: yb },
+    out: { text: by + bh * 0.4, media: by + bh * 0.4, data: by + bh * 0.75, all: by + bh * 0.75, done: yb, usage: yb },
+  };
+}
+
+/**
  * Draw the whole face. `body(g, x, y, w, h, rec, inst)` draws the result area for the kind.
  * Fills `inst._hits` with clickable regions.
  */

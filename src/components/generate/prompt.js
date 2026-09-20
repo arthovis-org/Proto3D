@@ -68,6 +68,8 @@ export default registry.register({
   },
   footer: ({ instance, outputs }) => { const r = instance._resolved; const miss = r ? r.tokens.filter((t) => !t.found).length : 0; return `${(outputs.prompt || '').length} chars${r && r.tokens.length ? ` · ${r.tokens.length} variable${r.tokens.length > 1 ? 's' : ''}${miss ? ` · ${miss} missing` : ''}` : ''}`; },
   face: {
+    /** Inputs beside the typeset prompt (variables at its first line, text at the next), the resolved prompt output beside the middle of the text. */
+    portAnchors: ({ h }) => ({ variables: PAD + 40 + 17, text: PAD + 40 + 34 + 17, prompt: (PAD + 40 + h - 56) / 2 }),
     render(g, w, h, { params, instance }) {
       clear(g, w, h);
       const res = instance._resolved || resolvePrompt(params.template, { vars: [] });

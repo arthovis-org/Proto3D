@@ -9,7 +9,7 @@
 //   cable ends: the tube near either end (and the end ring) is a grab handle — drag it to
 //          re-route the link onto another compatible port, drop on empty space to disconnect,
 //          Esc to put it back; a connected single input picks up its existing cable the same way
-//   selection: a selected block brightens its cables (others dim to 40 %) and labels their far
+//   selection: a selected block brightens its cables (others dim to 25 %, their flow slows) and labels their far
 //          ends; a selected cable makes both ports pulse
 //   sub pickables (cards, tiles, handles owned by a Shape3D body) are picked right after ports:
 //   the owning block gets down / drag / drop / click through body3d.onSubPointer
@@ -202,11 +202,26 @@ export class Interaction {
       }
       if (this.connect?.reject) map.set(this.connect.reject, 'reject');
     }
+    // port names: hidden by default; shown on the hovered port, on the ports of a hovered cable, on
+    // compatible targets while a port is hovered or a cable dragged (dimmed on incompatible ones
+    // during a drag); a selected block shows all of its own (Block3D._nameTarget)
+    const named = new Set();
+    const hc = this.hovered?.kind === 'connection' ? this.hovered : null;
+    if (hc) { if (hc.from) named.add(hc.from); if (hc.to) named.add(hc.to); }
+    if (this.connect?.fixed) named.add(this.connect.fixed);
     const glow = [];
-    for (const p of this._allPorts()) { const m = map.get(p) || null; p.setEmphasis(m); if (m === 'glow') glow.push(p); }
+    for (const p of this._allPorts()) {
+      const m = map.get(p) || null; p.setEmphasis(m); if (m === 'glow') glow.push(p);
+      p.setNameShown(named.has(p) || m === 'glow' || m === 'reject' ? 'full' : m === 'dim' && this.connect ? 'dim' : null);
+    }
     this.glowPorts = glow;
+    // a hovered port (or cable end) brightens its cables even while another block's selection dims them
+    const lit = new Set();
+    if (this.hovered?.kind === 'port') for (const c of this.world.connectionsOf(this.hovered)) lit.add(c);
+    if (hc) lit.add(hc);
+    for (const c of this.world.connections) c.setHighlight(lit.has(c));
   }
-  /** Selection focus: a selected block's cables stay bright with far-end labels, the rest dim; a selected cable lights its ports. */
+  /** Selection focus: a selected block's cables stay bright with far-end labels, the rest dim to 25 %; a selected cable lights its ports. */
   applySelectionEmphasis() {
     const S = new Set(this._movableNodes());
     const selConns = this.selection.connections;

@@ -151,6 +151,10 @@ export default registry.register({
   footer: ({ outputs }) => (outputs.out === undefined ? 'waiting' : `≈ ${outputs.out}`),
   face: {                                                 // optional live 2D face on the node body
     render(g, w, h, { outputs }) { clear(g, w, h); drawText(g, outputs.out === undefined ? '—' : String(outputs.out), 0, 0, w, h, { size: 64, mono: true }); },
+    // optional: where each port's data lives on the face (px from the top), so the pin sits level with it
+    // and a cable visibly points at what it changes; flat, or { in: {…}, out: {…} } when a key is on both sides.
+    // Ports without an anchor are stacked beside the face; colliding anchors are nudged apart.
+    portAnchors: ({ h }) => ({ in: h / 2, out: h / 2, reset: h - 20 }),
   },
 });
 ```
@@ -407,9 +411,14 @@ boolean, data, media, any) are spheres; inputs that **accept several cables** ar
 rounded rectangles that grow one slot per cable. A **connected** pin is filled and bright in its
 type (or subtype) colour; an **unconnected** pin is a hollow ring (dark core, coloured outline);
 an empty socket is a hollow rectangle, a connected one shows a bar per cable and a spare **+**
-slot while a cable hovers. Optional ports are slightly smaller. Port names sit beside the pins at
-working zoom (outside the slab on devices) and a tiny **IN** / **OUT** caption tops each side of
-a block.
+slot while a cable hovers. Optional ports are slightly smaller. Pins sit **level with the content
+they affect** when the component says where that is (`portAnchors`: a Display's pin points at
+its value, a board's `people` slot at the first swimlane header, a Timeline's `tasks` at the
+first bar row, a Dashboard's inputs at the panels they fill); otherwise they are stacked beside
+the content. Inputs are on the left, outputs on the right — there are no IN / OUT captions. Port
+**names** are hidden until you need them: they fade in beside the pin you hover, on both ends of
+a cable you hover, on every compatible target while you hover a port or drag a cable (dimmed on
+incompatible ones during a drag) and on every pin of a selected block.
 
 **Hover.** Over a pin (crosshair cursor) an HTML tooltip follows it with the name, type label
 (`data · person`, *accepts several cables*), current value and one line per link (`→ Notify
@@ -458,15 +467,22 @@ rules.
   the label); a link that becomes invalid (a loaded file) is red and dashed, carries nothing and
   flags both ends as `error`.
 - **Direction** is left → right (inputs face −X, outputs +X), shown by the chevron pins and the
-  continuous flow sheen; the hover label reads `type · From.port → To.port · value`.
+  continuous flow sheen; the chip on a hovered cable reads `value` over `From.port → To.port`.
 - **Active** = the source changed or pulsed within 1.5 s (thicker, brighter, faster sheen);
   **idle** = carries a stable value; **inactive** = carries nothing (thin, dim).
 - **Routing** (`routing.js`): cubic Bezier with horizontal tangents; connections sharing a
   source or destination fan out into lanes (small vertical / depth offsets); long links lift
   slightly; any link whose samples pass through another block's bounding box raises its control
   points until it clears the box. Backward links widen their handles into a readable loop.
-- **Hover** isolates the path: every other connection dims to 25 %; **click** selects and the
-  panel shows from / to / type / state / value / changes per second.
+- **Hover** isolates the path: every other connection dims to 25 %; a **value chip** appears at
+  the cable's midpoint with what is flowing (a number, a text preview, `on` / `off`, `pulse`
+  flashing as an event passes, `person · Maya Chen`, `12 tasks`, `stats · 2/10 done`,
+  `image · Key visual`) and, on hover, the endpoint names (`Prompt.prompt → Generate Text.prompt`);
+  the line under it says what the link means. **Click** selects and the panel shows from / to /
+  type / state / value / changes per second.
+- **Selecting a block** keeps its cables at full strength, puts a chip on each of them and dims
+  every other cable to 25 % (their flow slows); a multi-select shows the union. Hovering a pin
+  brightens its cables again. Chips never show at the far zoom and stop at 40 (nearest first).
 - **Multi inputs** receive an array (connection order) and are drawn as a slot rectangle whose
   slots are that order. A single input with several links takes the **most recently changed**
   upstream value (this is how two Actions can share one screen).

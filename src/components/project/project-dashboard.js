@@ -10,6 +10,14 @@ import { palette, typography } from '../../theme.js';
 import { clear, roundRect, font, drawText, PAD, drawCaps, drawBar, drawDivider, drawTile, drawStat, fitLine, tabular } from '../../faces.js';
 import { daysUntil, fmtDate } from '../../pm/model.js';
 
+/** Vertical layout of the face (logical px): shared by the renderer and the port anchors so the pins stay level with their panels. */
+function rows(w, h) {
+  const P = PAD, tileY = P + 40, tileH = 74;
+  const secY = tileY + tileH + 16, r = Math.min(h * 0.16, 44), cy = secY + r + 8, bh = 2 * r + 16;
+  const ly = secY + bh + 18, lh = h - ly - P;
+  return { P, tileY, tileH, secY, r, cy, bh, ly, lh };
+}
+
 export default registry.register({
   id: 'project-dashboard', category: 'project', label: 'Project Dashboard', icon: icons['project-dashboard'], size: 'L',
   description: 'One screen with a board\'s progress: stat tiles, done ring, column bars, burndown, milestone, people load and checklists',
@@ -35,6 +43,14 @@ export default registry.register({
   },
   footer: ({ inputs, state }) => { const s = inputs.progress; return s ? `${state.boardTitle ? state.boardTitle + ' · ' : ''}${s.done} / ${s.total} done · ${s.overdue} overdue` : 'connect a board\'s progress'; },
   face: {
+    /** Each input beside the panel it fills: progress → stat tiles, tasks → column bars, milestone → header line, people / checklists → the side tile; the progress output beside the done ring. */
+    portAnchors({ w, h }) {
+      const R = rows(w, h);
+      return {
+        in: { progress: R.tileY + R.tileH / 2, tasks: R.cy, milestone: R.P + 22, people: R.ly + R.lh * 0.35, checklists: R.ly + R.lh * 0.78 },
+        out: { progress: R.cy },
+      };
+    },
     render(g, w, h, { inputs, params, state, instance }) {
       clear(g, w, h);
       const s = inputs.progress;
@@ -51,7 +67,8 @@ export default registry.register({
         g.fillText(`${m.title} · ${fmtDate(m.date)}${Number.isFinite(dl) ? (dl >= 0 ? ` · ${dl} d` : ` · ${-dl} d ago`) : ''}`, w - P, P + 22);
       } else if (params.caption) { g.textAlign = 'right'; g.fillStyle = palette.faceDim; g.font = font(13, 500); g.fillText(params.caption, w - P, P + 22); }
       // --- stat tiles
-      const tileY = P + 40, tileH = 74, gap = 8;
+      const R = rows(w, h);
+      const tileY = R.tileY, tileH = R.tileH, gap = 8;
       const tiles = [
         ['done', `${Math.round((s.doneRatio || 0) * 100)}%`, palette.faceText, `${s.done} of ${s.total}`],
         ['overdue', String(s.overdue || 0), s.overdue ? palette.faceBad : palette.faceText, ''],
@@ -61,14 +78,13 @@ export default registry.register({
       const tw = (w - 2 * P - gap * (tiles.length - 1)) / tiles.length;
       tiles.forEach(([label, value, color, sub], i) => drawStat(g, P + i * (tw + gap), tileY, tw, tileH, label, value, { color, sub }));
       // --- ring + column bars
-      const secY = tileY + tileH + 16;
-      const r = Math.min(h * 0.16, 44);
-      const cx = P + r, cy = secY + r + 8;
+      const secY = R.secY, r = R.r;
+      const cx = P + r, cy = R.cy;
       g.lineWidth = r * 0.22; g.lineCap = 'round';
       g.strokeStyle = palette.faceLine; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
       g.strokeStyle = palette.faceGood; g.beginPath(); g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (s.doneRatio || 0)); g.stroke();
       tabular(g); drawText(g, `${Math.round((s.doneRatio || 0) * 100)}%`, cx - r, cy - r, 2 * r, 2 * r, { size: r * 0.55, weight: 600 });
-      const bx = cx + r + 24, bw = w - bx - P, bh = 2 * r + 16;
+      const bx = cx + r + 24, bw = w - bx - P, bh = R.bh;
       drawCaps(g, 'columns', bx, secY + 6);
       const cols = s.columns; const maxC = Math.max(1, ...cols.map((c) => c.count));
       const cw = bw / cols.length;
@@ -84,7 +100,7 @@ export default registry.register({
         g.fillText(fitLine(g, c.title, barW + 4), x + barW / 2, barBottom + 14);
       });
       // --- lower: burndown · people · checklists
-      const ly = secY + bh + 18, lh = h - ly - P;
+      const ly = R.ly, lh = R.lh;
       if (lh < 40) return;
       const people = Array.isArray(inputs.people) ? inputs.people.filter((p) => p && p.name) : [];
       const lists = instance._checklists || [];

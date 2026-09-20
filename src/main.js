@@ -24,6 +24,7 @@ import { serializeWorld, serializeSelection, importCommand, loadWorld, downloadJ
 import { MenuBar, shortcutText } from './ui/menubar.js';
 import { ShortcutsSheet, AboutDialog, REPO_URL } from './ui/help-dialogs.js';
 import { StatsOverlay } from './ui/stats.js';
+import { CableChips } from './cable-chips.js';
 import { examples, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
 import { portTypes, subtypes, states, sizes, hex, getTheme, setTheme, toggleTheme, onThemeChange, refreshLabel } from './theme.js';
@@ -60,6 +61,7 @@ const gizmo = new Gizmo({ camera: ws.camera, renderer: ws.renderer, scene: ws.sc
 const connLabel = $('conn-label');
 let hoveredConnection = null;
 const overlays = new Overlays({ camera: ws.camera, renderer: ws.renderer, world, els: { tip: $('tip'), dragLabel: $('drag-label'), toast: $('toast'), endLabels: $('cable-labels'), emptyHint: $('empty-hint') } });
+const chips = new CableChips(ws.scene);   // value chips at cable midpoints (hovered / selected cables, cables of a selected block)
 world.overlays = overlays;    // components may toast ("Assigned to Maya")
 const interaction = new Interaction({
   camera: ws.camera, renderer: ws.renderer, controls: ws.controls, world, selection, history, gizmo, createInstance, overlays,
@@ -491,20 +493,24 @@ if (!tourSeen()) setTimeout(() => { if (!tour.active) tour.start(); }, 600);
 const clock = new THREE.Clock();
 let panelAcc = 0;
 const _mid = new THREE.Vector3();
-/** Midpoint label: the hovered cable, else the selected one ("Board.done → Start.trigger · event · value"). */
+/**
+ * Meaning line under the hovered (or selected) cable: "event · Maya's tasks appear on Website
+ * relaunch". The value and the endpoint names are on the 3D chip above the cable (cable-chips.js),
+ * so this line shows only when there is a sentence to add, or why an invalid link does not fit.
+ */
 function updateConnectionLabel() {
   const c = hoveredConnection || (selection.size === 1 ? selection.connections[0] : null);
   if (!c || !c.visible || !c.complete || interaction.connect) { connLabel.hidden = true; return; }
+  const meaning = c.valid ? describeLink(c) : mismatchReason(c.from, c.to);   // "Maya's tasks appear on Website relaunch"
+  if (!meaning) { connLabel.hidden = true; return; }
   c.midpoint(_mid).project(ws.camera);
   const r = ws.renderer.domElement.getBoundingClientRect();
   const x = r.left + (_mid.x + 1) / 2 * r.width, y = r.top + (1 - _mid.y) / 2 * r.height;
   connLabel.hidden = _mid.z > 1;
-  connLabel.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px) translate(-50%, -120%)`;
+  connLabel.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px) translate(-50%, 60%)`;
   const typeText = !c.valid ? 'invalid' : c.type === 'any' && c.value !== undefined ? `any · ${kindOf(c.value)}` : portTypeName(c.from);
-  const path = `${c.from.owner.title}.${c.from.label} → ${c.to.owner.title}.${c.to.label}`;
-  const meaning = c.valid ? describeLink(c) : null;   // "Maya's tasks appear on Website relaunch"
   connLabel.classList.toggle('selected', c !== hoveredConnection);
-  connLabel.innerHTML = `<b style="color:${hex(c.color.getHex())}">${typeText}</b> ${meaning || path}<br><span>${meaning ? path + ' · ' : ''}${c.valid ? formatValue(c.value, 36) : mismatchReason(c.from, c.to)}</span>`;
+  connLabel.innerHTML = `<b style="color:${hex(c.color.getHex())}">${typeText}</b> ${meaning}`;
 }
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -518,6 +524,7 @@ function frame() {
   world.groups.forEach((g) => g.update(dt));
   updateLOD(world, ws.camera, dt, ws.renderer);
   world.connections.forEach((c) => c.update(dt));
+  chips.update(world, ws.camera, { hovered: hoveredConnection, anySelected: selection.size > 0, time: engine.time, dt, renderer: ws.renderer });
   interaction.update(t, dt);
   overlays.update();
   jobsTray.update();
@@ -533,7 +540,7 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, stats, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, stats, chips, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd,
   newProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },

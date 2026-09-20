@@ -27,6 +27,8 @@ export default registry.register({
   },
   footer: ({ params, outputs }) => { const items = itemsOf(params); return `${items.filter((i) => i.done).length} / ${items.length} · ${Math.round((outputs.progress || 0) * 100)} %`; },
   face: {
+    /** `progress` beside the progress bar, `when complete` beside the list of items. */
+    portAnchors: ({ h }) => ({ progress: PAD + 22, done: (PAD + 40 + h - 12) / 2 }),
     render(g, w, h, { params, instance, outputs }) {
       clear(g, w, h);
       const items = itemsOf(params);

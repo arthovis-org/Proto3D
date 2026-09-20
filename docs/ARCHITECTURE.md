@@ -13,7 +13,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 │             controls/presets.js + controls/navigation.js (camera + bindings) │
 │             main.js (boot + render loop)                                     │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Scene       block3d.js → node3d.js / device3d.js / shape3d.js   connection3d.js │
+│ Scene       block3d.js → node3d.js / device3d.js / shape3d.js   connection3d.js  cable-chips.js │
 │             routing.js  groups.js  faces.js  face-canvas.js  workspace.js  theme.js │
 │             geometry.js (panelGeometry)  wiring.js (the Wiring switch)       │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -54,9 +54,9 @@ A component type is one plain object, validated and frozen by `defineComponent`:
 | `evaluate(ctx)` | returns `{ [outputKey]: value }`; omit a key (or return `undefined`) to output nothing |
 | `onEvent(ctx, inputKey, pulse)` | optional hook called before `evaluate` for each pulsed event input |
 | `footer(ctx)` | optional footer text (nodes) |
-| `face` | `{ render(g, w, h, ctx), onPointer?(ctx, ev), live?, fps? }` — a live 2D canvas on the body |
+| `face` | `{ render(g, w, h, ctx), onPointer?(ctx, ev), portAnchors?(info), live?, fps? }` — a live 2D canvas on the body; `portAnchors` puts each pin level with the face region it affects (§7c) |
 | `onCreate(instance)`, `onDestroy(instance)` | lifecycle (listeners, timers) |
-| `body3d` | custom 3D body (see §8b): `dims, build, ports?, refresh?, update?, applyLOD?, onSubPointer?, onSubHover?, titleAt?` — the instance becomes a `Shape3D` |
+| `body3d` | custom 3D body (see §8b): `dims, build, ports?, portAnchors?, refresh?, update?, applyLOD?, onSubPointer?, onSubHover?, titleAt?` — the instance becomes a `Shape3D` |
 | `panel(api, instance)` | optional component-owned editor section in the properties panel (see §8b) |
 | params `hidden: true` | a param the generic panel skips because `panel()` edits it (a board, a task list) |
 
@@ -249,17 +249,46 @@ kept for add-ons).
   shows the checkbox in the workspace section; the tour sets wiring on for steps flagged
   `wiring: true` and restores the previous value in `finish()`.
 
-**Node layout** (`Node3D._layout`, `stackPorts` in `block3d.js`). The card is header + content
-band + footer; the band holds the face with its margins (or a small spacer on a faceless card).
-The ports of each side are stacked on the left / right edge **beside the band**, centred on it at
-`sizes.port.gap` pitch and compressed down to `sizes.port.minGap` when the band is short; a
-definition whose busier side still does not fit gets a taller band from `nodeDimensions(def)`
-(computed once, independent of wiring). The reference height `_h0` is that card and the node
-origin is its centre; the top edge stays at `+h0 / 2`. Grown multi-input slots (`extraHeight`)
-push the ports below them down: the stack first slides up along the edge inside the band and
-only what still does not fit (`overflow`) extends the card downward (never under the floor) —
-`bodyOffsetY` = the body centre, so `getAABB` stays honest for routing and framing. The wiring
-switch never re-lays out anything.
+**Node layout** (`Node3D._layout`, `stackPorts` / `alignPorts` in `block3d.js`). The card is
+header + content band + footer; the band holds the face with its margins (or a small spacer on a
+faceless card). The ports of each side sit on the left / right edge **beside the band**: stacked
+and centred on it at `sizes.port.gap` pitch, compressed down to `sizes.port.minGap` when the band
+is short; a definition whose busier side still does not fit gets a taller band from
+`nodeDimensions(def)` (computed once, independent of wiring). The reference height `_h0` is that
+card and the node origin is its centre; the top edge stays at `+h0 / 2`. Grown multi-input slots
+(`extraHeight`) push the ports below them down: the stack first slides up along the edge inside
+the band and only what still does not fit (`overflow`) extends the card downward (never under
+the floor) — `bodyOffsetY` = the body centre, so `getAABB` stays honest for routing and framing.
+The wiring switch never re-lays out anything.
+
+**Port anchors** (`alignPorts`). A cable should visibly point at what it changes, so a face may
+say where each port's data lives: `def.face.portAnchors({ w, h, params, state, inputs, instance })`
+returns face-logical y (px from the top of the face, the same coordinates `render` draws in) per
+port key — flat (`{ in: 216 }`) or split (`{ in: { progress: 101 }, out: { progress: 206 } }`)
+when a key exists on both sides. `Node3D._portAnchors` converts them to card units and
+`alignPorts(list, anchors, top, bottom)` places the side: a port without an anchor keeps its
+`stackPorts` position, the set is sorted top to bottom by target (definition order on ties) and
+neighbours closer than `sizes.port.minGap` are nudged apart (a grown slot counts its extra height
+below it), kept inside the band; a set that no longer fits keeps its top and reports `overflow`
+like a stack. Each port records `anchorY` (the target, or null). Anchors are definition-side —
+nothing is saved. The Display's pin points at its value line, the Prompt's `variables` / `text`
+at the first lines of the prompt and its output at the middle of the text, the Generate faces'
+`prompt` at the prompt preview, `run` / `when done` / `usage` at the Run button row, the
+Dashboard's inputs at the panel each one fills (tiles, ring, header line, side tile), the
+Checklist's `progress` at its bar and `when complete` at the list. Custom bodies use
+`body3d.portAnchors(node)` in body units (§8b): the Kanban board's `people` slot sits at the first
+swimlane header (the column header row without lanes), `milestone` at the header line, `cover`
+at the top card, `add task` at the "+" tiles, `progress` at the column counts, `tasks` and the
+events at the cards; the Timeline's `tasks` / `overdue` at the first bar row, `milestones` /
+`next milestone` at the flags on the rail. Devices keep their centred stack.
+
+**Port names** are hidden by default. A name fades in over `NAME_FADE` (0.12 s,
+`Block3D._fadeNames`) while its port is hovered, while its cable is hovered, while it is a
+compatible target of a hovered port or a dragged cable (`nameMode` 'full'; incompatible ports
+show a dimmed name only during a drag, 'dim' = 40 %) and while its block is selected (all of that
+block's names); the interaction layer sets `nameMode` in `_recomputeEmphasis`, the block reads
+`selected` / `hovered` itself. Names still sit outside the body (`_placePortLabel`) and never
+show at the far LOD or with wiring off.
 
 ## 7d. Drop-to-link (`pm/relations.js`, `interaction.js`)
 
@@ -294,9 +323,10 @@ drop point that closes on pick, Esc or a click outside.
   the name just **outside** the body: past the pin and lifted `sizes.port.labelLift` above the
   wire's axis, so it reads like a net label and never covers face content (`portLabelSide`
   'outside', the default; 'inside' is for plain slabs). Names are dim, ellipsised past
-  `sizes.port.labelMax` units, shown only with wiring on and hidden at the far LOD. There are no
-  IN / OUT captions: pins on the left are inputs, on the right outputs. `proxy` redirects the
-  world position while the owner sits in a collapsed group.
+  `sizes.port.labelMax` units, hidden until hover, cable drag or selection (§7c) and never shown
+  at the far LOD or with wiring off. There are no IN / OUT captions: pins on the left are inputs,
+  on the right outputs. `proxy` redirects the world position while the owner sits in a collapsed
+  group.
 - **`Node3D`**: an extruded card (`panelGeometry`, depth 0.16, radius 0.32) with a slim accent
   line in the category colour along the top edge (`accent`, also exposed as `header` for older
   callers), a left-aligned title and a small-caps kind label, the content band (the face) with
@@ -312,10 +342,30 @@ drop point that closes on pick, Esc or a click outside.
   (`setPreviewPoint(side, p)` / `setPreviewPort(side, port)`). A hidden fat `pickTube`
   (radius ≥ 0.16) plus the two rings are what the raycaster tests, so a 1-px cable is easy to
   hover; `endNear(point)` says whether a hit lies within `sizes.connection.grabReach` (0.9) of an
-  end. Dimming has two independent levels combined in `_applyDim`: `dimHover` (another cable is
-  hovered, 25 %) and `dimSelect` (a block this cable does not touch is selected, 40 %).
-  `setEndHover(end)` enlarges the grabbed ring. Rebuilt only when an endpoint moved, the world
-  `layoutVersion` changed or the radius changed.
+  end. **Emphasis**: `_applyDim` derives a target level from `dimHover` (another cable is
+  hovered, 25 %), `dimSelect` (a block this cable does not touch is selected, 25 %) and
+  `highlight` (a port or end of this cable is hovered: full strength whatever else is selected),
+  plus `hovered` / `selected` (full); `update(dt)` eases `uniforms.dim` towards it over ~0.15 s
+  and scales the flow speed with it (a dimmed cable's sheen slows to a crawl), so the emphasised
+  paths are the ones that move. `setEndHover(end)` enlarges the grabbed ring. Rebuilt only when
+  an endpoint moved, the world `layoutVersion` changed or the radius changed.
+- **`CableChips`** (`cable-chips.js`): value chips at cable midpoints. A chip is a fixed-size
+  canvas `THREE.Sprite` (faces the camera, `depthTest` off, Inter, theme tokens): a type glyph in
+  the cable's colour (dot for values, chevron for events) and `chipText(value, type, subtype)` —
+  numbers formatted, text cut to 24 chars, booleans on / off, an event as `pulse` (`· payload
+  name` when it has one; `no pulse yet` before the first) with a 0.35 s flash and scale bump when
+  one passes, data as `{3 keys}` / `[12 items]`, media as `kind · title`, project kinds by name
+  (`person · Maya Chen`, `12 tasks`, `stats · 2/10 done`, `milestone · Public launch`). A hovered
+  or selected cable adds a second, dimmer line with the endpoints (`Prompt.prompt → Generate
+  Text.prompt`). Chips show for the hovered cable, the selected cable and every cable of a
+  selected block (the union for a multi-select; `anySelected && !dimSelect`), never at the far
+  LOD, at most `max` (40) nearest to the camera. `update` recycles chips by connection and
+  repaints a canvas only when its signature (text, second line, colour, flash, theme) changes;
+  the text is recomputed when the source port's `changedAt` / `lastPulseAt` moves, not per frame.
+  The canvas is never resized (WebGL allocates a texture's storage at the first size it sees);
+  the on-screen text height is clamped to 12–22 CSS px, world-sized in between. The DOM
+  `#conn-label` under the cable keeps only the type and the link sentence (`describeLink`), or
+  the mismatch reason for an invalid link.
 - **`Group3D`** (`groups.js`): frame (flat slab fill + ring) sized from members' footprints
   every frame, title at the front edge; `setCollapsed` hides members and internal links, builds a
   panel slab with an accent line and proxy ports for boundary links (`inner.proxy = proxyPort`),
@@ -341,7 +391,8 @@ hands geometry to the definition:
 | --- | --- | --- |
 | `dims(defOrNode)` | before build, and by the toolbar for the ghost footprint | `{ width, height, depth }`; may depend on params (a board grows with its columns) |
 | `build(node, h)` | once | static parts through helpers: `h.part(geo, mat, { theme })` (pickable body, recoloured on theme change), `h.label(text, opts, pos)`, `h.sub(mesh, { kind, id })`, `h.face(w, h, pos)` (the `def.face` canvas), `h.rim(geo)` |
-| `ports(node)` | once | `{ in: [[x, y, z]], out: [...] }` — same stem + pin + label anatomy as nodes; without it the ports are stacked on the left / right edges, centred on the body (`stackPorts`) |
+| `ports(node)` | once | `{ in: [[x, y, z]], out: [...] }` — explicit pin positions, same stem + pin + label anatomy as nodes |
+| `portAnchors(node)` | `layoutPorts` (construction, resize, a body's `refresh` when its regions moved) | `{ key: y }` or `{ in, out }` in body units: each pin level with the content it affects (`alignPorts`, §7c); without `ports` or anchors the ports are stacked on the left / right edges, centred on the body (`stackPorts`) |
 | `refresh(node)` | whenever `faceDirty` is set: param / state change (any `setParam`, undo, redo, load), theme change, `setTitle` | rebuilds the **data-driven children** in `node.children3d` after `node.clearChildren()`: columns, cards, bars, ticks, arcs |
 | `update(node, time, dt)` | every frame | animation (flash, progress bar, ripple) |
 | `applyLOD(node, blend)` | every frame with the LOD blend | far look (the board hides cards and shows per-column count bars) |
@@ -475,8 +526,12 @@ value, links and the drag hint; a block tooltip (label + description) after 500 
 hint. `_recomputeEmphasis()` rebuilds every port's `emphasis` from scratch — the selected cable's
 two ports glow; when a port is hovered or a cable is being dragged, `world.compatiblePorts(src)`
 glow, every other port on other blocks dims, and the rejected pin under the pointer goes red —
-and `update(time)` pulses the glowing set each frame. Step 1 of the tour reads the preset's orbit
-/ pan bindings; steps 2, 3 and 5 set the wiring switch on and `finish()` restores it.
+and `update(time)` pulses the glowing set each frame. The same pass sets every port's `nameMode`
+(§7c: the hovered port, the ports of a hovered cable, compatible targets and — during a drag —
+dimmed names on incompatible ones) and `Connection3D.setHighlight` on the cables of a hovered
+port or the hovered cable, so they brighten even while another block's selection dims them. Step 1
+of the tour reads the preset's orbit / pan bindings; steps 2, 3 and 5 set the wiring switch on
+and `finish()` restores it.
 
 **Cable drags** share one state object `connect = { need, fixed, side, preview, plane, detached,
 origin, snapped, reject }`: `fixed` is the real port the cable stays attached to, `need` the
@@ -494,11 +549,12 @@ incompatible pin, or `Esc` via `cancel()`); a cancelled new cable fades over 0.2
 (`fading`). An incompatible drop never creates a link.
 
 **Selection emphasis** (`applySelectionEmphasis`, on every selection and world change): the
-selected nodes (plus members of selected groups) keep their cables at full brightness and every
-other cable gets `dimSelect`; each cable leaving the set is labelled at its far end through
+selected nodes (plus members of selected groups) keep their cables at full brightness, show all
+their port names and get a value chip on each cable (`CableChips`); every other cable eases to
+`dimSelect` (25 %, flow slowed); each cable leaving the set is labelled at its far end through
 `Overlays.setEndLabels` (`→ To.port` at the input end, `From.port →` at the output end). A
-selected cable dims the others and the midpoint label in `main.js` shows
-`From.port → To.port · type · value`.
+selected cable dims the others, its chip carries the endpoint line and the DOM label under it
+(`main.js → updateConnectionLabel`) shows `type · link sentence` when there is one.
 
 **Overlays** (`ui/overlays.js`) own the HTML layers — tooltip (anchored to a world position and
 re-projected per frame, optional delay), drag label beside the pointer, toast, cable end labels
@@ -608,9 +664,12 @@ and `pickJSONFile({ withName })` (§9b).
 ## 11. Adding to the platform
 
 - **A component**: one file under `src/components/<category>/`, `registry.register({...})`, import
-  it in `components/index.js`. See the worked example in `README.md`.
-- **A custom 3D body**: add `body3d` to the definition (§8b); add `panel(api, block)` when it owns
-  data the generic param controls cannot edit, and mark those params `hidden`.
+  it in `components/index.js`. See the worked example in `README.md`. Give the face
+  `portAnchors({ w, h })` (face px per port key) when it has an identifiable region per port, so
+  the pins sit level with what they change (§7c); leave it out to get the centred stack.
+- **A custom 3D body**: add `body3d` to the definition (§8b) — `portAnchors(node)` in body units
+  for content-aligned pins, or `ports(node)` for explicit positions; add `panel(api, block)` when
+  it owns data the generic param controls cannot edit, and mark those params `hidden`.
 - **A category**: add a row to `CATEGORIES` in `core/registry.js` (label, kind, description) and an
   icon in `icons.js`; the toolbar picks it up. Unknown categories still work (auto-labelled).
 - **A port type**: add it to `TYPES` / `typeInfo` in `core/types.js`, to `portTypes` in both

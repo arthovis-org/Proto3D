@@ -9,7 +9,7 @@ import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { isMedia } from '../../core/types.js';
 import { asText } from '../util.js';
-import { evaluateCommon, drawGenerateFace, drawMediaBody, facePointer, buildGeneratePanel, buildOptionRows, usageOf, hydrateState, modelInfo } from './common.js';
+import { evaluateCommon, drawGenerateFace, drawMediaBody, facePointer, buildGeneratePanel, buildOptionRows, usageOf, hydrateState, modelInfo, generateAnchors } from './common.js';
 
 const NOUN = { image: 'an image', video: 'a video clip', audio: 'audio' };
 const DESC = {
@@ -66,6 +66,7 @@ function definition(kind) {
     footer: ({ instance, outputs }) => (instance._job?.active ? `${instance._job.stage}${instance._job.queuePosition ? ` · #${instance._job.queuePosition}` : ''}` : outputs.media ? `${outputs.media.title || kind}${outputs.all?.length > 1 ? ` · ${outputs.all.length} items` : ''}` : 'idle'),
     face: {
       live: true, fps: 6,
+      portAnchors: generateAnchors,
       render(g, w, h, ctx) { drawGenerateFace(g, w, h, ctx, { kind, body: (g2, x, y, bw, bh, rec, inst, running) => drawMediaBody(g2, x, y, bw, bh, rec, inst, running, kind, ctx.time), promptText: buildSpec(ctx).prompt }); },
       onPointer(ctx, ev) { return facePointer(ctx, ev, kind); },
     },

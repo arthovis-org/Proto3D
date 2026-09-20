@@ -5,8 +5,11 @@
 //   body3d: {
 //     dims(defOrNode)                → { width, height, depth }  (toolbar ghost + this instance)
 //     build(node, h)                 → adds meshes through the helpers `h` (part, label, sub, face)
-//     ports?(node)                   → { in: [[x, y, z]], out: [[x, y, z]] }  (default: stacked on the left /
-//                                      right edges, centred on the body — never above the content)
+//     ports?(node)                   → { in: [[x, y, z]], out: [[x, y, z]] }  explicit pin positions
+//     portAnchors?(node)             → { key: y } or { in: { key: y }, out: { key: y } } in local units: each
+//                                      port sits level with the content it affects (alignPorts nudges
+//                                      colliding pins apart); without either the ports are stacked on
+//                                      the left / right edges, centred on the body — never above the content
 //     refresh?(node)                 → rebuild data-driven children (called when faceDirty is set:
 //                                      param / state change, theme change, undo)
 //     update?(node, time, dt)        → per-frame animation
@@ -26,7 +29,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { palette, categories, states, sizes, materials, makeLabel, setLabelText, makeShadowBlob, refreshLabel, alignLabelLeft } from './theme.js';
 import { panelGeometry, slabGeometry, outlineGeometry } from './geometry.js';
-import { Block3D, stackPorts } from './block3d.js';
+import { Block3D, alignPorts, splitAnchors } from './block3d.js';
 import { clear as clearFace } from './faces.js';
 import { createSurface } from './face-canvas.js';
 
@@ -79,13 +82,12 @@ export class Shape3D extends Block3D {
     this.add(this.titleLabel); this.labels.push(this.titleLabel);
     this._titleY = at[1]; this._titleZ = at[2];
 
-    // Ports: same anatomy as nodes (stem + typed pin + label), positions from the body, or stacked
+    // Ports: same anatomy as nodes (stem + typed pin + label). Positions come from `body3d.ports`,
+    // else from `body3d.portAnchors` (level with the content each port affects), else stacked
     // beside the content on the left / right edges (centred on the body, inset from the corners)
-    const P = B.ports ? B.ports(this) : null;
-    const edgeTop = this.height / 2 - 0.45, edgeBottom = -this.height / 2 + 0.45;
-    const stacked = { in: stackPorts(def.inputs, edgeTop, edgeBottom).ys, out: stackPorts(def.outputs, edgeTop, edgeBottom).ys };
-    def.inputs.forEach((p, i) => this._addLabelledPort(p, ...(P?.in?.[i] || [-this.width / 2, stacked.in[i], 0])));
-    def.outputs.forEach((p, i) => this._addLabelledPort(p, ...(P?.out?.[i] || [this.width / 2, stacked.out[i], 0])));
+    def.inputs.forEach((p) => this._addLabelledPort(p, -this.width / 2, 0, 0));
+    def.outputs.forEach((p) => this._addLabelledPort(p, this.width / 2, 0, 0));
+    this.layoutPorts();
 
     if (!this.rim) {
       this.rim = new THREE.Mesh(outlineGeometry(this.width, this.height, this.depth, sizes.outline.grow, { radius: 0.3 }), materials.rim());
@@ -132,6 +134,29 @@ export class Shape3D extends Block3D {
     };
   }
   _addLabelledPort(spec, x, y, z) { return super._addLabelledPort(spec, x, y, z, Math.max(z, 0) + this.depth / 2 + 0.01); }
+  /**
+   * Place the ports for the body's current size: explicit `body3d.ports(node)` positions when the
+   * definition has them; otherwise each side is aligned to `body3d.portAnchors(node)` (local y per
+   * port key, flat or `{ in, out }`) and stacked where no anchor is given (`alignPorts`), inside the
+   * body's edges. Bodies that grow (a board with lanes) call this again from their `refresh`.
+   */
+  layoutPorts() {
+    const B = this.def.body3d;
+    const P = B.ports ? B.ports(this) : null;
+    const c = this.bodyOffsetY || 0;
+    const top = c + this.height / 2 - 0.3, bottom = c - this.height / 2 + 0.3;   // inside the rounded corners; alignPorts adds its own pad
+    let anchors = { in: null, out: null };
+    if (B.portAnchors) { try { anchors = splitAnchors(B.portAnchors(this)); } catch (_) { anchors = { in: null, out: null }; } }
+    const ins = alignPorts(this.inputs, anchors.in, top, bottom), outs = alignPorts(this.outputs, anchors.out, top, bottom);
+    this.inputs.forEach((p, i) => { p.basePos = P?.in?.[i] || [-this.width / 2, ins.ys[i], 0]; });
+    this.outputs.forEach((p, i) => { p.basePos = P?.out?.[i] || [this.width / 2, outs.ys[i], 0]; });
+    this._anchored = !P;
+    if (P) { super.relayoutPorts(); return; }   // explicit positions: grown slots push the ports below them (Block3D)
+    for (const p of this.ports) { p.group.position.set(...p.basePos); this._placePortLabel(p); }   // alignPorts already spaced the grown slots
+    this.world?.bumpLayout();
+  }
+  /** A multi-input slot grew or shrank: re-align the side (anchored layout) or shift the ports below it (explicit positions). */
+  relayoutPorts() { if (this._anchored === undefined || this._anchored) this.layoutPorts(); else super.relayoutPorts(); }
   /** Drop every data-driven child (subs, labels inside children3d) before a rebuild. */
   clearChildren() {
     const kept = new Set();

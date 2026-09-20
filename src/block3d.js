@@ -16,7 +16,12 @@
 //     colour (dark core + coloured outline shell); optional ports are slightly smaller;
 //   • a `data` port with a subtype (person, tasks, milestone…) takes the subtype's colour;
 //   • emphasis: 'glow' (compatible target while hovering / dragging: pulsing rim), 'dim'
-//     (incompatible: 35 %), 'reject' (red ring under the pointer).
+//     (incompatible: 35 %), 'reject' (red ring under the pointer);
+//   • the name label sits just outside the body and is hidden by default: it fades in (~120 ms)
+//     while the port or its cable is hovered, while it is a compatible target of a cable drag
+//     (dimmed when incompatible) and while its block is selected (`nameMode`, `_fadeNames`);
+//   • `alignPorts` places a side's pins level with the content they affect (`anchorY`) and
+//     nudges colliding pins apart by the minimum gap; `stackPorts` is the centred fallback.
 import * as THREE from 'three';
 import {
   palette, states, sizes, materials, makeLabel, refreshLabel, setLabelText, makeShadowBlob, onThemeChange, portColorFor,
@@ -86,6 +91,45 @@ export function stackPorts(list, top, bottom, { gap = sizes.port.gap, minGap = s
 }
 
 /**
+ * Place one side's ports at the content they affect. `anchors` maps a port key to the local y of
+ * its face region (a component hint, §7c); a port without an anchor takes its `stackPorts`
+ * position. Ports are then sorted top to bottom by that target and pushed apart to at least
+ * `minGap` (a grown multi-input slot counts its extra height below it), kept inside
+ * `bottom + pad .. top - pad`; when the set no longer fits, the whole stack keeps its top and
+ * `overflow` reports how far it runs past `bottom` (the owner may extend its body). Each port
+ * record receives `anchorY` (the target it was aimed at, or null). Returns `{ ys, overflow }`
+ * in the list's order.
+ */
+export function alignPorts(list, anchors, top, bottom, { minGap = sizes.port.minGap, pad = sizes.port.pad, gap = sizes.port.gap } = {}) {
+  const base = stackPorts(list, top, bottom, { gap, minGap, pad });
+  const has = anchors && list.some((p) => Number.isFinite(anchors[p.key]));
+  for (const p of list) p.anchorY = has && Number.isFinite(anchors[p.key]) ? anchors[p.key] : null;
+  if (!has) return { ys: base.ys, overflow: base.overflow };
+  const n = list.length;
+  const want = list.map((p, i) => (p.anchorY !== null ? p.anchorY : base.ys[i]));
+  const extra = list.map((p) => p.extraHeight || 0);
+  const order = list.map((_, i) => i).sort((a, b) => (want[b] - want[a]) || (a - b));   // top first, definition order on ties
+  const hi = top - pad, lo = bottom + pad;
+  const ys = order.map((i) => Math.min(hi, want[i]));
+  for (let k = 1; k < n; k++) ys[k] = Math.min(ys[k], ys[k - 1] - extra[order[k - 1]] - minGap);
+  ys[n - 1] = Math.max(ys[n - 1], lo + extra[order[n - 1]]);
+  for (let k = n - 2; k >= 0; k--) ys[k] = Math.max(ys[k], ys[k + 1] + extra[order[k]] + minGap);
+  let overflow = 0;
+  if (ys[0] > hi) { overflow = ys[0] - hi; for (let k = 0; k < n; k++) ys[k] -= overflow; }
+  const out = new Array(n);
+  order.forEach((i, k) => { out[i] = ys[k]; });
+  return { ys: out, overflow };
+}
+/** A component's anchor hint may be flat (`{ key: y }`, both sides) or split (`{ in: {…}, out: {…} }`). */
+export function splitAnchors(a) {
+  if (!a || typeof a !== 'object') return { in: null, out: null };
+  if (a.in || a.out) return { in: a.in || null, out: a.out || null };
+  return { in: a, out: a };
+}
+/** How long a port name takes to fade in or out (s). */
+export const NAME_FADE = 0.12;
+
+/**
  * Shared port anatomy. `owner` is the block (or a collapsed group) hosting it. Returns a plain
  * port record that the engine annotates with `value`, `changedAt`, `pulse`, `rate`.
  */
@@ -122,6 +166,11 @@ export function createPort(owner, { key, label, type = 'any', subtype = null, lo
     disabled: false, hovered: false, connected: false, emphasis: null, pulsePhase: 0,
     proxy: null,   // set while the owner sits in a collapsed group: connections attach to the proxy
     labelMesh: null, glyphMesh: null,
+    anchorY: null,            // the local y of the face region this port was aimed at (alignPorts), null when stacked
+    nameMode: null,           // null | 'full' | 'dim' — asked for by the interaction layer (hover, cable drag, cable hover)
+    nameAlpha: 0,             // animated 0..1 opacity of the name label (Block3D._fadeNames)
+    /** Ask for the name label: 'full' (hovered, compatible target, its cable hovered), 'dim' (incompatible while a cable is dragged) or null. */
+    setNameShown(mode) { port.nameMode = mode || null; },
     /** World position of the pin, or of slot `index` on a multi input (cables end in their own slot). */
     getWorldPosition(target = new THREE.Vector3(), index = -1) {
       if (port.proxy) return port.proxy.getWorldPosition(target, index);
@@ -316,12 +365,32 @@ export class Block3D extends THREE.Group {
   get portsVisible() { return portsVisibleFor(this); }
   /** Per-component override: true / false, or null to follow the global flag. */
   setShowPorts(v) { this.showPorts = v === true || v === false ? v : null; this.applyWiring(); this.world?.changed('wiring'); }
-  /** Show / hide every port and its label. The body never changes size with the switch; subclasses may react through `_onWiringChange`. */
+  /** Show / hide every port (names follow on their own fade). The body never changes size with the switch; subclasses may react through `_onWiringChange`. */
   applyWiring() {
     const on = this.portsVisible;
-    for (const p of this.ports) { p.group.visible = on; if (p.labelMesh) p.labelMesh.visible = on && this.lodBlend < 0.98; }
+    for (const p of this.ports) { p.group.visible = on; if (!on && p.labelMesh) { p.labelMesh.visible = false; p.nameAlpha = 0; } }
     if (this._wiringOn !== on) { this._wiringOn = on; this._onWiringChange?.(on); }
     this.world?.bumpLayout();
+  }
+  /** Target opacity of a port's name right now: shown while the block is selected, the port is hovered or asked for ('full'), dimmed for an incompatible target during a cable drag. */
+  _nameTarget(p) {
+    if (!this.portsVisible || this.lodBlend > 0.98) return 0;
+    if (this.selected || p.hovered || p.nameMode === 'full') return 1;
+    if (p.nameMode === 'dim') return 0.4;
+    return 0;
+  }
+  /** Per frame: fade every port name towards its target over NAME_FADE seconds (names are hidden by default and appear on hover, drag or selection). */
+  _fadeNames(dt) {
+    const lodA = 1 - this.lodBlend;
+    for (const p of this.ports) {
+      const l = p.labelMesh; if (!l) continue;
+      const t = this._nameTarget(p);
+      if (Math.abs(p.nameAlpha - t) < 1e-3) p.nameAlpha = t;
+      else p.nameAlpha += Math.sign(t - p.nameAlpha) * Math.min(Math.abs(t - p.nameAlpha), dt / NAME_FADE);
+      const a = p.nameAlpha * lodA * (l.userData.alpha ?? 1);
+      l.material.opacity = a;
+      l.visible = a > 0.02;
+    }
   }
 
   get ports() { return [...this.inputs, ...this.outputs]; }
@@ -368,7 +437,8 @@ export class Block3D extends THREE.Group {
   /**
    * A port with its name label. By default the name sits just outside the body, past the pin and
    * riding above where the wire leaves (`portLabelSide` 'outside'); 'inside' puts it on the body
-   * front beside the pin (`zFront`) for slabs with nothing behind it.
+   * front beside the pin (`zFront`) for slabs with nothing behind it. Names start hidden and fade
+   * in on hover, cable drag or selection (`_fadeNames`).
    */
   _addLabelledPort(spec, x, y, z = 0, zFront = this.depth / 2 + 0.01) {
     const port = this._addPort(spec, x, y, z);
@@ -377,8 +447,8 @@ export class Block3D extends THREE.Group {
     this.add(label); this.labels.push(label); this.detailLabels.push(label); this.wiringLabels.add(label);
     port.labelMesh = label; port.labelZ = zFront;
     this._placePortLabel(port);
-    const on = this.portsVisible;
-    port.group.visible = on; label.visible = on;
+    port.group.visible = this.portsVisible;
+    label.visible = false; label.material.opacity = 0;   // names appear on hover, cable drag or selection (_fadeNames)
     return port;
   }
   /** Put a port's name where its pin is now (outside: past the pin, lifted above the wire; inside: beside it on the body front). */
@@ -499,11 +569,11 @@ export class Block3D extends THREE.Group {
     if (Math.abs(this.lodBlend - target) >= 0.002) this.lodBlend += (target - this.lodBlend) * Math.min(1, dt * 6);
     else this.lodBlend = target;
     this._applyLOD();
+    this._fadeNames(dt);
   }
   _applyLOD() {
     const a = 1 - this.lodBlend;
-    const ports = this.portsVisible;
-    for (const l of this.detailLabels) { l.material.opacity = a * (l.userData.alpha ?? 1); l.visible = a > 0.02 && (ports || !this.wiringLabels.has(l)); }
+    for (const l of this.detailLabels) { if (this.wiringLabels.has(l)) continue; l.material.opacity = a * (l.userData.alpha ?? 1); l.visible = a > 0.02; }   // port names: _fadeNames
   }
   _updateShadow() {
     const sy = this.scale.y || 1;

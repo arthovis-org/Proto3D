@@ -49,7 +49,8 @@ const body3d = {
   dims: () => ({ width: W, height: H, depth: DEPTH }),
   titleAt: () => [-W / 2 + 0.5, H / 2 - TOP / 2 - 0.04, DEPTH / 2 + 0.05],
   titleAlign: 'left',
-  ports: (node) => ({ in: node.def.inputs.map((_, i) => [-W / 2, CHART_TOP - 0.5 - i * 0.55, 0]), out: node.def.outputs.map((_, i) => [W / 2, CHART_TOP - 0.5 - i * 0.55, 0]) }),
+  /** Ports level with their content (shape3d.js → alignPorts): `tasks` / `overdue` with the bar rows, `milestones` / `next milestone` with the flags on the rail. */
+  portAnchors: (node) => { const bars = CHART_TOP - 0.25 - (node._rowH ?? 0.72) / 2, flags = -H / 2 + RAIL - 0.25 + 1.0; return { in: { tasks: bars, milestones: flags }, out: { overdue: bars, next: flags } }; },
   build(node, h) {
     const back = h.part(h.panelGeometry(W, H, DEPTH, { radius: 0.36 }), h.materials.body(), { theme: () => palette.body });
     back.position.z = -DEPTH / 2 + 0.01;
@@ -134,7 +135,8 @@ const body3d = {
     const tx = xOf(R, isoDate());
     node.today.position.set(tx, CHART_TOP - CHART_H / 2 - 0.1, 0.15);
     node.todayLabel.position.x = tx;
-    node._range = R; node._rowH = rowH;
+    node._range = R;
+    if (rowH !== node._rowH) { node._rowH = rowH; node.layoutPorts(); }   // the tasks pin stays level with the first bar row
   },
   applyLOD(node, k) {
     const far = k >= 0.5;

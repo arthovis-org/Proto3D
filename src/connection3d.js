@@ -4,7 +4,8 @@
 // Looks are derived from data: inactive (carries nothing) is thin and dim, active (value
 // changed within ~1.5 s) is thicker and brighter, invalid (type mismatch) is red and dashed.
 // Hovering another connection dims this one to ~25 %; selecting a block dims every cable that
-// does not touch it to 40 %.
+// does not touch it to 25 % (its flow slows with it); hovering a port or a cable end brightens
+// that cable again. Dim levels animate over ~0.15 s (`_applyDim` sets the target, `update` eases).
 //
 // Either end may be a free point instead of a port: that is the preview while a cable is being
 // dragged (from an output forwards, or from an input backwards). Both ends of a real link are
@@ -82,6 +83,8 @@ export class Connection3D extends THREE.Group {
     this.selected = false;
     this.dimHover = false;    // another connection is hovered
     this.dimSelect = false;   // a block that this link does not touch is selected
+    this.highlight = false;   // a port or cable end of this link is hovered: never dimmed
+    this._dimTarget = 1;      // where `uniforms.dim` is easing to (update)
     this.far = false;
     this.value = undefined;
     this.velocity = 1.2;
@@ -249,12 +252,19 @@ export class Connection3D extends THREE.Group {
   setEndHover(end) { if (this.hoveredEnd !== end) { this.hoveredEnd = end; this._scaleRings(); this._applyLook(); } }
   /** Hover isolation: other connections drop to ~25 % (legacy signature kept). */
   setDim(on) { this.dimHover = !!on; this._applyDim(); }
-  /** Selection focus: cables not touching the selected block drop to 40 %. */
+  /** Selection focus: cables not touching the selected block drop to 25 %. */
   setDimSelect(on) { this.dimSelect = !!on; this._applyDim(); }
+  /** A port of this link (or one of its ends) is hovered: full strength whatever else is selected or hovered. */
+  setHighlight(on) { on = !!on; if (this.highlight !== on) { this.highlight = on; this._applyDim(); } }
+  /** The level this cable should be at now; `update` eases towards it. */
+  get dimTarget() { return this._dimTarget; }
   _applyDim() {
-    const dim = this.dimHover ? 0.25 : this.dimSelect ? 0.4 : 1;
+    this._dimTarget = this.highlight || this.hovered || this.selected ? 1 : this.dimHover ? 0.25 : this.dimSelect ? 0.25 : 1;
+    if (!this.world) this._setDim(this._dimTarget);   // previews and ghosts snap
+  }
+  _setDim(dim) {
     this.uniforms.dim.value = dim;
-    this.rings.forEach((rg) => { rg.material.opacity = (this.derivedState === 'inactive' ? 0.4 : 0.9) * (dim === 1 ? 1 : dim * 0.9); });
+    this.rings.forEach((rg) => { rg.material.opacity = (this.derivedState === 'inactive' ? 0.4 : 0.9) * (dim >= 0.999 ? 1 : dim * 0.9); });
   }
   setFar(on) { if (this.far !== on) { this.far = on; } }
 
@@ -279,7 +289,10 @@ export class Connection3D extends THREE.Group {
   refreshTheme() { this._applyLook(); }
 
   update(dt) {
-    if (flowEnabled) this.uniforms.travel.value += dt * this.velocity * flowSpeed;
+    const d = this.uniforms.dim.value, t = this._dimTarget;
+    if (Math.abs(d - t) > 0.004) this._setDim(d + (t - d) * Math.min(1, dt / 0.15)); else if (d !== t) this._setDim(t);
+    // a dimmed cable's flow slows to a crawl so the emphasised paths are the ones that visibly move
+    if (flowEnabled) this.uniforms.travel.value += dt * this.velocity * flowSpeed * (0.15 + 0.85 * this.uniforms.dim.value);
     this.rebuild();
     this._updateBursts(dt);
   }

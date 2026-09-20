@@ -6,7 +6,7 @@ import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { isMedia } from '../../core/types.js';
 import { asText } from '../util.js';
-import { evaluateCommon, drawGenerateFace, drawTextBody, facePointer, buildGeneratePanel, usageOf, contextText, hydrateState } from './common.js';
+import { evaluateCommon, drawGenerateFace, drawTextBody, facePointer, buildGeneratePanel, usageOf, contextText, hydrateState, generateAnchors } from './common.js';
 
 const KIND = 'text';
 function buildSpec({ inputs, params }) {
@@ -59,6 +59,7 @@ export default registry.register({
   footer: ({ instance, outputs }) => (instance._job?.active ? `${instance._job.stage}…` : outputs.text ? `${outputs.text.length} chars` : 'idle'),
   face: {
     live: true, fps: 6,
+    portAnchors: generateAnchors,
     render(g, w, h, ctx) { drawGenerateFace(g, w, h, ctx, { kind: KIND, body: drawTextBody, promptText: buildSpec(ctx).prompt }); },
     onPointer(ctx, ev) { return facePointer(ctx, ev, KIND); },
   },

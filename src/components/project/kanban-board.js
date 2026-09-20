@@ -159,10 +159,22 @@ const body3d = {
   dims,
   titleAt: (node) => [-layout(node).W / 2 + 0.6, layout(node).top - TOP / 2 - 0.02, DEPTH / 2 + 0.05],
   titleAlign: 'left', titleColor: 'text',
-  ports(node) {
+  /**
+   * Ports sit level with what they change (shape3d.js → alignPorts): `people` with the first
+   * swimlane header (or the column header row while there are no lanes), `milestone` with the
+   * header line that shows it, `cover` with the top card, `move task` with the cards, `add task`
+   * with the "+" tiles; `progress` with the column counts, `when a card is done` with the top
+   * card slot, `when a card moves` and `tasks` with the cards.
+   */
+  portAnchors(node) {
     const L = layout(node);
-    const y0 = L.colTop - 1.2;
-    return { in: node.def.inputs.map((_, i) => [-L.W / 2, y0 - i * sizes.port.gap, 0]), out: node.def.outputs.map((_, i) => [L.W / 2, y0 - i * sizes.port.gap, 0]) };
+    const lanes = laneDefs(node);
+    const laneAreaTop = L.colTop - 0.95, laneAreaH = L.colH - 0.95 - ADD_H - 0.3;
+    const cards = laneAreaTop - laneAreaH / 2, topCard = laneAreaTop - CARD_H / 2;
+    return {
+      in: { people: lanes ? laneAreaTop - 0.19 : L.colTop - 0.42, milestone: L.top - TOP / 2 - 0.08, cover: topCard, moveTask: cards, addTask: L.colBottom + 0.15 + ADD_H / 2 },
+      out: { progress: L.colTop - 0.42, done: topCard, moved: cards, tasks: cards - 0.2 },
+    };
   },
   build(node, h) {
     node._colH = COL_H;
@@ -206,6 +218,8 @@ const body3d = {
     node._peopleMode = mode;
     const d = dims(node);
     if (Math.abs(d.width - node.width) > 1e-6 || Math.abs(d.height - node.height) > 1e-6) body3d._resize(node, d);
+    else if ((lanes ? lanes.length : 0) !== node._laneCount) node.layoutPorts();   // lanes appeared or went: the people slot follows the lane header
+    node._laneCount = lanes ? lanes.length : 0;
     node.clearChildren();
     node._cards = new Map();
     const L = layout(node);
@@ -352,10 +366,7 @@ const body3d = {
     node.bodyOffsetY = L.centreY;
     node.rim.geometry.dispose(); node.rim.geometry = outlineGeometry(d.width, d.height, BACK_D, sizes.outline.grow, { radius: 0.36 }).translate(0, L.centreY, -BACK_D / 2 + 0.01);
     node.shadow.geometry.dispose(); node.shadow.geometry = new THREE.PlaneGeometry(d.width * 1.4, DEPTH * 3.2);
-    const P = body3d.ports(node);
-    node.inputs.forEach((p, i) => { p.basePos = P.in[i]; });
-    node.outputs.forEach((p, i) => { p.basePos = P.out[i]; });
-    node.relayoutPorts();   // re-places the pins from basePos and their names beside them
+    node.layoutPorts();   // re-aligns the pins with the header, lanes and cards of the new frame, names beside them
     const at = body3d.titleAt(node);
     node.titleLabel.position.set(at[0] + node.titleLabel.userData.worldW / 2, at[1], at[2]);
     node._titleY = node.titleLabel.position.y; node._titleX = node.titleLabel.position.x;

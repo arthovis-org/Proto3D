@@ -38,6 +38,7 @@ export default registry.register({
     return { text };
   },
   face: {
+    portAnchors: ({ h }) => ({ in: h / 2, text: h / 2 }),   // both pins level with the text line
     render(g, w, h, { outputs }) {
       clear(g, w, h);
       drawText(g, outputs.text ?? '', 16, 12, w - 32, h - 24, { size: 48, weight: 600 });

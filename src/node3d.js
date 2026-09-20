@@ -2,9 +2,11 @@
 // line in the category colour runs along the top edge, the title sits left-aligned under it with
 // the component kind in small caps at the right, then the content band — an optional live canvas
 // face — and a dim footer line with the current output value(s). The ports sit on the left and
-// right edges *beside* the content band (in-ports left, out-ports right), stacked and centred on
-// it, so the card is the same size with wiring on or off: the switch only shows and hides the
-// pins and their names, which ride the wire just outside the body.
+// right edges *beside* the content band (in-ports left, out-ports right): level with the face
+// region each one affects when the face declares `portAnchors` (a Display's pin points at the
+// value, a Prompt's inputs at the prompt text), stacked and centred on the band otherwise. The
+// card is the same size with wiring on or off: the switch only shows and hides the pins; their
+// names ride the wire just outside the body and appear on hover, cable drag or selection.
 //
 //   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━  accent line (category colour)
 //   │ Title              KIND  │
@@ -18,7 +20,7 @@
 import * as THREE from 'three';
 import { palette, categories, states, sizes, materials, makeLabel, setLabelText, makeShadowBlob, alignLabelLeft, alignLabelRight } from './theme.js';
 import { panelGeometry, outlineGeometry } from './geometry.js';
-import { Block3D, stackPorts } from './block3d.js';
+import { Block3D, alignPorts, splitAnchors } from './block3d.js';
 
 /**
  * Footprint of a definition before it is instantiated (toolbar ghost, free-slot search). The
@@ -112,7 +114,8 @@ export class Node3D extends Block3D {
     const n = sizes.node, w = this.width, d = this.depth, h0 = this._h0;
     const top = h0 / 2;
     const bandTop = top - n.header, bandBottom = -h0 / 2 + n.footer;   // the content band of the reference card
-    const stacks = [stackPorts(this.inputs, bandTop, bandBottom), stackPorts(this.outputs, bandTop, bandBottom)];
+    const anchors = this._portAnchors(bandTop, bandBottom);
+    const stacks = [alignPorts(this.inputs, anchors.in, bandTop, bandBottom), alignPorts(this.outputs, anchors.out, bandTop, bandBottom)];
     const extra = Math.max(stacks[0].overflow, stacks[1].overflow);
     this._portsExtra = extra;
     const h = h0 + extra;
@@ -141,6 +144,23 @@ export class Node3D extends Block3D {
     // never sink under the floor while growing
     if (this.world) { const worldBottom = this.position.y + bottom; if (worldBottom < 0.2) this.position.y += 0.2 - worldBottom; }
     this.world?.bumpLayout();
+  }
+
+  /**
+   * Port anchors from the face (§7c): `def.face.portAnchors({ w, h, params, state, inputs, instance })`
+   * returns face-logical y (px from the top of the face) per port key, flat or `{ in, out }`;
+   * converted here to local units on the card. Null when the face gives none (stacked layout).
+   */
+  _portAnchors(bandTop, bandBottom) {
+    const F = this.def.face;
+    if (!F?.portAnchors || !this.face || !this._faceH) return { in: null, out: null };
+    let a = null;
+    try { a = F.portAnchors({ w: this.face.cw, h: this.face.ch, params: this.params, state: this.state, inputs: this.rt.inputs || {}, instance: this }); }
+    catch (_) { a = null; }
+    const cy = (bandTop + bandBottom) / 2, fh = this._faceH, px = sizes.face.pxPerUnit;
+    const conv = (m) => { if (!m) return null; const out = {}; for (const [k, y] of Object.entries(m)) if (Number.isFinite(y)) out[k] = cy + fh / 2 - y / px; return out; };
+    const s = splitAnchors(a);
+    return { in: conv(s.in), out: conv(s.out) };
   }
 
   /** Live footer (engine). Only redraws when the text changes. */

@@ -13,6 +13,7 @@ export default registry.register({
   footer: ({ inputs, params }) => params.caption || formatValue(inputs.in, 24),
   face: {
     live: true, fps: 6,
+    portAnchors: ({ h }) => ({ in: h / 2 }),   // the pin points at the value
     render(g, w, h, { inputs, time }) {
       clear(g, w, h);
       drawValue(g, inputs.in, 12, 12, w - 24, h - 24, { time });
