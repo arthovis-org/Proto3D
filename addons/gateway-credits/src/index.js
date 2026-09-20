@@ -71,7 +71,7 @@ export function install(host, { sample = true } = {}) {
     const up = host.world.connections().find((c) => c.to && c.to.owner === first && c.to.key === 'trigger' && c.from.type === 'event');
     if (up) {
       const src = up.from.owner;
-      if (src.typeId === 'input') { src.state.count = (src.state.count || 0) + 1; src.state.pressedAt = Date.now(); src.faceDirty = true; }
+      if (src.typeId === 'input') { src.state.count = (src.state.count || 0) + 1; src.state.pressedAt = performance.now(); src.faceDirty = true; }   // pressedAt: the core Input face compares it against performance.now()
       if (host.engine.emit(src, up.from.key, 'sample run')) return true;
     }
     return kick(first);

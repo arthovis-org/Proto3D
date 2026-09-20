@@ -181,7 +181,7 @@ export function createHost(proto, manifest, core) {
     /** Frame blocks in the viewport (instant or animated), keeping the Add rail's width out of the framing. */
     frameBlocks(blocks, opts = {}) { const p = P('ui.frameBlocks'); return p.ws.frameBlocks(blocks, { insetLeft: p.leftBar?.isOpen ? 300 : 0, ...opts }); },
     hideStart: () => P('ui.hideStart').start.hide('addon'),
-    /** Add a stylesheet to the page (absolute or page-relative href). */
+    /** Add a stylesheet to the page. Pass an absolute URL (e.g. new URL('./x.css', import.meta.url).href): the shell sets <base> to the core root, so a page-relative href would resolve there, not in the add-on directory. */
     stylesheet(href) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); return l; },
   });
   const selection = Object.freeze({
