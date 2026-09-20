@@ -14,7 +14,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 │             main.js (boot + render loop)                                     │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Scene       block3d.js → node3d.js / device3d.js / shape3d.js   connection3d.js │
-│             routing.js  groups.js  faces.js  workspace.js  theme.js         │
+│             routing.js  groups.js  faces.js  face-canvas.js  workspace.js  theme.js │
 │             geometry.js (panelGeometry)  wiring.js (the Wiring switch)       │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Core        core/component.js  core/registry.js  core/types.js              │
@@ -386,7 +386,20 @@ shown when a cable is created.
 
 ## 8c. Face design tokens (`theme.js`, `faces.js`)
 
-Faces are canvases at `sizes.face.pxPerUnit` = 120 px / unit. The tokens every component reads:
+Faces are canvases at `sizes.face.pxPerUnit` = 120 px / unit. That is the **logical** coordinate
+system every renderer draws in and every hit-test reads (`face.cw × face.ch`); the bitmap behind it
+is scaled like a HiDPI DOM canvas (`face-canvas.js`: `canvas.width = cw × scale`,
+`setTransform(scale)`). A surface starts at `min(devicePixelRatio, 2)`; each frame the LOD pass
+(`lod.js → fitFaceResolutions`) computes the device pixels one world unit covers at the block's
+distance (perspective fov + drawing-buffer height, or the orthographic frustum), ranks the blocks
+that own canvas surfaces by that ratio and calls `Block3D.fitFaceResolution(ratio, allowance)`,
+which picks a tier from `sizes.face.tiers` (0.5 … 4×, hysteresis `sizes.face.hysteresis`, bitmap
+side ≤ `sizes.face.maxSide`) and re-bakes every surface on the block once when the tier changes:
+the face, a device screen, and board cards / timeline bars made with `makeCanvasPlane(w, h, { owner })`.
+Only the nearest on-screen blocks may exceed 1× (`sizes.face.nearBudget`: 6 up to 4×, 16 up to
+2×), far and off-screen faces drop to 1× or 0.5×, and at most `sizes.face.rebakesPerFrame` blocks
+redraw per frame so a camera sweep never hitches. Texture anisotropy comes from
+`renderer.capabilities.getMaxAnisotropy()` (`theme.js → gpu`). The tokens every component reads:
 
 | token | dark | light | use |
 | --- | --- | --- | --- |

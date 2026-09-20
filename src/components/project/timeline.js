@@ -101,7 +101,7 @@ const body3d = {
       if (sel?.kind === 'task' && sel.id === t.id) { bar.material.emissive = new THREE.Color(states.selected); bar.material.emissiveIntensity = 0.5; }
       if (t.overdue) { const edge = new THREE.Mesh(node._helpers().panelGeometry(len + 0.08, barH + 0.08, 0.02, { radius: barH / 2 + 0.04, bevel: 0, curveSegments: 8 }), new THREE.MeshBasicMaterial({ color: PRIORITY_COLOURS.urgent, side: THREE.BackSide })); edge.position.set((x0 + x1) / 2, y, 0.16); node.children3d.add(edge); }
       // face with the title (only when the bar is long enough to read)
-      const plane = makeCanvasPlane(Math.max(0.1, len - barH), barH - 0.04, { emissive: 0.5 });
+      const plane = makeCanvasPlane(Math.max(0.1, len - barH), barH - 0.04, { emissive: 0.5, owner: node });
       plane.mesh.position.set((x0 + x1) / 2, y, 0.215);
       plane.draw((g, w, h) => {
         g.clearRect(0, 0, w, h);

@@ -105,7 +105,7 @@ export default registry.register({
           state.on = !state.on; instance.emit('trigger', state.on); return true;
         case 'slider': {
           if (ev.type !== 'down' && ev.type !== 'drag' && ev.type !== 'up') return false;
-          const t = Math.min(1, Math.max(0, (ev.u - 30 / instance.face.canvas.width) / (1 - 60 / instance.face.canvas.width)));
+          const t = Math.min(1, Math.max(0, (ev.u - 30 / instance.face.cw) / (1 - 60 / instance.face.cw)));
           state.slider = +(params.min + (params.max - params.min) * t).toFixed(3);
           if (ev.type === 'up') instance.emit('trigger', state.slider);
           return true;

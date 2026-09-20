@@ -276,7 +276,7 @@ const body3d = {
         const group = new THREE.Group();
         group.position.set(cx, place.get(card.id), CARD_Z + CARD_D / 2 - i * 0.008);
         // one extruded card: the canvas is the front cap's texture (UVs map it exactly), the sides are plain
-        const plane = makeCanvasPlane(CARD_W, CARD_H, { emissive: 0.4 });
+        const plane = makeCanvasPlane(CARD_W, CARD_H, { emissive: 0.4, owner: node });
         const faceMat = new THREE.MeshPhysicalMaterial({ map: plane.texture, emissive: 0xffffff, emissiveMap: plane.texture, emissiveIntensity: 0.35, roughness: 0.55, clearcoat: 0.25, clearcoatRoughness: 0.4, envMapIntensity: 0.3, transparent: true, opacity: 1 });
         const sideMat = materials.panel(palette.pmCard, { transparent: true, opacity: 1 });
         const slab = new THREE.Mesh(panelGeometry(CARD_W, CARD_H, CARD_D, { radius: CARD_R, bevel: 0.012 }), [faceMat, sideMat]);

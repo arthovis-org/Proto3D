@@ -157,6 +157,10 @@ export function initTheme() {
 }
 initTheme();
 
+/** Renderer capabilities the texture code reads (set once by workspace.js). */
+export const gpu = { maxAnisotropy: 4 };
+export function setMaxAnisotropy(n) { gpu.maxAnisotropy = Math.max(1, Math.floor(n) || 1); }
+
 export const sizes = {
   /** Node footprints by size class: width and face height (0 = no face area). */
   nodeSize: { S: { width: 3.6, faceH: 0 }, M: { width: 4.6, faceH: 2.4 }, L: { width: 6.4, faceH: 3.6 }, XL: { width: 9, faceH: 4.6 } },
@@ -189,7 +193,14 @@ export const sizes = {
     laptop:  { w: 4.2, h: 2.8, d: 0.1, baseDepth: 3, radius: 0.1, bezel: 0.1 },
     monitor: { w: 5.4, h: 3.1, d: 0.12, standH: 1.2, radius: 0.1, bezel: 0.1 },
   },
-  face: { pxPerUnit: 120 },
+  /**
+   * Faces: renderers draw at `pxPerUnit` logical px per world unit; the backing store scales by a
+   * tier picked from how many device pixels the face covers (face-canvas.js, lod.js). `maxScale`
+   * and `maxSide` cap the bitmap, `hysteresis` is the margin before a tier flips, `rebakesPerFrame`
+   * limits redraws per frame, `nearBudget` = how many of the nearest on-screen faces may go above
+   * 2× / above 1× (the rest stay at 1× so a crowded close-up does not exhaust texture memory).
+   */
+  face: { pxPerUnit: 120, tiers: [0.5, 1, 1.5, 2, 3, 4], maxScale: 4, maxSide: 4096, hysteresis: 0.15, rebakesPerFrame: 3, nearBudget: [6, 16] },
   /** Selection / hover outline: how much larger the shell is than the body (thin = 0.04 per side). */
   outline: { grow: 0.08 },
   lod: { far: 110, hysteresis: 10 },
@@ -308,7 +319,7 @@ export function refreshLabel(mesh, text) {
   drawLabelCanvas(L.canvas, L.text || ' ', L.opts);
   const tex = new THREE.CanvasTexture(L.canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  tex.anisotropy = gpu.maxAnisotropy;
   tex.minFilter = THREE.LinearFilter;
   if (mesh.material.map) mesh.material.map.dispose();
   mesh.material.map = tex;

@@ -23,7 +23,7 @@ import { updateLOD } from './lod.js';
 import { serializeWorld, loadWorld, downloadJSON, pickJSONFile, AutoSave } from './serialize.js';
 import { examples, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
-import { portTypes, subtypes, states, hex, getTheme, toggleTheme, onThemeChange, refreshLabel } from './theme.js';
+import { portTypes, subtypes, states, sizes, hex, getTheme, setTheme, toggleTheme, onThemeChange, refreshLabel } from './theme.js';
 import { formatValue, typeInfo, subtypeInfo, kindOf, portTypeName, mismatchReason } from './core/types.js';
 import { describeLink } from './pm/relations.js';
 import { onBitmapReady } from './faces.js';
@@ -309,7 +309,7 @@ function frame() {
   world.detectMoves();
   world.nodes.forEach((b) => b.update(t, dt));
   world.groups.forEach((g) => g.update(dt));
-  updateLOD(world, ws.camera, dt);
+  updateLOD(world, ws.camera, dt, ws.renderer);
   world.connections.forEach((c) => c.update(dt));
   interaction.update(t, dt);
   overlays.update();
@@ -325,7 +325,7 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, fileMenu, registry, autosave, examples, THREE, overlays, tour, nav, icons,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, fileMenu, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },
   ai: { vault, jobs, spend, store, providers: providerRegistry, providerStatus, connections, modelBrowser, jobsTray },

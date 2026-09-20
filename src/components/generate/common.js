@@ -359,7 +359,7 @@ export function drawMediaBody(g, x, y, w, h, rec, inst, running, kind, time) {
 export function facePointer(ctx, ev, kind) {
   if (ev.type !== 'click') return false;
   const inst = ctx.instance;
-  const cw = inst.face.canvas.width, ch = inst.face.canvas.height;
+  const cw = inst.face.cw, ch = inst.face.ch;   // logical face px (the bitmap may be scaled)
   const px = ev.u * cw, py = ev.v * ch;
   const hit = (inst._hits || []).find((r) => px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h);
   if (!hit) return false;

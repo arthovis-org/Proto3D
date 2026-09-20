@@ -26,6 +26,7 @@ import { portsVisibleFor, onWiringChange } from './wiring.js';
 import { defaultParams, clone } from './core/component.js';
 import { formatValue } from './core/types.js';
 import { clear as clearFace } from './faces.js';
+import { createSurface, baseFaceScale, fitTier } from './face-canvas.js';
 
 let nextUid = 1;
 export const genUid = () => `b${(nextUid++).toString(36)}${Date.now().toString(36).slice(-3)}`;
@@ -270,6 +271,7 @@ export class Block3D extends THREE.Group {
     this.group = null;       // Group3D membership
     this.lod = 0;            // 0 = full detail, 1 = far
     this.lodBlend = 0;       // animated 0..1
+    this.faceScale = baseFaceScale();   // backing-store tier of every canvas surface on this block (face-canvas.js)
     this.face = null;
     this.faceDirty = true;
     this.subSelection = null;  // { kind, id } — a child pickable (card, column, item) the panel edits
@@ -385,18 +387,34 @@ export class Block3D extends THREE.Group {
   /* ---------- face: a live canvas on the body ---------- */
   /** Create the face canvas + plane; the subclass positions the returned mesh. */
   _initFace(w, h, { emissive = 0.55, mesh = true, transparent = true } = {}) {
-    const px = sizes.face.pxPerUnit;
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(w * px); canvas.height = Math.round(h * px);
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = 4;
-    const g = canvas.getContext('2d');
-    clearFace(g, canvas.width, canvas.height);
-    const plane = mesh ? new THREE.Mesh(new THREE.PlaneGeometry(w, h), materials.face(texture, { emissive, transparent })) : null;
+    // logical size cw × ch (120 px / unit) is what renderers and hit-testing use; the bitmap is cw × scale
+    const surface = createSurface(w, h, { scale: this.faceScale });
+    clearFace(surface.g, surface.cw, surface.ch);
+    const plane = mesh ? new THREE.Mesh(new THREE.PlaneGeometry(w, h), materials.face(surface.texture, { emissive, transparent })) : null;
     if (plane) { plane.userData.face = this; plane.userData.block = this; plane.renderOrder = 1; }
-    this.face = { canvas, texture, g, mesh: plane, w, h, lastDrawAt: -1e9 };
+    this.face = Object.assign(surface, { mesh: plane, lastDrawAt: -1e9 });
+    surface.redraw = () => this.renderFace();
     return plane;
+  }
+  /**
+   * Backing-store resolution (called by the LOD pass). `ratio` = device pixels one logical face
+   * pixel covers at this block's distance (1 = drawn at exactly its 120 px / unit density);
+   * `allowance` caps the tier. On a tier change every canvas surface on the block (face, screen,
+   * board cards, timeline bars) is resized and repainted once. Returns true when it re-baked.
+   */
+  fitFaceResolution(ratio, allowance) {
+    const want = fitTier(this.faceScale, ratio, allowance);
+    if (want === this.faceScale) return false;
+    this.faceScale = want;
+    const seen = new Set();
+    this.traverse((o) => {
+      if (!o.material) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        const s = m.map?.userData?.surface || m.emissiveMap?.userData?.surface;
+        if (s && !seen.has(s)) { seen.add(s); if (s.setScale(want)) s.redraw?.(); }
+      }
+    });
+    return true;
   }
   /** Engine hook after each evaluation: refresh footer + face when the content changed. */
   afterEvaluate(ctx, t) {
@@ -420,9 +438,9 @@ export class Block3D extends THREE.Group {
   renderFace(ctx, t = this.rt.ctx?.time ?? 0) {
     const F = this.def.face;
     if (!F || !this.face) return;
-    const { canvas, g, texture } = this.face;
-    try { F.render(g, canvas.width, canvas.height, this._faceCtx(ctx || this.rt.ctx || {})); }
-    catch (e) { clearFace(g, canvas.width, canvas.height); this.rt.error = e.message; }
+    const { g, texture, cw, ch } = this.face;
+    try { F.render(g, cw, ch, this._faceCtx(ctx || this.rt.ctx || {})); }
+    catch (e) { clearFace(g, cw, ch); this.rt.error = e.message; }
     texture.needsUpdate = true;
     this.face.lastDrawAt = t;
     this.faceDirty = false;

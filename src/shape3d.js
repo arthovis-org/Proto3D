@@ -27,18 +27,26 @@ import { palette, categories, states, sizes, materials, makeLabel, setLabelText,
 import { panelGeometry, slabGeometry, outlineGeometry } from './geometry.js';
 import { Block3D } from './block3d.js';
 import { clear as clearFace } from './faces.js';
+import { createSurface } from './face-canvas.js';
 
-/** A canvas-backed plane (card face, bar face, flag face). `draw(g, w, h)` paints it. */
-export function makeCanvasPlane(w, h, { emissive = 0.55, px = sizes.face.pxPerUnit } = {}) {
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(2, Math.round(w * px)); canvas.height = Math.max(2, Math.round(h * px));
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4;
-  const g = canvas.getContext('2d');
-  clearFace(g, canvas.width, canvas.height, 'rgba(0,0,0,0)');
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), materials.face(texture, { emissive, transparent: true }));   // alpha from the canvas: transparent pixels show the body behind
+/**
+ * A canvas-backed plane (card face, bar face, flag face). `draw(g, w, h)` paints it in logical px
+ * (`cw × ch`, 120 px / unit); the painter is kept so the plane can repaint itself when its owner's
+ * resolution tier changes (Block3D.fitFaceResolution). Pass `owner` (the block) so a plane built in
+ * `refresh` starts at the block's current tier.
+ */
+export function makeCanvasPlane(w, h, { emissive = 0.55, px = sizes.face.pxPerUnit, owner = null } = {}) {
+  const surface = createSurface(w, h, { px, scale: owner?.faceScale });
+  clearFace(surface.g, surface.cw, surface.ch, 'rgba(0,0,0,0)');
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), materials.face(surface.texture, { emissive, transparent: true }));   // alpha from the canvas: transparent pixels show the body behind
   mesh.renderOrder = 1;
-  const plane = { mesh, canvas, g, texture, w, h, draw(fn) { fn(g, canvas.width, canvas.height); texture.needsUpdate = true; }, dispose() { texture.dispose(); mesh.geometry.dispose(); mesh.material.dispose(); } };
+  let painter = null;
+  const plane = Object.assign(surface, {
+    mesh,
+    draw(fn) { painter = fn; fn(surface.g, surface.cw, surface.ch); surface.texture.needsUpdate = true; },
+    dispose() { surface.texture.dispose(); mesh.geometry.dispose(); mesh.material.dispose(); },
+  });
+  surface.redraw = () => { if (painter) plane.draw(painter); };
   return plane;
 }
 export function disposeObject(obj) {
@@ -114,7 +122,7 @@ export class Shape3D extends Block3D {
       },
       /** A child pickable: clicks / drags reach body3d.onSubPointer with `sub`. */
       sub(mesh, sub, parent = node.children3d) { mesh.userData.sub = { block: node, ...sub }; node.subs.push(mesh); parent.add(mesh); return mesh; },
-      canvasPlane: makeCanvasPlane,
+      canvasPlane: (w, h, opts = {}) => makeCanvasPlane(w, h, { owner: node, ...opts }),
       /** The component's live face (def.face) placed by the body. */
       face(w, h, pos = [0, 0, node.depth / 2 + 0.012], opts = {}) { const plane = node._initFace(w, h, opts); plane.position.set(...pos); node.add(plane); return plane; },
       rim(geo) { node.rim = new THREE.Mesh(geo, materials.rim()); node.rim.visible = false; node.add(node.rim); return node.rim; },

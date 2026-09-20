@@ -3,7 +3,7 @@
 // changes and recolors background, fog, lights, environment and the floor shader.
 // `ws.camera` is a getter: the Navigator may swap in an orthographic camera (Numpad 5).
 import * as THREE from 'three';
-import { palette, onThemeChange } from './theme.js';
+import { palette, onThemeChange, setMaxAnisotropy } from './theme.js';
 import { Navigator } from './controls/navigation.js';
 
 // Home view: ~36 deg elevation, framed so the demo graph fills most of the viewport
@@ -16,6 +16,7 @@ export function createWorkspace(container) {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.2;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  setMaxAnisotropy(renderer.capabilities.getMaxAnisotropy());   // canvas faces and labels read it
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();

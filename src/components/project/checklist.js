@@ -55,7 +55,7 @@ export default registry.register({
     onPointer({ params, instance }, ev) {
       if (ev.type !== 'click') return false;
       const items = itemsOf(params);
-      const h = instance.face.canvas.height;
+      const h = instance.face.ch;   // logical face px (the bitmap may be scaled)
       const top = PAD + 40;
       const rows = Math.max(1, Math.floor((h - top - 12) / ROW));
       const y = ev.v * h;
