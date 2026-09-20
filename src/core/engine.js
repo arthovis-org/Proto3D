@@ -29,9 +29,20 @@ export class Engine {
     this.pending.push({ port, payload });
     return true;
   }
-  _pulse(port, payload) {
+  /**
+   * Pulse an event *input* from outside the graph (the mini toolbar's Run on an Action): the node
+   * sees the pulse on the next pass exactly as if an upstream output had fired, once.
+   */
+  trigger(instance, key, payload) {
+    const port = instance.getPort?.(key, 'in');
+    if (!port || port.type !== 'event') return false;
+    this.pending.push({ port, payload, external: true });
+    return true;
+  }
+  _pulse(port, payload, external = false) {
     const p = makePulse(this.time, payload);
     p.frame = this.frame;
+    if (external) p.external = true;
     port.pulse = p;
     port.lastPulseAt = this.time;
     port.pulses = (port.pulses || 0) + 1;
@@ -88,7 +99,7 @@ export class Engine {
       const taken = new Set(), rest = [];
       for (const e of this.pending) {
         if (taken.has(e.port)) { rest.push(e); continue; }
-        taken.add(e.port); this._pulse(e.port, e.payload);
+        taken.add(e.port); this._pulse(e.port, e.payload, e.external);
       }
       this.pending = rest;
     }
@@ -108,6 +119,7 @@ export class Engine {
         if (port.type === 'event') {
           // an event input fires when any upstream output pulsed since it was last seen
           const pulses = conns.map((c) => c.from.pulse).filter(Boolean);
+          if (port.pulse?.external && port.pulse.frame === this.frame) pulses.push(port.pulse);   // engine.trigger()
           conns.forEach((c) => { c.value = c.from.pulse || c.from.value; });
           if (pulses.length) { value = pulses.reduce((a, b) => (b.n > a.n ? b : a)); pulsed.push([port, value]); }
           port.pulse = value || null;

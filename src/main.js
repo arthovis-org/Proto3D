@@ -1,9 +1,10 @@
 // main.js — boots the platform: theme, workspace, registry (all core components), world model,
 // engine, history, selection, gizmo, interaction, guidance overlays, properties panel, Add
 // toolbar, the menu bar (File · Edit · View · Add · Help) with its quick toggles at the right end,
-// the wiring switch, navigation presets, first-run tour, LOD, the AI layer (providers, key vault,
-// jobs) with its Connections page, model browser and job tray, the performance stats, autosave,
-// recent projects, the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
+// the mini toolbar above the selection, the command palette (Ctrl+K), the wiring switch,
+// navigation presets, first-run tour, LOD, the AI layer (providers, key vault, jobs) with its
+// Connections page, model browser and job tray, the performance stats, autosave, recent projects,
+// the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
 import { createWorkspace } from './workspace.js';
 import { registry } from './components/index.js';
@@ -24,6 +25,8 @@ import { serializeWorld, serializeSelection, importCommand, loadWorld, downloadJ
 import { MenuBar, shortcutText } from './ui/menubar.js';
 import { ShortcutsSheet, AboutDialog, REPO_URL } from './ui/help-dialogs.js';
 import { StatsOverlay } from './ui/stats.js';
+import { MiniToolbar } from './ui/mini-toolbar.js';
+import { CommandPalette, menuCommands } from './ui/command-palette.js';
 import { CableChips } from './cable-chips.js';
 import { examples, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
@@ -215,7 +218,8 @@ setUIHooks({
 const shortcutsSheet = new ShortcutsSheet();
 const aboutDialog = new AboutDialog();
 const stats = new StatsOverlay({ el: $('stats'), ws, world });
-const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen;
+let palette = null;   // the command palette, built after the menu bar (it reads the menu model)
+const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen || !!palette?.isOpen;
 // with an OpenRouter key present, fetch its model list once so estimates and the panel price are live
 vault.ready.then(() => { if (providerStatus('openrouter') === 'connected') providerRegistry.get('openrouter').listModels({ key: vault.keyFor('openrouter'), proxy: vault.proxyFor('openrouter') }).then(() => panel.refresh()).catch(() => {}); });
 
@@ -299,6 +303,8 @@ tool('btn-frame', 'frame', 'Frame everything (Home) · F frames the selection', 
 toolSep();
 tool('btn-help', 'help', 'Help & legend (H) · the Help menu has the tour and the shortcuts', 'Help & legend');
 tool('btn-panel', 'sidebar', 'Show / hide the properties panel (N or Tab)', 'Properties panel');
+toolSep();
+tool('btn-palette', 'search', 'Command palette (Ctrl+K) · every command, component and block by name', 'Command palette');
 const connectionsHint = () => { const live = providerRegistry.all().filter((p) => p.needsKey && providerStatus(p.id) === 'connected').length; return live ? `${live} provider${live > 1 ? 's' : ''} connected` : 'AI providers and API keys'; };
 function syncToolbar() {
   tb['btn-flow'].classList.toggle('off', !isFlowEnabled());
@@ -327,6 +333,7 @@ tb['btn-frame'].addEventListener('click', () => frameAll());
 tb['btn-help'].addEventListener('click', () => toggleHelp());
 tb['btn-undo'].addEventListener('click', () => { history.undo(); selection.prune(world); });
 tb['btn-redo'].addEventListener('click', () => { history.redo(); selection.prune(world); });
+tb['btn-palette'].addEventListener('click', () => palette.toggle());
 
 function setGizmo(on) {
   gizmo.setEnabled(on);
@@ -382,7 +389,7 @@ syncToolbar();
 /* ---- Menu bar: File · Edit · View · Add · Help. Every item runs the same code as its button, key or panel control ---- */
 const sc = shortcutText;
 const toggleRail = () => { document.body.classList.toggle('rail-hidden'); ws.resize(); };
-const setPortsOnSelection = (v) => { selection.nodes.forEach((n) => n.setShowPorts(v)); panel.refresh(); };
+const setPortsOnSelection = (v) => { if (selection.nodes.length) history.execute(cmd.setShowPorts(world, selection.nodes, v)); panel.refresh(); };
 const timeAgo = (iso) => { const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
 const undoLabel = (stack, verb) => { const c = stack[stack.length - 1]; return c?.label ? `${verb} ${c.label}` : verb; };
 const menubar = new MenuBar({
@@ -462,6 +469,7 @@ const menubar = new MenuBar({
       ...registry.categories().map((c) => ({ label: c.label, icon: icons[c.id] || icons.node, items: () => c.components.map((def) => ({ label: def.label, hint: def.description, icon: def.icon || icons.node, run: () => addComponent(def, null) })) })),
     ] },
     { id: 'help', label: 'Help', items: () => [
+      { label: 'Command palette…', hint: 'every command, component and block by name', shortcut: sc('Ctrl+K'), run: () => palette.open() },
       { label: 'Take the tour', run: () => tour.start() },
       { label: 'Keyboard shortcuts…', shortcut: sc('Shift+?'), run: () => shortcutsSheet.open() },
       { label: 'Help & legend', shortcut: 'H', checked: $('help').open && !document.body.classList.contains('panel-hidden'), run: () => toggleHelp() },
@@ -472,6 +480,31 @@ const menubar = new MenuBar({
       { label: 'About Proto3D', run: () => aboutDialog.open() },
     ] },
   ],
+});
+
+/* ---- Command palette (Ctrl+K): the menu model, "Add <component>" and "Go to <block>", ranked by fuzzy match ---- */
+const goTo = (n) => { selection.set([n]); ws.frameBlocks([n], { fill: 0.6, insetLeft: insetLeft() }); };
+palette = new CommandPalette({
+  canvas: ws.renderer.domElement,
+  sources: () => [
+    ...menuCommands(menubar.menus, { skip: (menuId, label, it) => (menuId === 'add' && !!it.items) || label === 'No recent projects' || label === 'Command palette…' }),
+    ...registry.all().map((def) => ({ id: `add:${def.id}`, kind: 'add', group: 'Add', label: `Add ${def.label}`, hint: `${registry.category(def.category).label} · ${def.description}`, icon: def.icon || icons.node, run: () => addComponent(def, null) })),
+    ...world.nodes.map((n) => ({ id: `goto:${n.uid}`, kind: 'goto', group: 'Go to', label: `Go to ${n.title}`, hint: `${n.def.label}${n.group ? ` · in ${n.group.title}` : ''}`, icon: n.def.icon || icons.node, run: () => goTo(n) })),
+  ],
+  onOpenChange: (open) => { tb['btn-palette'].classList.toggle('on', open); tb['btn-palette'].setAttribute('aria-pressed', String(open)); },
+});
+window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+    if (anyModalOpen() && !palette.isOpen) return;   // another modal owns the keyboard
+    e.preventDefault(); e.stopPropagation(); palette.toggle();
+  }
+}, true);
+
+/* ---- Mini toolbar: floats above the selection, every action is the same code path as its key or menu item ---- */
+const miniBar = new MiniToolbar({
+  el: $('mini-toolbar'), ws, world, engine, selection, interaction, history, gizmo,
+  avoid: () => [$('bottom-right'), $('selection')],
+  onMore: () => { togglePanel(true); const body = $('panel'); body.scrollTop = 0; const f = body.querySelector('#prop-name, #panel-body input, #panel-body select, #panel-body textarea'); f?.focus({ preventScroll: true }); },
 });
 
 /* ---- First scene: the autosave if there is one, otherwise the Showcase ---- */
@@ -527,6 +560,7 @@ function frame() {
   chips.update(world, ws.camera, { hovered: hoveredConnection, anySelected: selection.size > 0, time: engine.time, dt, renderer: ws.renderer });
   interaction.update(t, dt);
   overlays.update();
+  miniBar.update();
   jobsTray.update();
   tour.update(dt);
   updateConnectionLabel();
@@ -540,7 +574,7 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, stats, chips, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, palette, stats, chips, shortcutsSheet, aboutDialog, recent, project, clipboard, registry, autosave, examples, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd,
   newProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },

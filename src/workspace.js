@@ -228,6 +228,8 @@ export function createWorkspace(container) {
 
   return {
     renderer, scene, controls, resize, resetCamera, applyTheme, setGridVisible, isGridVisible, HOME, flyTo, cancelFlight, updateFlight, frameBlocks, updateFog, onCameraSwap, buildEnvironment,
+    /** True while a camera flight (F, Home, Go to) is still animating. */
+    inFlight: () => !!flight,
     /** The active camera (perspective, or orthographic after Numpad 5). */
     get camera() { return controls.camera; },
     get perspective() { return controls.perspective; },

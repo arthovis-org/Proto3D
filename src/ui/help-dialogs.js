@@ -18,6 +18,8 @@ export const GLOBAL_SHORTCUTS = [
   { group: 'Edit', rows: [['Undo', 'Ctrl+Z'], ['Redo', 'Ctrl+Shift+Z / Ctrl+Y'], ['Cut', 'Ctrl+X'], ['Copy', 'Ctrl+C'], ['Paste', 'Ctrl+V'], ['Duplicate', 'Ctrl+D'], ['Delete', 'Delete / Backspace'], ['Select all', 'Ctrl+A'], ['Deselect, cancel', 'Esc'], ['Group', 'Ctrl+G'], ['Ungroup', 'Ctrl+Shift+G'], ['Collapse / expand group', 'C']] },
   { group: 'View', rows: [['Frame selection', 'F'], ['Frame all', 'Home'], ['Wiring (ports and cables)', 'P'], ['Light / dark theme', 'T'], ['Properties panel', 'N / Tab'], ['Gizmo', 'G'], ['Gizmo move · rotate · scale', 'W / E / R'], ['Performance stats', 'I'], ['Help & legend', 'H'], ['Keyboard shortcuts', 'Shift+?']] },
   { group: 'Add', rows: [['Search components', 'Shift+A']] },
+  { group: 'Command palette', rows: [['Open / close', 'Ctrl+K'], ['Move · run · close', '↑ / ↓ · Enter · Esc'], ['Filter: All · Commands · Add · Go to', 'Tab / Shift+Tab']] },
+  { group: 'Mini toolbar (above the selection)', rows: [['Duplicate', 'Ctrl+D'], ['Delete', 'Delete'], ['Collapse / expand group', 'C'], ['Frame', 'F'], ['Properties panel', 'N']] },
 ];
 
 class Dialog {

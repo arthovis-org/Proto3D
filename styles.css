@@ -261,6 +261,63 @@ ul.ports .pcount, ul.ports .pdir { font-size: 11px; }
 
 /* Marquee selection rectangle */
 #marquee { position: fixed; z-index: 3; pointer-events: none; border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 4px; }
+#viewport canvas:focus { outline: none; }
+
+/* Mini toolbar: floats above the selection (ui/mini-toolbar.js), 32 px tall, fades in over 120 ms once the camera and the pointer are still */
+#mini-toolbar {
+  position: fixed; left: 0; top: 0; z-index: 4; height: 32px; padding: 3px; display: inline-flex; align-items: center; gap: 1px;
+  background: var(--panel-solid); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow);
+  opacity: 0; transform-origin: center; transition: opacity 0.12s ease; user-select: none; white-space: nowrap;
+}
+#mini-toolbar.show { opacity: 1; }
+#mini-toolbar::after { content: ""; position: absolute; left: 50%; bottom: -5px; width: 8px; height: 8px; margin-left: -4px; background: var(--panel-solid); border-right: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong); transform: rotate(45deg); }
+#mini-toolbar[data-placement="below"]::after { bottom: auto; top: -5px; transform: rotate(-135deg); }
+.mtb-btn { height: 24px; min-width: 26px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 0; border-radius: 6px; background: none; color: var(--text); }
+.mtb-btn svg { width: 15px; height: 15px; }
+.mtb-btn:hover { background: var(--field-hover); }
+.mtb-btn.on { color: var(--accent); background: var(--accent-soft); }
+.mtb-btn.off { color: var(--danger); }
+.mtb-btn.danger:hover { color: var(--danger); }
+.mtb-btn.accent { color: var(--accent); }
+.mtb-btn.accent:hover { background: var(--accent-soft); }
+.mtb-btn .mtb-text { font-size: 11.5px; font-weight: 600; letter-spacing: 0.01em; }
+.mtb-btn[data-action="more"] { margin-left: 1px; }
+.mtb-btn[data-action="delete"] + .mtb-btn, .mtb-btn[data-action="frame"] { position: relative; }
+.mtb-btn[data-action="delete"] + .mtb-btn::before, .mtb-btn[data-action="frame"]::before { content: ""; position: absolute; left: -1px; top: 5px; bottom: 5px; width: 1px; background: var(--border-strong); }
+
+/* Command palette (ui/command-palette.js): the properties-panel language — dim captions, soft fields, one accent */
+.cmdk-backdrop { align-items: flex-start; padding-top: min(14vh, 120px); }
+.cmdk { width: min(640px, 100%); max-height: min(560px, calc(100vh - 160px)); display: flex; flex-direction: column; background: var(--panel-solid); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; font-size: 12.5px; }
+.cmdk-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.cmdk-ic { color: var(--dim); display: grid; }
+.cmdk-ic svg { width: 18px; height: 18px; }
+.cmdk-input { flex: 1; min-width: 0; background: none; border: 0; padding: 4px 0; font-size: 15px; font-weight: 500; color: var(--text); cursor: text; }
+.cmdk-input:focus, .cmdk-input:focus-visible { outline: none; box-shadow: none; }
+.cmdk-input::placeholder { color: var(--dim); font-weight: 400; }
+.cmdk-esc { color: var(--dim); }
+.cmdk-filters { display: flex; align-items: center; gap: 4px; padding: 8px 12px 6px; }
+.cmdk-filters button { padding: 3px 9px; border-radius: 999px; background: none; color: var(--dim); font-size: 11.5px; font-weight: 500; }
+.cmdk-filters button:hover { background: var(--field-hover); color: var(--text); }
+.cmdk-filters button.on { background: var(--accent-soft); color: var(--accent); }
+.cmdk-hint { margin-left: auto; color: var(--dim); font-size: 10.5px; }
+.cmdk-list { overflow-y: auto; padding: 4px 8px 8px; flex: 1; min-height: 0; }
+.cmdk-group { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim); padding: 10px 8px 4px; font-weight: 600; }
+.cmdk-row { display: grid; grid-template-columns: 24px 1fr auto auto; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: default; }
+.cmdk-row.active { background: var(--field-hover); }
+.cmdk-row.disabled { opacity: 0.4; }
+.cmdk-row-ic { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
+.cmdk-row-ic svg { width: 14px; height: 14px; }
+.cmdk-row-label { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.cmdk-row-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* the title is one line: <mark> fragments stay inline inside it */
+.cmdk-row-label small { color: var(--dim); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdk-row-title mark { display: inline; background: none; color: var(--accent); font-weight: 600; }
+.cmdk-row-check { color: var(--accent); display: grid; }
+.cmdk-row-check svg { width: 13px; height: 13px; }
+.cmdk-row kbd { color: var(--dim); background: none; border: 0; font-size: 11px; padding: 0; }
+.cmdk-empty { padding: 28px 12px; color: var(--text); text-align: center; font-weight: 500; }
+.cmdk-empty small { display: block; margin-top: 4px; color: var(--dim); font-weight: 400; }
+.cmdk-foot { display: flex; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--border); color: var(--dim); font-size: 10.5px; }
+.cmdk-foot kbd { margin-right: 3px; }
 
 /* ---- Project-management editors in the panel (cards, columns, tasks, items) ---- */
 .row textarea.plain { font-family: inherit; font-size: 12px; min-height: 48px; }

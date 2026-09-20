@@ -165,7 +165,7 @@ export class Panel {
       btn.title = o === null ? `Ports follow the Wiring switch (${b.portsVisible ? 'shown' : 'hidden'}) · click to always show them on this block` : o ? 'Ports always shown on this block · click to always hide' : 'Ports always hidden on this block · click to follow the Wiring switch';
       btn.setAttribute('aria-label', 'Ports visibility');
     };
-    btn.addEventListener('click', () => { b.setShowPorts(b.showPorts === null ? true : b.showPorts === true ? false : null); upd(); });
+    btn.addEventListener('click', () => { this.history.execute(cmd.setShowPorts(this.world, [b], b.showPorts === null ? true : b.showPorts === true ? false : null)); upd(); });
     upd(); this.live.push(upd);
     box.appendChild(btn);
     return box;

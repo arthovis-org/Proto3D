@@ -81,6 +81,18 @@ export function setEnabled(world, node, on) {
   return { label: on ? 'Enable' : 'Disable', do: () => { node.enabled = on; world.changed('enable'); }, undo: () => { node.enabled = prev; world.changed('enable'); } };
 }
 
+/** Per-block override of the Wiring switch for a set of blocks: true (always show), false (always hide) or null (follow). */
+export function setShowPorts(world, nodes, value) {
+  const list = [...new Set(nodes)];
+  const prev = list.map((n) => n.showPorts);
+  const v = value === true || value === false ? value : null;
+  return {
+    label: v === null ? 'Ports follow wiring' : v ? 'Show ports' : 'Hide ports',
+    do: () => list.forEach((n) => n.setShowPorts(v)),
+    undo: () => list.forEach((n, i) => n.setShowPorts(prev[i])),
+  };
+}
+
 export function addGroup(world, group) {
   return { label: 'Group', do: () => world.addGroup(group), undo: () => world.removeGroup(group) };
 }

@@ -9,6 +9,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ UI          ui/menubar.js (menus + quick toggles)  ui/toolbar-left.js  panel.js  interaction.js │
+│             ui/mini-toolbar.js (above the selection)  ui/command-palette.js (Ctrl+K)          │
 │             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
 │             controls/presets.js + controls/navigation.js (camera + bindings) │
 │             main.js (boot + render loop)                                     │
@@ -144,7 +145,10 @@ same way.
 
 ## 5. Engine (`core/engine.js`)
 
-`Engine.tick(dt)` runs once per frame:
+`Engine.tick(dt)` runs once per frame (`engine.emit(instance, key, payload)` queues a pulse on
+an **output**; `engine.trigger(instance, key, payload)` queues one on an event **input** — the
+mini toolbar's Run on an Action or a Flow Step — which the node sees on the next pass exactly as
+if an upstream output had fired, once):
 
 1. **Validity + inbound map.** Each connection gets `valid` from `compatible`; invalid links flag
    both owner nodes (`rt.hasInvalid`) and carry `undefined`.
@@ -181,8 +185,10 @@ re-route). Undoable behaviour lives one layer up.
 ## 7. Commands and history (`core/commands.js`, `core/history.js`)
 
 Every edit is a `{ label, do(), undo() }`: `addNode, removeNodes, connect, disconnect, reroute,
-transform, setParam, setTitle, setEnabled, addGroup, removeGroup, setCollapsed, setGroupTitle,
-duplicate` and `composite`. `disconnect.do` tolerates a link the interaction layer already lifted
+transform, setParam, setTitle, setEnabled, setShowPorts, addGroup, removeGroup, setCollapsed,
+setGroupTitle, duplicate` and `composite`. `setShowPorts(world, nodes, true | false | null)` is
+the per-block ports override (§7c) — the panel eye, *View → Ports on selection* and the mini
+toolbar all go through it, so it undoes. `disconnect.do` tolerates a link the interaction layer already lifted
 off the world (a cable end being dragged); `reroute(world, conn, from, to)` removes `conn` (if
 still present) and creates the new link, its undo puts the original object back. `History.execute` pushes; `executeCoalesced(key, cmd)` merges rapid edits with
 the same key (typing in a param field, dragging a transform field). `undo / redo` are bound to
@@ -233,7 +239,8 @@ kept for add-ons).
 (`serializeWorld` writes `wiring`, `loadWorld` applies it). Propagation:
 
 - `Block3D` subscribes in its constructor and keeps `showPorts: true | false | null` (the
-  per-block override, set from the eye icon in the panel header through `setShowPorts`, saved as
+  per-block override, set from the eye icon in the panel header, the mini toolbar's Ports button
+  or *View → Ports on selection*, always through `cmd.setShowPorts` → `setShowPorts`, saved as
   `showPorts` in the node record). `portsVisible` = override ?? global. `applyWiring()` sets
   `visible` on every port group and port label (tracked in `wiringLabels` so `_applyLOD` never
   re-shows them) and calls `_onWiringChange()` once when the state flips. **No body changes size
@@ -580,7 +587,7 @@ properties panel (all three start at `--menubar-h`, so nothing overlaps and the 
 the whole height under the bar; there is no floating toolbar). The toggles are icon buttons with
 tooltips built in `main.js` and handed to `MenuBar` as `tools` (appended after a flexible gap):
 undo · redo | wiring (`#btn-wiring`) · flow animation · gizmo | theme · frame all | help & legend
-· properties panel. `syncToolbar()` keeps their `on` / `off` / disabled / `aria-pressed` state
+· properties panel | command palette (`#btn-palette`, §9d). `syncToolbar()` keeps their `on` / `off` / disabled / `aria-pressed` state
 current (history, wiring, theme, gizmo, panel and help changes all call it); Connections lives in
 the File and View menus. `MenuBar` is presentation and keyboard model only: `main.js` hands it
 the menus as data, `[{ id, label, items: () => Item[] }]`, and **every item calls the same
@@ -614,11 +621,81 @@ What the menus add beyond the older controls, all in `main.js` and `serialize.js
   Paste, `Ctrl+V` through the `paste` event so the system clipboard can carry a document between
   tabs). *Export → Screenshot* renders once more and reads the canvas as a PNG.
 - **Shortcuts** the menus bind: `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+O`, `Ctrl+X` / `Ctrl+C`
-  (with a selection), `Shift+?` for the shortcut sheet, `I` for the performance stats.
+  (with a selection), `Shift+?` for the shortcut sheet, `I` for the performance stats, `Ctrl+K`
+  for the command palette (§9d; a capture-phase listener, so it also works from a panel field).
 - **Help pages** (`ui/help-dialogs.js`, on the Connections modal shell): the keyboard shortcut
   sheet (fixed keys from `GLOBAL_SHORTCUTS` plus the active preset's `nav.sheet()`) and About.
 
-## 9c. Performance stats (`ui/stats.js`)
+## 9c. Mini toolbar (`ui/mini-toolbar.js`)
+
+A 32 px floating toolbar in screen space (`#mini-toolbar`, an HTML overlay — not a 3D object)
+above whatever is selected. Every frame `update()` takes the union of the selection's world AABBs
+(`Block3D.getAABB`; a group contributes its members, or its slab when collapsed), projects the
+eight corners (`projectBox`) and places the bar centred over the top edge with a 10 px gap,
+clamped 8 px inside the canvas, **flipped below** the box when there is no room above
+(`data-placement="below"` turns the caret), and pushed above (or to the left of) any element in
+`avoid()` — the job tray / stats column and the selection readout — so it never covers them; the
+menu bar and the panel are outside the canvas rect, so the clamp keeps clear of them by
+construction. It is **hidden** the moment anything is in flight — a block, cable, marquee, face or
+sub drag, `pendingDetach`, a hot or dragging gizmo, a camera drag (`controls.drag`), camera
+damping (`controls.moving`), a flight (`ws.inFlight()`), a component being placed — and fades in
+over 120 ms (`.show`, one frame after it is unhidden so the transition runs) when things are still.
+
+The buttons are rebuilt only when their **signature** changes (selection uids, each block's ports
+override and visibility, its group's collapsed state, what Run would do), so the per-frame cost
+is a string compare and a transform. `actions(items)` returns what applies to *every* selected
+item: Duplicate (`Ctrl+D`) and Delete (`Del`) always; **Ports** (blocks only) cycles the per-block
+override follow → show → hide, its icon mirroring the current state (wiring glyph = follow, eye =
+always shown, crossed eye = always hidden; a mixed selection shows follow); **Collapse / expand**
+(`C`) when every item is a group or sits in one; **Run** when every block has a run spec
+(`runSpecFor`): a Generate face's Run / Stop button (the toolbar sends the same face click the
+pointer would, at the centre of the `_hits` rect, so the label follows the job state), an Input
+in button / toggle mode (face click), a Flow Terminal in start mode (`onSubPointer` on the run
+disc), or any block with an event input named `run` / `trigger` / `in` / `start` (Action, Flow
+Step: `engine.trigger`); **Frame** (`F`); and **More** (`N`), which opens the properties panel and
+focuses its first field. Every edit runs the same function as its menu item or key
+(`interaction.duplicateSelection / deleteSelection / toggleCollapseSelection / focusSelection`,
+`cmd.setShowPorts`), so it lands in `History` and undoes. The bar swallows `pointerdown`, so a
+click on it never starts a marquee or clears the selection.
+
+## 9d. Command palette (`ui/command-palette.js`)
+
+`Ctrl+K` / `⌘K` (also *Help → Command palette…* and the search toggle at the right end of the menu
+bar) opens a centred overlay on the modal shell (`.modal-backdrop.cmdk-backdrop`, so `isTyping`
+keeps workspace shortcuts off while it is open; `anyModalOpen()` includes it). `sources()` is
+read each time it opens and merges three kinds of item, `{ id, kind, group, label, hint?,
+shortcut?, icon?, disabled?, checked?, run }`:
+
+- **Commands** — `menuCommands(menubar.menus)` flattens the menu model: every leaf with a `run`,
+  grouped under its menu label, submenus as *Parent › Child* (*Open recent › Launch plan*,
+  *Examples › Showcase*, *Navigation › Blender*, *Gizmo mode › Rotate*…). Items are produced by
+  the same `items()` functions the menus use, so *Undo Delete 2 items*, disabled and checked
+  states are current at open time; the Add menu's category submenus are skipped (the Add source
+  covers them with icons). Disabled commands render dimmed with `aria-disabled` and neither Enter
+  nor a click runs them. Ids are stable (`cmd:edit/Undo`) so recents survive label changes.
+- **Add** — `Add <label>` for every registry definition, running `addComponent(def, null)` — the
+  same placement as a toolbar click (the next free slot around the camera target).
+- **Go to** — `Go to <title>` for every block: `selection.set([n])` + `frameBlocks([n])`.
+
+**Ranking** (`scoreItem`): the query is split into words and every word must match; a word scores
+`fuzzy()` against the label (prefix 100 > word prefix 80 > substring 60 > subsequence ≤ 40, gaps
+and a late start cost points), the hint at 50 % and the group at 40 % (both without the
+subsequence rule — scattered letters in a description are not a match); the last eight run ids
+(`localStorage["proto3d.palette.v1"]`) add a recency boost (15 → 4.5). Ties break on shorter
+label, then alphabetically. With an empty query the recents lead as a *Recent* group, then every
+item in source order; the list is capped at 200 rows and grouped by headings. Matched characters
+are marked in the accent colour.
+
+**Keys** (`_onKey`, on the overlay): ↑ ↓ move (skipping disabled rows, wrapping), Enter runs,
+Esc closes, Tab / Shift+Tab cycle the source filter *All · Commands · Add · Go to* (chips under
+the field, also clickable), Home / End when the field is empty; everything else is typing and is
+stopped from reaching the workspace. A run closes the palette first, then calls `item.run()`
+(like a menu leaf) and records the id. **Focus**: `open()` remembers `document.activeElement`;
+`close()` gives focus back to a panel field that had it, otherwise to the canvas (given
+`tabindex="-1"` so it can take focus without joining the Tab order), so shortcuts work again at
+once. The menu bar's search toggle reflects `isOpen` through `onOpenChange`.
+
+## 9e. Performance stats (`ui/stats.js`)
 
 *View → Performance stats* (`I`, persisted in `localStorage["proto3d.stats.v1"]`) shows a
 readout at the bottom right, stacked under the job tray in `#bottom-right` (a flex column, so
