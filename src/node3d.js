@@ -18,6 +18,7 @@
 //   │ footer value             │
 //   └──────────────────────────┘
 import * as THREE from 'three';
+import { faceLayer } from './layers.js';
 import { palette, categories, states, sizes, materials, makeLabel, setLabelText, makeShadowBlob, alignLabelLeft, alignLabelRight } from './theme.js';
 import { panelGeometry, outlineGeometry } from './geometry.js';
 import { Block3D, alignPorts, splitAnchors } from './block3d.js';
@@ -128,7 +129,7 @@ export class Node3D extends Block3D {
     }
     this.body.position.y = centre; this.rim.position.y = centre;
     this.height = h; this.bodyOffsetY = centre;
-    const zf = d / 2 + 0.012;
+    const zf = d / 2 + faceLayer(1);   // the face and what sits on it are layered surfaces (layers.js)
     this.accent.position.set(0, top - 0.1, zf + 0.004);
     const titleY = top - n.header * 0.6;
     alignLabelLeft(this.titleLabel, -w / 2 + n.pad, titleY, zf + 0.03);

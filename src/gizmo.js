@@ -1,10 +1,11 @@
 // gizmo.js — TransformControls wrapper: translate / rotate / scale the primary selected block.
 // Off by default; when on, it attaches to the selection and is never visible without one.
 // Disables orbit while dragging and records one undoable transform per drag. Follows the snap
-// settings (plan.js): rotation in 15° steps, scale in 0.25 steps, translation on the grid pitch.
+// settings (plan.js): rotation in `snap.rotationStep` degree steps (15 by default), scale in
+// `snap.scaleStep` steps (0.25), translation on the grid pitch — re-read whenever a setting changes.
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import * as cmd from './core/commands.js';
-import { snap, ROTATION_STEP, SCALE_STEP } from './plan.js';
+import { snap } from './plan.js';
 
 export class Gizmo {
   constructor({ camera, renderer, scene, controls, world, history, onChange = () => {}, onModeChange = () => {} }) {
@@ -44,10 +45,10 @@ export class Gizmo {
     this.applySnap();
     snap.onChange(() => this.applySnap());
   }
-  /** Read the snap settings into the TransformControls steps (null = free). */
+  /** Read the snap settings into the TransformControls steps (null = free); the increments apply live. */
   applySnap() {
-    this.control.rotationSnap = snap.active('rotation') ? ROTATION_STEP : null;
-    this.control.scaleSnap = snap.active('scale') ? SCALE_STEP : null;
+    this.control.rotationSnap = snap.active('rotation') ? snap.rotationStepRad : null;
+    this.control.scaleSnap = snap.active('scale') ? snap.scaleStep : null;
     this.control.translationSnap = snap.active('grid') ? snap.gridSize : null;
   }
 

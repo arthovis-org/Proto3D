@@ -38,7 +38,7 @@ import { CommandPalette, menuCommands } from './ui/command-palette.js';
 import { CableChips } from './cable-chips.js';
 import { Guides } from './ui/guides.js';
 import { FieldEditor, glideSetting } from './ui/field-editor.js';
-import { isPlanOn, setPlan, snap, GRID_SIZES, SNAP_KINDS } from './plan.js';
+import { isPlanOn, setPlan, snap, GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale } from './plan.js';
 import { layoutPlan, layoutCommand, updateTweens, tweening } from './layout.js';
 import { examples, templates, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { StartPanel, startOnLaunch } from './ui/start-panel.js';
@@ -102,7 +102,7 @@ const panel = new Panel({
   el: $('panel'), world, engine, ws, gizmo, history, selection, interaction,
   flow: { isEnabled: isFlowEnabled, setEnabled: (v) => { setFlowEnabled(v); syncToolbar(); }, getSpeed: getFlowSpeed, setSpeed: setFlowSpeed },
   wiring: { isOn: isWiringOn, set: (v) => setWiring(v) },
-  plan: { isOn: isPlanOn, set: (v) => setPlanView(v), snap, setSnapOption: (k, v) => setSnapOption(k, v), toggleSnap: () => toggleSnap(), GRID_SIZES, SNAP_KINDS },
+  plan: { isOn: isPlanOn, set: (v) => setPlanView(v), snap, setSnapOption: (k, v) => setSnapOption(k, v), toggleSnap: () => toggleSnap(), GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
   onGizmoToggle: () => syncToolbar(),
 });
 
@@ -495,7 +495,16 @@ function toggleSnap() {
   snap.toggle();
   overlays.toast(snap.on ? `${snap.summary()} · Shift while dragging skips it` : 'Snap off · free movement', 1800);
 }
-/** One snap kind on / off (View → Snap ▸, the panel); `gridSize` takes a pitch. */
+/** View → Snap → Rotation step / Scale step → Custom…: one line, any number in range (plan.js clamps it). */
+async function askSnapStep(key) {
+  const rot = key === 'rotationStep';
+  const v = await promptDialog({ icon: icons.snap, title: rot ? 'Rotation step' : 'Scale step', text: rot ? 'Degrees per gizmo step while rotation snapping is on (0.5 to 180).' : 'Scale factor per gizmo step while scale snapping is on (0.01 to 4).', value: String(rot ? snap.rotationStep : snap.scaleStep), placeholder: rot ? '15' : '0.25', ok: 'Set' });
+  if (v === null) return;
+  const n = parseFloat(String(v).replace(',', '.'));
+  if (!Number.isFinite(n) || n <= 0) { overlays.toast('Enter a number above zero', 1600); return; }
+  setSnapOption(key, n);
+}
+/** One snap kind on / off (View → Snap ▸, the panel); `gridSize` takes a pitch, `rotationStep` degrees, `scaleStep` a factor. */
 function setSnapOption(key, v) {
   snap.setOption(key, v);
   overlays.toast(snap.summary(), 1400);
@@ -657,8 +666,16 @@ const menubar = new MenuBar({
         { label: 'Grid size', hint: `${snap.gridSize} units`, items: () => GRID_SIZES.map((g) => ({ label: `${g} unit${g === 1 ? '' : 's'}`, radio: true, checked: snap.gridSize === g, run: () => setSnapOption('gridSize', g) })) },
         { label: 'Objects', hint: 'edges and centres line up with neighbours', checked: snap.objects, run: () => setSnapOption('objects', !snap.objects) },
         { label: 'Ports', hint: 'a pin lands level with the pin it is wired to · cables run straight', checked: snap.ports, run: () => setSnapOption('ports', !snap.ports) },
-        { label: 'Rotation', hint: '15° steps on the gizmo', checked: snap.rotation, run: () => setSnapOption('rotation', !snap.rotation) },
-        { label: 'Scale', hint: '0.25 steps on the gizmo', checked: snap.scale, run: () => setSnapOption('scale', !snap.scale) },
+        { label: 'Rotation', hint: `${fmtDeg(snap.rotationStep)} steps on the gizmo`, checked: snap.rotation, run: () => setSnapOption('rotation', !snap.rotation) },
+        { label: 'Rotation step', hint: fmtDeg(snap.rotationStep), items: () => [
+          ...ROTATION_STEPS.map((d) => ({ label: fmtDeg(d), radio: true, checked: snap.rotationStep === d, run: () => setSnapOption('rotationStep', d) })),
+          { label: 'Custom…', hint: ROTATION_STEPS.includes(snap.rotationStep) ? 'any angle, 0.5° to 180°' : `now ${fmtDeg(snap.rotationStep)}`, radio: true, checked: !ROTATION_STEPS.includes(snap.rotationStep), run: () => askSnapStep('rotationStep') },
+        ] },
+        { label: 'Scale', hint: `${fmtScale(snap.scaleStep)} steps on the gizmo`, checked: snap.scale, run: () => setSnapOption('scale', !snap.scale) },
+        { label: 'Scale step', hint: fmtScale(snap.scaleStep), items: () => [
+          ...SCALE_STEPS.map((s) => ({ label: fmtScale(s), radio: true, checked: snap.scaleStep === s, run: () => setSnapOption('scaleStep', s) })),
+          { label: 'Custom…', hint: SCALE_STEPS.includes(snap.scaleStep) ? 'any step, 0.01 to 4' : `now ${fmtScale(snap.scaleStep)}`, radio: true, checked: !SCALE_STEPS.includes(snap.scaleStep), run: () => askSnapStep('scaleStep') },
+        ] },
       ] },
       { label: 'Glide to text when editing', hint: 'the camera faces a field that is too small or too oblique to read, and comes back after', checked: glideSetting.on, run: () => { glideSetting.toggle(); overlays.toast(glideSetting.on ? 'Glide on · the camera faces a hard-to-read field while you edit it' : 'Glide off · the camera stays put while you edit', 1800); } },
       { sep: true },
@@ -797,7 +814,7 @@ frame();
 window.__proto = {
   ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, glideSetting, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
-  plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS },
+  plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
   layout: { arrange: autoLayoutSelection, plan: (nodes) => layoutPlan(world, nodes), tweening },
   newProject, closeTab, renameProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },

@@ -213,9 +213,14 @@ export class Panel {
     this._select(s, 'grid size (units)', sizes, () => String(S.gridSize), (v) => set('gridSize')(parseFloat(v)), 'snapGridSize');
     this._check(s, 'objects (edges, centres)', () => S.objects, set('objects'), 'snapObjects');
     this._check(s, 'ports (straight cables)', () => S.ports, set('ports'), 'snapPorts');
-    this._check(s, 'rotation (15°)', () => S.rotation, set('rotation'), 'snapRotation');
-    this._check(s, 'scale (0.25)', () => S.scale, set('scale'), 'snapScale');
-    s.appendChild(this._h('div', 'panel-note', 'While dragging: Shift skips snapping, Ctrl halves the grid. Objects and ports win over the grid within their reach.'));
+    const deg = P.fmtDeg || ((d) => `${d}°`), sc = P.fmtScale || String;
+    this._check(s, 'rotation', () => S.rotation, set('rotation'), 'snapRotation');
+    this._buttons(s, 'rotation step', (P.ROTATION_STEPS || [5, 10, 15, 30, 45, 90]).map((d) => [String(d), deg(d), `${deg(d)} per gizmo step`]), () => String(S.rotationStep), (v) => set('rotationStep')(parseFloat(v)));
+    this._num(s, 'rotation step (°)', () => S.rotationStep, (v) => set('rotationStep')(v), { step: 5, min: 0.5, max: 180, attr: 'snapRotationStep' });
+    this._check(s, 'scale', () => S.scale, set('scale'), 'snapScale');
+    this._buttons(s, 'scale step', (P.SCALE_STEPS || [0.05, 0.1, 0.25, 0.5, 1]).map((x) => [String(x), sc(x), `${sc(x)} per gizmo step`]), () => String(S.scaleStep), (v) => set('scaleStep')(parseFloat(v)));
+    this._num(s, 'scale step', () => S.scaleStep, (v) => set('scaleStep')(v), { step: 0.05, min: 0.01, max: 4, attr: 'snapScaleStep' });
+    s.appendChild(this._h('div', 'panel-note', 'While dragging: Shift skips snapping, Ctrl halves the grid. Objects and ports win over the grid within their reach. The rotation and scale steps apply to the gizmo (E / R) as soon as they change.'));
   }
   /** Navigation presets (Blender default, Unreal, Maya, Simple) and their per-preset settings. */
   _buildControls() {

@@ -4,6 +4,7 @@
 // by faces.drawScreen). Shares the node port anatomy: inputs on the left of the screen slab,
 // outputs on the right, names outside beside the pins (off the screen).
 import * as THREE from 'three';
+import { faceLayer } from './layers.js';
 import { palette, sizes, materials, makeLabel, makeShadowBlob } from './theme.js';
 import { panelGeometry, slabGeometry, outlineGeometry } from './geometry.js';
 import { Block3D } from './block3d.js';
@@ -72,7 +73,7 @@ export class Device3D extends Block3D {
         this.slab = this._part(panelGeometry(s.w, s.h, s.d, { radius: s.radius, bevel: 0.02 }), frame(), 'deviceFrame');
         this.slab.position.y = s.h / 2;
         const scr = this._screen(s.w - 2 * bz, s.h - 2 * bz - (this.type === 'phone' ? 0.1 : 0));
-        scr.position.set(0, s.h / 2, s.d / 2 + 0.004);
+        scr.position.set(0, s.h / 2, s.d / 2 + faceLayer(1));
         break;
       }
       case 'laptop': {
@@ -85,7 +86,7 @@ export class Device3D extends Block3D {
         this.slab.position.set(0, s.h / 2 * Math.cos(0.2) + 0.12, -s.baseDepth / 2 + 0.35 - s.h / 2 * Math.sin(0.2));
         const scr = this._screen(s.w - 2 * bz, s.h - 2 * bz);
         scr.rotation.x = -0.2;
-        scr.position.copy(this.slab.position).add(new THREE.Vector3(0, 0, s.d / 2 + 0.004).applyAxisAngle(new THREE.Vector3(1, 0, 0), -0.2));
+        scr.position.copy(this.slab.position).add(new THREE.Vector3(0, 0, s.d / 2 + faceLayer(1)).applyAxisAngle(new THREE.Vector3(1, 0, 0), -0.2));
         this.height = this.slab.position.y + s.h / 2;
         break;
       }
@@ -98,7 +99,7 @@ export class Device3D extends Block3D {
         this.slab = this._part(panelGeometry(s.w, s.h, s.d, { radius: s.radius, bevel: 0.015 }), frame(), 'deviceFrame');
         this.slab.position.y = s.standH + s.h / 2 - 0.1;
         const scr = this._screen(s.w - 2 * bz, s.h - 2 * bz);
-        scr.position.set(0, this.slab.position.y, s.d / 2 + 0.004);
+        scr.position.set(0, this.slab.position.y, s.d / 2 + faceLayer(1));
         this.height = this.slab.position.y + s.h / 2;
         break;
       }

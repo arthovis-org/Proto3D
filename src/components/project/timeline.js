@@ -12,10 +12,17 @@ import { font, fitLine } from '../../faces.js';
 import { toTasks, daysUntil, addDays, isoDate, fmtDate, PRIORITY_COLOURS } from '../../pm/model.js';
 import { buildTimelinePanel } from '../../pm/panel-pm.js';
 import { makeCanvasPlane } from '../../shape3d.js';
+import { faceLayer, layered } from '../../layers.js';
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
 const W = 16, H = 7.2, DEPTH = 0.3, TOP = 1.0, RAIL = 0.9, MARGIN = 0.8;
 const CHART_W = W - 2 * MARGIN, CHART_TOP = H / 2 - TOP - 0.2, CHART_H = H - TOP - 0.2 - RAIL - 0.4;
+// Depth stack (layers.js), front to back: the backing panel's front face is at FRONT; weekend
+// shades and week gridlines are layered planes on it; bars stand at BAR_Z with their title plane
+// layered on the bar front; the rail is a flat slab whose front face is at RAIL_FRONT with the day
+// labels layered on it; ticks, poles and flags stand on the rail top.
+const FRONT = 0.01, BAR_Z = 0.16, BAR_D = 0.1, BAR_FRONT = BAR_Z + BAR_D / 2, TITLE_Z = BAR_FRONT + faceLayer(1);
+const RAIL_Z = 0.25, RAIL_D = 0.9, RAIL_FRONT = RAIL_Z + RAIL_D / 2, FLAG_Z = 0.66, FLAG_D = 0.03;
 
 function colourFor(task, mode, node) {
   if (mode === 'priority') return PRIORITY_COLOURS[task.priority] || PRIORITY_COLOURS.medium;
@@ -56,7 +63,7 @@ const body3d = {
   fields(node) {
     return (node._bars || []).filter((b) => b.own).map((b) => ({
       id: `task:${b.id}`, kind: 'text', label: 'task', mode: 'through', sub: { kind: 'task', id: b.id },
-      local: { x: (b.x0 + b.x1) / 2, y: b.y, w: Math.max(0.6, b.x1 - b.x0 - b.barH), h: b.barH - 0.04, z: 0.215 },
+      local: { x: (b.x0 + b.x1) / 2, y: b.y, w: Math.max(0.6, b.x1 - b.x0 - b.barH), h: b.barH - 0.04, z: TITLE_Z },
       font: { size: Math.min((b.barH - 0.04) * 120 * 0.5, 26), weight: 500, color: '#ffffff', align: 'left' }, bg: b.colour,
       get: () => (node.params.tasks || []).find((t) => t.id === b.id)?.title || '',
       set: (v, api) => {
@@ -69,15 +76,15 @@ const body3d = {
   },
   build(node, h) {
     const back = h.part(h.panelGeometry(W, H, DEPTH, { radius: 0.36 }), h.materials.body(), { theme: () => palette.body });
-    back.position.z = -DEPTH / 2 + 0.01;
+    back.position.z = -DEPTH / 2 + FRONT;
     // slim accent line along the top edge (project colour) instead of a header band
     const accent = h.part(new THREE.BoxGeometry(W - 1.0, 0.045, 0.012), h.materials.accent(node.headerColor()), { theme: node.headerColor, pick: false });
     accent.position.set(0, H / 2 - 0.1, 0.03);
     const rail = h.part(h.slabGeometry(W - 0.8, 0.9, 0.1, { radius: 0.1, bevel: 0.012 }), h.materials.body(), { theme: () => palette.pmRail });
-    rail.position.set(0, -H / 2 + RAIL - 0.25, 0.25); rail.material.color.setHex(palette.pmRail);
+    rail.position.set(0, -H / 2 + RAIL - 0.25, RAIL_Z); rail.material.color.setHex(palette.pmRail);
     node.today = new THREE.Mesh(new THREE.BoxGeometry(0.04, CHART_H + 0.6, 0.3), new THREE.MeshBasicMaterial({ color: palette.pmToday, transparent: true, opacity: 0.5, depthWrite: false }));
     node.today.position.z = 0.15; node.add(node.today); node.themed.push([node.today, () => palette.pmToday]);
-    node.todayLabel = h.label('today', { size: 0.2, color: 'text', weight: 600 }, [0, CHART_TOP + 0.12, 0.3]);
+    node.todayLabel = h.label('today', { size: 0.2, color: 'text', weight: 600 }, [0, CHART_TOP + 0.12, 0.3 + faceLayer(1)]);
     node._rows = []; node._drag = null;
   },
   refresh(node) {
@@ -93,13 +100,14 @@ const body3d = {
       const dow = new Date(iso + 'T00:00:00Z').getUTCDay();
       const major = dow === 1;
       const tick = new THREE.Mesh(new THREE.BoxGeometry(0.02, major ? 0.3 : 0.12, 0.04), new THREE.MeshBasicMaterial({ color: major ? palette.text : palette.textDim, transparent: true, opacity: major ? 0.9 : 0.5 }));
-      tick.position.set(x, railY + 0.18, 0.66); node.children3d.add(tick);
-      // light gridline up the chart on week starts
-      if (major) { const gl = new THREE.Mesh(new THREE.PlaneGeometry(0.015, CHART_H), new THREE.MeshBasicMaterial({ color: palette.textDim, transparent: true, opacity: 0.18, depthWrite: false })); gl.position.set(x, CHART_TOP - CHART_H / 2, 0.02); node.children3d.add(gl); }
-      if (major || R.days <= 10) node.childLabel(major ? fmtDate(iso) : String(new Date(iso + 'T00:00:00Z').getUTCDate()), { size: major ? 0.19 : 0.15, color: major ? 'text' : 'textDim' }, [x, railY - 0.02, 0.7], !major);
-      if (dow === 0 || dow === 6) { // weekend shading
-        const shade = new THREE.Mesh(new THREE.PlaneGeometry(R.upd, CHART_H), new THREE.MeshBasicMaterial({ color: palette.textDim, transparent: true, opacity: 0.06, depthWrite: false }));
-        shade.position.set(x + R.upd / 2, CHART_TOP - CHART_H / 2, 0.01); node.children3d.add(shade);
+      tick.position.set(x, railY + 0.18, FLAG_Z); node.children3d.add(tick);
+      // light gridline up the chart on week starts: a layer-2 plane over the shades
+      if (major) { const gl = new THREE.Mesh(new THREE.PlaneGeometry(0.015, CHART_H), layered(new THREE.MeshBasicMaterial({ color: palette.textDim, transparent: true, opacity: 0.18, depthWrite: false }), 2)); gl.position.set(x, CHART_TOP - CHART_H / 2, FRONT + faceLayer(2)); node.children3d.add(gl); }
+      // day / week labels on the rail's front face
+      if (major || R.days <= 10) node.childLabel(major ? fmtDate(iso) : String(new Date(iso + 'T00:00:00Z').getUTCDate()), { size: major ? 0.19 : 0.15, color: major ? 'text' : 'textDim' }, [x, railY - 0.02, RAIL_FRONT + faceLayer(1)], !major);
+      if (dow === 0 || dow === 6) { // weekend shading: a layer-1 plane on the body front (coplanar with it, it z-fought)
+        const shade = new THREE.Mesh(new THREE.PlaneGeometry(R.upd, CHART_H), layered(new THREE.MeshBasicMaterial({ color: palette.textDim, transparent: true, opacity: 0.06, depthWrite: false }), 1));
+        shade.position.set(x + R.upd / 2, CHART_TOP - CHART_H / 2, FRONT + faceLayer(1)); node.children3d.add(shade);
       }
     }
     // rows
@@ -113,15 +121,15 @@ const body3d = {
       const len = x1 - x0;
       const col = colourFor(t, mode, node);
       node._bars.push({ id: t.id, own: !!t.own, x0, x1, y, barH, colour: col });
-      const bar = new THREE.Mesh(node._helpers().panelGeometry(len, barH, 0.1, { radius: barH / 2, bevel: 0.012, curveSegments: 8 }), node._helpers().materials.panel(new THREE.Color(col), { transparent: t.done, opacity: t.done ? 0.45 : 1 }));
-      bar.position.set((x0 + x1) / 2, y, 0.16);
+      const bar = new THREE.Mesh(node._helpers().panelGeometry(len, barH, BAR_D, { radius: barH / 2, bevel: 0.012, curveSegments: 8 }), node._helpers().materials.panel(new THREE.Color(col), { transparent: t.done, opacity: t.done ? 0.45 : 1 }));
+      bar.position.set((x0 + x1) / 2, y, BAR_Z);
       const sub = { kind: 'task', id: t.id, own: !!t.own };
       node.childSub(bar, sub);
       if (sel?.kind === 'task' && sel.id === t.id) { bar.material.emissive = new THREE.Color(states.selected); bar.material.emissiveIntensity = 0.5; }
-      if (t.overdue) { const edge = new THREE.Mesh(node._helpers().panelGeometry(len + 0.08, barH + 0.08, 0.02, { radius: barH / 2 + 0.04, bevel: 0, curveSegments: 8 }), new THREE.MeshBasicMaterial({ color: PRIORITY_COLOURS.urgent, side: THREE.BackSide })); edge.position.set((x0 + x1) / 2, y, 0.16); node.children3d.add(edge); }
-      // face with the title (only when the bar is long enough to read)
+      if (t.overdue) { const edge = new THREE.Mesh(node._helpers().panelGeometry(len + 0.08, barH + 0.08, 0.02, { radius: barH / 2 + 0.04, bevel: 0, curveSegments: 8 }), new THREE.MeshBasicMaterial({ color: PRIORITY_COLOURS.urgent, side: THREE.BackSide })); edge.position.set((x0 + x1) / 2, y, BAR_Z); node.children3d.add(edge); }
+      // face with the title (only when the bar is long enough to read): a layered plane on the bar front
       const plane = makeCanvasPlane(Math.max(0.1, len - barH), barH - 0.04, { emissive: 0.5, owner: node });
-      plane.mesh.position.set((x0 + x1) / 2, y, 0.215);
+      plane.mesh.position.set((x0 + x1) / 2, y, TITLE_Z);
       plane.draw((g, w, h) => {
         g.clearRect(0, 0, w, h);
         if (node._editing === `task:${t.id}`) return;   // the inline editor sits over the label
@@ -145,10 +153,10 @@ const body3d = {
     for (const m of ms) {
       const x = xOf(R, m.date); if (x < -CHART_W / 2 - 0.2 || x > CHART_W / 2 + 0.2) continue;
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.1, 8), new THREE.MeshBasicMaterial({ color: palette.text }));
-      pole.position.set(x, railY + 0.6, 0.66); node.children3d.add(pole);
-      const flag = new THREE.Mesh(node._helpers().panelGeometry(0.6, 0.32, 0.03, { radius: 0.06, bevel: 0.006 }), new THREE.MeshBasicMaterial({ color: m.reached ? PRIORITY_COLOURS.medium : palette.pmToday }));
-      flag.position.set(x + 0.32, railY + 1.0, 0.66); node.children3d.add(flag);
-      node.childLabel(m.title || 'milestone', { size: 0.16, color: 'text', weight: 600, maxWidth: 2 }, [x + 0.32, railY + 1.3, 0.7], true);
+      pole.position.set(x, railY + 0.6, FLAG_Z); node.children3d.add(pole);
+      const flag = new THREE.Mesh(node._helpers().panelGeometry(0.6, 0.32, FLAG_D, { radius: 0.06, bevel: 0.006 }), new THREE.MeshBasicMaterial({ color: m.reached ? PRIORITY_COLOURS.medium : palette.pmToday }));
+      flag.position.set(x + 0.32, railY + 1.0, FLAG_Z); node.children3d.add(flag);
+      node.childLabel(m.title || 'milestone', { size: 0.16, color: 'text', weight: 600, maxWidth: 2 }, [x + 0.32, railY + 1.3, FLAG_Z + FLAG_D / 2 + faceLayer(1)], true);
     }
     // today
     const tx = xOf(R, isoDate());

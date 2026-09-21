@@ -32,17 +32,20 @@ import { panelGeometry, slabGeometry, outlineGeometry } from './geometry.js';
 import { Block3D, alignPorts, splitAnchors } from './block3d.js';
 import { clear as clearFace } from './faces.js';
 import { createSurface } from './face-canvas.js';
+import { faceLayer } from './layers.js';
 
 /**
  * A canvas-backed plane (card face, bar face, flag face). `draw(g, w, h)` paints it in logical px
  * (`cw × ch`, 120 px / unit); the painter is kept so the plane can repaint itself when its owner's
  * resolution tier changes (Block3D.fitFaceResolution). Pass `owner` (the block) so a plane built in
- * `refresh` starts at the block's current tier.
+ * `refresh` starts at the block's current tier. The plane is a stacked surface (layers.js): place
+ * it at `front + faceLayer(layer)` of what it sits on (a bar, a card, the body); `layer` defaults
+ * to 2 (a plane on a part that itself sits on the body).
  */
-export function makeCanvasPlane(w, h, { emissive = 0.55, px = sizes.face.pxPerUnit, owner = null } = {}) {
+export function makeCanvasPlane(w, h, { emissive = 0.55, px = sizes.face.pxPerUnit, owner = null, layer = 2 } = {}) {
   const surface = createSurface(w, h, { px, scale: owner?.faceScale });
   clearFace(surface.g, surface.cw, surface.ch, 'rgba(0,0,0,0)');
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), materials.face(surface.texture, { emissive, transparent: true }));   // alpha from the canvas: transparent pixels show the body behind
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), materials.face(surface.texture, { emissive, transparent: true, layer }));   // alpha from the canvas: transparent pixels show the body behind
   mesh.renderOrder = 1;
   let painter = null;
   const plane = Object.assign(surface, {
@@ -129,7 +132,8 @@ export class Shape3D extends Block3D {
       sub(mesh, sub, parent = node.children3d) { mesh.userData.sub = { block: node, ...sub }; node.subs.push(mesh); parent.add(mesh); return mesh; },
       canvasPlane: (w, h, opts = {}) => makeCanvasPlane(w, h, { owner: node, ...opts }),
       /** The component's live face (def.face) placed by the body. */
-      face(w, h, pos = [0, 0, node.depth / 2 + 0.012], opts = {}) { const plane = node._initFace(w, h, opts); plane.position.set(...pos); node.add(plane); return plane; },
+      face(w, h, pos = [0, 0, node.depth / 2 + faceLayer(1)], opts = {}) { const plane = node._initFace(w, h, opts); plane.position.set(...pos); node.add(plane); return plane; },
+      faceLayer,
       rim(geo) { node.rim = new THREE.Mesh(geo, materials.rim()); node.rim.visible = false; node.add(node.rim); return node.rim; },
     };
   }

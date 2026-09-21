@@ -10,6 +10,7 @@
 // a cool, paper-like room: a mid-grey floor pool so white cards stand off it, a soft grid, white
 // faces with a hairline edge, and a touch more light (see `exposure`, `keyLight`, `faceBoost`).
 import * as THREE from 'three';
+import { layered } from './layers.js';
 
 /** Scale: 1 scene unit = 10 cm. A small node is 36 cm wide. */
 export const UNIT_CM = 10;
@@ -264,11 +265,11 @@ export const materials = {
     });
   },
   /** Face / screen material driven by a canvas texture; `transparent` lets a canvas keep rounded corners. */
-  face(texture, { emissive = 0.55, transparent = true } = {}) {
-    const m = new THREE.MeshStandardMaterial({
+  face(texture, { emissive = 0.55, transparent = true, layer = 1 } = {}) {
+    const m = layered(new THREE.MeshStandardMaterial({
       color: 0x000000, emissive: 0xffffff, emissiveMap: texture, emissiveIntensity: emissive * (palette.faceBoost ?? 1),
       roughness: 0.6, metalness: 0.0, envMapIntensity: 0.15,
-    });
+    }), layer);   // a face sits on a body front (layers.js): it wins the depth tie at any distance
     m.userData.faceEmissive = emissive;   // the base value; `retuneFace` re-applies the theme's boost
     if (transparent) { m.map = texture; m.transparent = true; m.alphaTest = 0.02; }
     return m;
@@ -320,7 +321,7 @@ export function makeLabel(text, opts = {}) {
   };
   const canvas = document.createElement('canvas');
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
-    new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
+    layered(new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }), 3));   // labels sit above everything on a face (layers.js)
   mesh.userData.label = { text: String(text ?? ''), opts: o, canvas };
   mesh.userData.align = o.align;
   mesh.renderOrder = 2;

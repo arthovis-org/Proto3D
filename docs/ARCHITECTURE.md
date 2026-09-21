@@ -18,7 +18,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 │             main.js (boot + render loop)                                     │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Scene       block3d.js → node3d.js / device3d.js / shape3d.js   connection3d.js  cable-chips.js │
-│             routing.js  groups.js  faces.js  face-canvas.js  workspace.js  theme.js │
+│             routing.js  groups.js  faces.js  face-canvas.js  workspace.js  theme.js  layers.js (depth layering) │
 │             geometry.js (panelGeometry)  wiring.js (the Wiring switch)       │
 │ Persistence tabs.js (open projects, autosave, snapshots)  project-store.js (IndexedDB)  serialize.js │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -317,6 +317,37 @@ shows the sentence (one candidate) or *"N ways to link · choose on drop"*. On r
 block springs back to where it was; one candidate runs `cmd.connect` (undoable) and toasts the
 sentence; several open `Overlays.chooser(items, { x, y, title }, onPick)` — a small popover at the
 drop point that closes on pick, Esc or a click outside.
+
+## 7e. Depth layering (`layers.js`)
+
+Every body is a slab whose front face carries things: a canvas face, thin rules and shades, bars
+and cards, and labels on top of those. Two surfaces at (nearly) the same depth **z-fight**: the
+depth buffer cannot order them and pixels flip between the two colours as the camera moves (the
+Timeline's weekend shades sat exactly on the body front and speckled; its day labels sat exactly on
+the rail front). `layers.js` is the one place that says how stacked surfaces are separated:
+
+- `faceLayer(n)` = `n · LAYER` (0.012 units) is the offset along the face normal of stacked layer
+  `n`: **1** the face canvas, the accent line, shades and rules drawn on a body front; **2** a plane
+  on a layer-1 part (a bar's title over the bar front, a count over its pill); **3** labels and
+  markers above everything on the face. Being a real offset along the local normal it holds from
+  every angle, in picking, and in the 2D plan where the block is rotated flat.
+- `layered(material, n)` polygon-offsets the material toward the camera by `2n` depth units (plus
+  one slope unit): the surface wins a depth tie against whatever it sits on **at any distance**, so
+  the layering also holds where the gap falls below the depth buffer's precision (far LOD, 130+
+  units) without a visible gap and without `logarithmicDepthBuffer` (which would disable early-z).
+  Bodies are opaque and never offset, so nothing pulls in front of a block that stands closer to
+  the camera by more than a few depth units.
+
+Every canvas face (`materials.face`, layer 1 by default), every `makeCanvasPlane` (layer 2 by
+default, `layer` option) and every label (`makeLabel`, layer 3) is layered; a body places them at
+`front + faceLayer(n)` — `Node3D` puts its face at `depth / 2 + faceLayer(1)`, devices their
+screen at `d / 2 + faceLayer(1)`, the Sticky note its paper face likewise, the Timeline its shades
+(`FRONT + faceLayer(1)`), gridlines (`+ faceLayer(2)`), bar titles (`BAR_FRONT + faceLayer(1)`) and
+rail labels (`RAIL_FRONT + faceLayer(1)`), the board its header hairline (`PANEL_FRONT +
+faceLayer(1)`). A new body should name its fronts as constants and stack on them the same way.
+Verified headless with a depth-mapping perturbation (render, nudge `camera.near` by 0.2 %, count
+pixels that flip: only depth ties can): the Timeline close-up went from 80 537 flipping pixels
+(11.8 % of the frame) to 2.
 
 ## 8. Scene objects
 
@@ -906,9 +937,16 @@ never saved, off at boot). Turning it on does four things at once:
 *Snap* section of the Workspace panel, `localStorage["proto3d.snap.v1"]`, 2D and 3D alike). The
 settings are a **master switch** (`snap.on`, `set / toggle`) plus independent, persisted toggles
 (`snap.setOption(key, v)`, `snap.active(kind)` = master and toggle both on): `grid` with `gridSize`
-(one of `GRID_SIZES` 0.25 / 0.5 / 1 / 2 units), `objects`, `ports`, `rotation` and `scale`. The
-round-4 shape `{ on, size, fine }` is migrated on load; `snap.summary()` is the one-line state the
-toggle's tooltip and the toasts show. While a set of blocks is dragged, `Interaction._applySnap`
+(one of `GRID_SIZES` 0.25 / 0.5 / 1 / 2 units), `objects`, `ports`, `rotation` and `scale`, plus two
+persisted **increments**: `rotationStep` in degrees (15 by default; presets `ROTATION_STEPS` 5 / 10
+/ 15 / 30 / 45 / 90, any value 0.5–180 via *Custom…* in the menu — a `promptDialog` — or the
+panel's number field; `snap.rotationStepRad` for the gizmo) and `scaleStep` (0.25; presets
+`SCALE_STEPS` 0.05 / 0.1 / 0.25 / 0.5 / 1, any value 0.01–4). `setOption('rotationStep' |
+'scaleStep', v)` clamps to the range and ignores non-numbers; a stored record without them (the
+previous shape) loads with the defaults, and the round-4 shape `{ on, size, fine }` is migrated on
+load. `snap.summary()` is the one-line state the toggle's tooltip and the toasts show ("Snap · grid 1 ·
+objects · ports · rotation 45° · scale 0.5"); the *View → Snap* hints, the *Rotation step* / *Scale
+step* submenus (radio) and the panel's preset buttons + fields all read the same state. While a set of blocks is dragged, `Interaction._applySnap`
 decides per axis, the most specific kind winning within `_snapThreshold` (8 px in world units,
 clamped 0.12–0.9): on z, **ports** first — among the cables between a dragged block and a block that
 stays, the one whose two pins come closest to level (same world z, the axis cables run across;
@@ -917,9 +955,9 @@ left / right / centre, z: top / bottom / centre) of the dragged set's footprint 
 the threshold of any other visible block's; then the **grid** — the anchor block's centre lands on
 `gridSize` (`Ctrl` while dragging halves the pitch). Grid and objects may be on together; everything
 off (or the master off, or `Shift` held during the drag) is free movement. The gizmo follows the same
-settings (`Gizmo.applySnap`): `rotationSnap` 15° (`ROTATION_STEP`), `scaleSnap` 0.25 (`SCALE_STEP`)
-and `translationSnap` = the grid pitch; `snap.rotationValue / scaleValue` apply the steps to a bare
-number. The guides live in `ui/guides.js`: an SVG over the window (`#guides`, pointer-events none)
+settings (`Gizmo.applySnap`, re-run on every `snap.onChange`): `rotationSnap` = `snap.rotationStepRad`,
+`scaleSnap` = `snap.scaleStep` and `translationSnap` = the grid pitch, so a new increment applies to
+the next drag; `snap.rotationValue / scaleValue` apply the steps to a bare number. The guides live in `ui/guides.js`: an SVG over the window (`#guides`, pointer-events none)
 holding world-space segments re-projected every frame — an accent line spanning both blocks for an
 alignment, a dashed accent line pin to pin for a port snap, dashed ticks beside the block's centre
 lines for a grid snap — set on every move and cleared on release or cancel.

@@ -27,9 +27,11 @@ import { commitBoard } from '../../pm/board-ops.js';
 import { buildBoardPanel } from '../../pm/panel-pm.js';
 import { connectedPeople, personFor, sameName } from '../../pm/relations.js';
 import { makeCanvasPlane } from '../../shape3d.js';
+import { faceLayer, layered } from '../../layers.js';
 
 /* ---------------- geometry constants (scene units, 1 = 10 cm) ---------------- */
 const COL_W = 3.4, COL_GAP = 0.3, MARGIN = 1.5, TOP = 1.0, COL_H = 6.6, PLINTH = 0.3, DEPTH = 0.6, BACK_D = 0.24;
+const PANEL_Z = 0.04, PANEL_D = 0.06, PANEL_FRONT = PANEL_Z + PANEL_D / 2;   // the frosted column panel: its front carries the header rule, pill and titles (layers.js)
 const CARD_W = COL_W - 0.4, CARD_H = 1.15, CARD_D = 0.1, CARD_GAP = 0.14, ADD_H = 0.42, CARD_Z = 0.14, CARD_R = 0.12;
 const LANE_MIN = 2.0;                                   // a swimlane fits one card and its label
 const H0 = TOP + 0.25 + COL_H + PLINTH + 0.25;         // base height: the body grows upward from here for lanes
@@ -274,8 +276,8 @@ const body3d = {
       const cx = L.colX(ci);
       // translucent column panel (a sub: click selects the column in the panel)
       // frosted column panel with a thin divider look (a sub: click selects the column in the panel)
-      const panel = new THREE.Mesh(panelGeometry(COL_W, L.colH, 0.06, { radius: 0.18, bevel: 0.008 }), materials.frosted());
-      panel.position.set(cx, L.colTop - L.colH / 2, 0.04);
+      const panel = new THREE.Mesh(panelGeometry(COL_W, L.colH, PANEL_D, { radius: 0.18, bevel: 0.008 }), materials.frosted());
+      panel.position.set(cx, L.colTop - L.colH / 2, PANEL_Z);
       panel.renderOrder = 0;
       if (sel?.kind === 'column' && sel.id === col.id) { panel.material.emissive = new THREE.Color(states.selected); panel.material.emissiveIntensity = 0.2; }
       node.childSub(panel, { kind: 'column', id: col.id });
@@ -293,8 +295,8 @@ const body3d = {
       count.position.x = pill.position.x;
       count.userData.isCount = true; pill.userData.isCount = true;
       // a hairline under the column header
-      const rule = new THREE.Mesh(new THREE.PlaneGeometry(COL_W - 0.36, 0.012), new THREE.MeshBasicMaterial({ color: palette.textDim, transparent: true, opacity: 0.35, depthWrite: false }));
-      rule.position.set(cx, L.colTop - 0.72, 0.08); node.children3d.add(rule);
+      const rule = new THREE.Mesh(new THREE.PlaneGeometry(COL_W - 0.36, 0.012), layered(new THREE.MeshBasicMaterial({ color: palette.textDim, transparent: true, opacity: 0.35, depthWrite: false }), 1));
+      rule.position.set(cx, L.colTop - 0.72, PANEL_FRONT + faceLayer(1)); node.children3d.add(rule);
       // card positions: one stack per column, or one stack per lane cell
       const place = new Map();   // card id → y
       if (lanes) {
