@@ -1,0 +1,49 @@
+/* hubs.css — the add-on's own DOM: the CSS3D live layer, the flow bar HUD and the panel section.
+   Core theme tokens (--panel, --border, --text, --dim, --accent …) keep light and dark right. */
+
+/* ---- live layer: a DOM plane over the WebGL canvas (live-layer.js) ---- */
+#hub-live-layer { position: absolute; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.hub-live { pointer-events: none; box-sizing: border-box; background: #0b0f14; border-radius: 12px; overflow: hidden; contain: layout paint; }
+.hub-live[data-device="phone"] { border-radius: 20px; background: #000; }
+.hub-live-chrome { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 6px; padding: 0 14px; box-sizing: border-box; background: #1a2230; color: #8b9ab5; font: 500 13px/1 "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
+.hub-live-chrome i { width: 10px; height: 10px; border-radius: 50%; background: #ff5c6c; flex: none; }
+.hub-live-chrome i:nth-child(2) { background: #f5b942; } .hub-live-chrome i:nth-child(3) { background: #34c99a; }
+.hub-live-url { margin-left: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-live-screen { position: absolute; overflow: hidden; background: #fff; }
+.hub-live[data-device="phone"] .hub-live-screen { border-radius: 18px; }
+.hub-live iframe { display: block; border: 0; background: #fff; }
+.hub-live-done { display: none; position: absolute; right: 10px; top: 4px; z-index: 2; height: 26px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--accent, #5aa9ff); color: #fff; font: 700 13px/26px Inter, system-ui, sans-serif; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+.hub-live[data-device="phone"] .hub-live-done { top: 30px; right: 50%; transform: translateX(50%); }
+.hub-live.is-interactive { pointer-events: auto; outline: 4px solid var(--accent, #5aa9ff); outline-offset: 2px; box-shadow: 0 0 0 10px rgba(90,169,255,.18), 0 20px 60px rgba(0,0,0,.45); }
+.hub-live.is-interactive .hub-live-done { display: inline-block; }
+
+/* ---- flow bar HUD (ui.js): bottom-centre of the viewport ---- */
+#hub-flowbar { position: fixed; bottom: 18px; left: calc(var(--rail-w, 60px) + (100% - var(--rail-w, 60px) - var(--panel-w, 300px)) / 2); transform: translateX(-50%); z-index: 4;
+  display: inline-flex; align-items: center; gap: 4px; padding: 5px 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 999px; backdrop-filter: blur(10px); box-shadow: var(--shadow); font: 500 12px/1 Inter, system-ui, sans-serif; color: var(--text); }
+body.panel-hidden #hub-flowbar { left: calc(var(--rail-w, 60px) + (100% - var(--rail-w, 60px)) / 2); }
+body.rail-hidden #hub-flowbar { left: calc((100% - var(--panel-w, 300px)) / 2); }
+body.rail-hidden.panel-hidden #hub-flowbar { left: 50%; }
+#hub-flowbar .hub-flow, #hub-flowbar .hub-live-toggle { height: 28px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--dim); font: inherit; cursor: pointer; white-space: nowrap; }
+#hub-flowbar .hub-flow:hover, #hub-flowbar .hub-live-toggle:hover { background: var(--field-hover, rgba(255,255,255,.08)); color: var(--text); }
+#hub-flowbar .hub-flow.is-active { background: var(--accent-soft, rgba(90,169,255,.16)); color: var(--accent); font-weight: 600; }
+#hub-flowbar .hub-flow:focus-visible, #hub-flowbar .hub-live-toggle:focus-visible, #hub-flowbar select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#hub-flowbar .hub-sep { width: 1px; height: 18px; background: var(--border-strong, var(--border)); margin: 0 4px; }
+#hub-flowbar select { height: 28px; max-width: 150px; padding: 0 8px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+#hub-flowbar select:hover { background: var(--field-hover, rgba(255,255,255,.08)); }
+#hub-flowbar .hub-live-toggle b { color: var(--text); font-weight: 600; }
+#hub-flowbar .hub-live-toggle i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); margin-right: 6px; vertical-align: 1px; }
+#hub-flowbar .hub-live-toggle.is-on i { background: var(--ok, #34c99a); }
+#hub-flowbar .hub-count { color: var(--dim); padding: 0 8px; white-space: nowrap; }
+
+/* ---- panel section ---- */
+.hubs-sec .hub-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; color: var(--text); }
+.hubs-sec .hub-row label { color: var(--dim); min-width: 78px; }
+.hubs-sec .hub-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+.hubs-sec .hub-row output { min-width: 22px; text-align: right; font-variant-numeric: tabular-nums; }
+.hubs-sec .hub-counts { font-size: 11px; color: var(--dim); line-height: 1.5; margin: 6px 0 8px; }
+.hubs-sec .hub-counts b { color: var(--text); font-weight: 600; }
+.hubs-sec .hub-flows { display: flex; flex-wrap: wrap; gap: 6px; }
+.hubs-sec .hub-flows button { height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--field); color: var(--text); font: 500 12px/1 inherit; cursor: pointer; }
+.hubs-sec .hub-flows button:hover { background: var(--field-hover); }
+.hubs-sec .hub-flows button.is-active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.hubs-sec .hub-hint { font-size: 11px; color: var(--dim); margin-top: 8px; line-height: 1.45; }
