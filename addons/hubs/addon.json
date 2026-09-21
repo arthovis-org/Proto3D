@@ -1,7 +1,7 @@
 {
   "id": "hubs",
   "name": "Client Hubs",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "prefix": "hub",
   "sdk": 1,
   "entry": "./src/index.js",

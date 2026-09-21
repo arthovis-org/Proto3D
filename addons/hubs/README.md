@@ -1,6 +1,6 @@
 # Client Hubs (`hubs`, prefix `hub-`)
 
-A demo of how Imagine OS builds a complete client deliverable hub on the Proto3D canvas: the public website, the customer app, the staff surfaces by role, the ops manual, docs, plan, design system and dev tools, mockups and the machine surface, **embedded live as nodes**, with the canvas re-arrangeable into different flows. Four real clients on imagine-os.github.io are included: CTL OS (`cal-tenant-law`), Petrock (`petrock`), HoyOS (`hoy`, Spanish) and Llave OS (`dorum-lifestyle`, a static multi-page site).
+A demo of how Imagine OS builds a complete client deliverable hub on the Proto3D canvas: the public website, the customer app, the staff surfaces by role, the ops manual, docs, plan, design system and dev tools, mockups and the machine surface, **embedded live as nodes**, with the canvas re-arrangeable into different flows. Five real clients on imagine-os.github.io are included: CTL OS (`cal-tenant-law`, tenant law firm), Petrock (`petrock`, dog hotel and spa), HoyOS (`hoy`, wellness center, Spanish), Llave OS (`dorum-lifestyle`, real-estate agency, a static multi-page site) and Aluzina (`aluzina`, interior design studio in Medellín; 24 pages, iframe-embeddable like the others).
 
 Page: `addons/hubs/index.html` (SDK shell). Live: https://arthovis-org.github.io/Proto3D/addons/hubs/
 
@@ -31,12 +31,25 @@ The **embed height** (slider in the flow bar and the panel, presets in the Hubs 
 
 `blueprint → pages → tasks → plan`. A blueprint holds the client; **Generate** turns it into `hub-page` nodes (real routes for the four known slugs from `src/clients.js`, template defaults with status `planned` for any other slug) placed in the Delivery flow beside the blueprint, as one undoable command (Ctrl+Z removes them all). Regenerating removes the client's old pages first and keeps a status you edited by hand. The `tasks` output ("Public website for Petrock", …) is in the shape `src/pm/model.js` uses for cards (`id, title, description, assignee, due, priority, tags, checklist, estimate, createdAt, movedAt, blockedBy, column, done`), so the core **Timeline**, **Person** and **Project Dashboard** consume it directly; the demo wires it into a Timeline. The core **Kanban Board has no `tasks` input** (it owns its cards), so the demo pre-fills a board's `board` param with the same tasks as cards instead of forcing a link.
 
+## Static previews (`assets/previews/`, `tools/capture-previews.mjs`)
+
+A card's screen always shows its page: the face draws a **static preview image** of the page into the frame rect (cover-fit, top-aligned so the page header shows, a soft fade at the bottom) whenever it is loaded, at any zoom, angle or distance, with or without a live iframe on top (the iframe's backgrounds are transparent, so there is no white flash before the page paints). Previews live at `assets/previews/<slug>/<page-id>.jpg` (`pageId(route)`: `#/site/proposal` → `site-proposal`, `#/` → `index`; `previewPath` / `previewFor` in `clients.js`), ~800 px wide (phone 390), JPEG q78, about 60 kB each. They load lazily (`Image`, cached per path) and mark the face dirty when they arrive; planned pages, unknown clients and missing images keep the placeholder (a light-grey frame with a thin border). 89 of the 89 pages have one (all); about 4.3 MB in total. A hub-page's `preview` param points at another image if needed.
+
+Regenerate them (Chromium, real network; desktop 1280 × 1080, tablet 1024 × 1100, phone 390 × 844; waits for the SPA to render):
+
+```
+node addons/hubs/tools/capture-previews.mjs            # every client
+node addons/hubs/tools/capture-previews.mjs petrock    # one client
+```
+
+**LOD.** The core marks blocks past 110 units as far and lifts their titles; `hub-page` and `hub-blueprint` instances override `setLOD` (`onCreate`) so their faces stay drawn at every distance: a page card is its content.
+
 ## The live layer (`src/live-layer.js`)
 
 A `CSS3DRenderer` (three/addons, the same three 0.160 the core loads) draws a DOM layer inside `#viewport` above the WebGL canvas, rendered every frame with the core's current camera (`ws.camera` is a getter; the Navigator's orthographic swap is followed). Every live-eligible `hub-page` gets a `<div class="hub-live">` holding a browser-chrome strip, a screen and an `<iframe loading="lazy" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups">`, scaled by `1 / 120` (`sizes.face.pxPerUnit`) and positioned on the node's face mesh world transform, nudged 0.01 along the face normal. `faceLayout(params, cw, ch)` in `sizing.js` gives both the canvas face and the DOM element the same frame rectangle, so a phone iframe (390 px wide, scaled into the drawn bezel), a tablet (1024) or a desktop page (1280) lands exactly where the face drew its frame, as tall as the frame.
 
-* **Budget.** Only the N nearest on-screen pages with `live = true` and `status = live` get an iframe (default 8; menu / panel, persisted in `host.storage`). The ranking runs 4× a second with hysteresis (a live page counts as 20 % closer) so frames do not thrash. Others show the canvas card. An element out of the budget for 20 s is dropped (its iframe unloads); the `src` is set once when a node becomes live, never per frame.
-* **Hidden when** the face is back-facing the camera, off-screen, narrower than 44 px on screen, the node is hidden (collapsed group), or live frames are off. In the 2D plan the cards lie flat and the layer follows them (top-down, orthographic).
+* **Budget.** Only the N biggest on-screen pages (projected area) with `live = true` and `status = live` get an iframe (default 16, "All" = 40; menu / panel, persisted in `host.storage`). The ranking runs 4× a second with hysteresis (a live page counts as 25 % bigger) so frames do not thrash. Others show the canvas card with its preview. An element out of the budget for 20 s is dropped (its iframe unloads); the `src` is set once when a node becomes live, never per frame.
+* **Hidden when** the face turns past ~85° from the camera (cos 0.09 on, 0.05 off: hysteresis; Chromium renders CSS3D planes fine up to there, and the static preview shows beyond), off-screen, under 10 px on screen, the node is hidden (collapsed group), or live frames are off. In the 2D plan the cards lie flat and the layer follows them (top-down, orthographic).
 * **Interaction.** The layer is `pointer-events: none`, so dragging, selecting and the camera work as usual. A click on a page face (core raycast → `face.onPointer`) makes that one element interactive: `pointer-events: auto`, an accent outline, a Done button, wheel events kept from the camera, and the camera flies to face the page at ~70 % of the viewport (the `facingPose` idea from `ui/field-editor.js`). Done, Escape or a pointerdown on the WebGL canvas leave. `window.__addon.api.interact(uid)` does the same for tests.
 * **Limits.** A DOM layer is always drawn over the WebGL scene: a live frame is never occluded by a nearer block (nothing in front of it hides it). Cross-origin pages cannot be read, styled or screenshotted; the add-on never tries. A page whose `status` is not `live` never loads a frame. Iframe text is rendered by the browser under a `matrix3d` transform, so it is crisp only when the face is roughly screen-parallel.
 
@@ -98,6 +111,8 @@ addons/hubs/
   src/examples.js     demo scenes
   src/ui.js           Hubs menu, panel section, flow bar
   src/hubs.css
+  assets/previews/    static page previews per client (tools/capture-previews.mjs)
+  tools/capture-previews.mjs
   test/unit/          template, flows, generate (node --test)
   test/engine/        nodes on the real core engine, faces on a stub 2D context
   test/browser/       Playwright: boot, demo, live layer (imagine-os stubbed), interact, flows, undo, storage
