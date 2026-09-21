@@ -343,7 +343,11 @@ export function refreshLabel(mesh, text) {
   const tex = new THREE.CanvasTexture(L.canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = gpu.maxAnisotropy;
-  tex.minFilter = THREE.LinearFilter;
+  // Trilinear mipmaps: a title seen small or far (the grown far-LOD title especially) is minified many
+  // times over; sampling a pre-filtered level keeps the glyph edges smooth where a plain LinearFilter
+  // aliases into jagged pixels. Anisotropy only works on top of mipmaps.
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
   if (mesh.material.map) mesh.material.map.dispose();
   mesh.material.map = tex;
   mesh.material.needsUpdate = true;

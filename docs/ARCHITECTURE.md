@@ -551,7 +551,9 @@ people / checklist tile), board cards (`drawCard`: edge-to-edge on the extruded 
 priority stripe, title 600, assignee avatar, due, checklist bar, tag chips, estimate), timeline
 bar faces (title on the bar), device screens (`drawScreen`: flat gradient, slim status bar).
 Canvas labels (`makeLabel`) share the family and support `caps` + `spacing` for small caps (column
-titles, kind labels).
+titles, kind labels). Their textures are baked once at 96 px and sampled with trilinear mipmaps +
+anisotropy (`refreshLabel`): a title seen small or far (the grown far-LOD title) is minified many
+times over, and a plain `LinearFilter` there aliased into jagged, dropped-stroke glyphs.
 
 ## 8d. Face fields: edit mode and the projected editor (`faces.js`, `block3d.js`, `ui/field-editor.js`)
 
