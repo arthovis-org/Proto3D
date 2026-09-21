@@ -68,7 +68,9 @@ const FADE = 0.28;
 const PICK_RANK = { port: 0, sub: 1, face: 2, block: 3, connection: 4, bundle: 5, group: 6 };
 const PICK_EPS = 1e-3;      // "same depth": within this fraction of the hit distance …
 const PICK_EPS_MIN = 0.02;  // … or this many world units (coplanar helper meshes sit 0.01–0.02 apart)
-const CABLE_PICK_BIAS = 0.16;   // the fat invisible pick tube / end rings compete at the depth of the thin cable axis, not their inflated surface
+const CABLE_PICK_BIAS = 0.16;
+const TOUCH_PICK_PX = 22;       // a finger's reach: a port or cable end within this many screen px wins over what is exactly under it
+const LONG_PRESS_MS = 500, LONG_PRESS_PX = 8;   // touch: a still finger this long box-selects (empty space) or opens the properties (a block)   // the fat invisible pick tube / end rings compete at the depth of the thin cable axis, not their inflated surface
 
 export class Interaction {
   constructor({ camera, renderer, controls, world, selection, history, gizmo = null, createInstance, overlays = null, guides = null, onHoverConnection = () => {}, onFocus = () => {}, onFrameAll = () => {}, onGizmoMode = () => {}, onTogglePanel = () => {}, onOpenPanel = () => {} }) {
@@ -96,12 +98,16 @@ export class Interaction {
     this.downPos = new THREE.Vector2();
     this.lastPointer = { x: 0, y: 0 };
     this.shift = false;
+    this.touchPress = null;  // { id, x, y, moved, timer, consumed } while one finger is down (touch ignores the preset's mouse rows)
     this.marqueeEl = document.getElementById('marquee');
 
     const el = renderer.domElement;
+    // a second finger: the Navigator pans / pinches; whatever this finger was doing is dropped (blocks spring back, a marquee vanishes)
+    controls.addEventListener?.('multitouch', () => this.cancel({ editor: false }));
     el.addEventListener('pointermove', (e) => this.onMove(e));
     el.addEventListener('pointerdown', (e) => this.onDown(e));
     window.addEventListener('pointerup', (e) => this.onUp(e));
+    window.addEventListener('pointercancel', (e) => { if (e.pointerType === 'touch' && this.touchPress) this.cancel({ editor: false }); });   // the browser took the finger
     el.addEventListener('pointerleave', () => { if (!this.connect && !this.drag) { this._setHover(null); this._setHoverSub(null); } });
     el.addEventListener('dblclick', (e) => this.onDblClick(e));
     window.addEventListener('keydown', (e) => this.onKey(e));
@@ -130,6 +136,30 @@ export class Interaction {
     this.lastPointer = { x: e.clientX, y: e.clientY };
     this.pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     this.ray.setFromCamera(this.pointer, this.camera);
+  }
+  /**
+   * The pick for a finger: what is under it, unless a port or a cable end lies within TOUCH_PICK_PX
+   * around it — those are small, and a finger hides them. Up to sixteen extra rays on two rings
+   * (only the inner ring when the finger is on a body, so a tap on a block stays a tap on the
+   * block); the nearest such hit (in screen distance) wins. The ray is left at the finger afterwards.
+   */
+  pickTouch(e) {
+    const base = this.pick();
+    const small = (h) => h && (h.kind === 'port' || (h.kind === 'connection' && (h.end || h.waypoint !== null)));
+    if (small(base)) return base;
+    const onBody = base && (base.kind === 'block' || base.kind === 'face' || base.kind === 'sub');
+    let best = null;
+    for (const r of onBody ? [TOUCH_PICK_PX / 2] : [TOUCH_PICK_PX / 2, TOUCH_PICK_PX]) {
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * 2 * Math.PI;
+        this._setPointer({ clientX: e.clientX + Math.cos(a) * r, clientY: e.clientY + Math.sin(a) * r });
+        const h = this.pick();
+        if (small(h)) { best = h; break; }
+      }
+      if (best) break;
+    }
+    this._setPointer(e);
+    return best || base;
   }
   _visibleNodes() { return this.world.nodes.filter((n) => n.visible); }
   /** Ports that can be picked: only on blocks that show them (wiring switch or per-block override). */
@@ -355,6 +385,12 @@ export class Interaction {
 
   /* ---------- pointer ---------- */
   onMove(e) {
+    if (e.pointerType === 'touch') {
+      const T = this.touchPress;
+      if (!T || T.id !== e.pointerId) return;   // a second finger belongs to the Navigator; nothing hovers under a finger
+      if (!T.moved && Math.hypot(e.clientX - T.x, e.clientY - T.y) > LONG_PRESS_PX) { T.moved = true; clearTimeout(T.timer); }
+      if (T.consumed || (!this.drag && !this.marquee && !this.connect && !this.subDrag && !this.faceDrag && !this.wpDrag && !this.pendingDetach && !this.pendingWaypoint)) return;
+    }
     this._setPointer(e);
     if (this.gizmo && this.gizmo.dragging) { this._cursor('move'); return; }
     if (this.marquee) { this._updateMarquee(e); return; }
@@ -400,7 +436,14 @@ export class Interaction {
 
   onDown(e) {
     if (this.gizmoBusy) return;
-    const action = this.controls.mouseAction ? this.controls.mouseAction(e) : nav.resolveMouse(e);
+    const touch = e.pointerType === 'touch';
+    if (touch) {
+      if (this.touchPress || this.controls.touches?.size > 1) return;   // a second finger: the Navigator's
+      if (this.gizmo?.enabled && this.gizmo.control.visible) { try { this.gizmo.control.pointerHover(this.gizmo.control._getPointer(e)); } catch (_) { /* older TransformControls */ } if (this.gizmoBusy) return; }   // no hover precedes a tap: let the gizmo claim its handle first
+      this.touchPress = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, timer: 0, consumed: false };
+      this.touchPress.timer = setTimeout(() => this._touchLongPress(), LONG_PRESS_MS);
+    }
+    const action = touch ? null : this.controls.mouseAction ? this.controls.mouseAction(e) : nav.resolveMouse(e);   // touch ignores the preset's mouse rows
     if (e.button !== 0) {
       // right-click under a preset that uses it for selection: select the block and open its properties
       if (action === 'contextSelect') {
@@ -418,7 +461,8 @@ export class Interaction {
     this._setPointer(e);
     this.downPos.set(e.clientX, e.clientY);
     this.pressFace = null; this.pendingDetach = null; this.pendingWaypoint = null;
-    const hit = this.pick();
+    const hit = touch ? this.pickTouch(e) : this.pick();
+    if (touch) this.touchPress.target = hit && (hit.kind === 'block' || hit.kind === 'face' || hit.kind === 'sub' || hit.kind === 'group' || hit.kind === 'connection') ? hit.target : null;
     const onBody = hit && (hit.kind === 'face' || hit.kind === 'block' || hit.kind === 'sub');
     const EB = this.editBlock;
     if (EB) {
@@ -440,7 +484,9 @@ export class Interaction {
     }
 
     if (!hit) {
-      // empty space: the preset decides between a box select and a camera move (in 2D orbit is off, so a plain press box-selects)
+      // empty space: the preset decides between a box select and a camera move (in 2D orbit is off, so a plain press box-selects);
+      // a finger orbits / pans (the Navigator keeps it) unless it stays still: the long press box-selects
+      if (touch) return;
       if (action === 'marquee' || action === 'marqueeAdd' || (this.controls.planMode && action === null)) { this._startMarquee(e, action === 'marqueeAdd'); }
       return;
     }
@@ -497,6 +543,22 @@ export class Interaction {
       return;
     }
     if (hit.kind === 'bundle') { const b = hit.target; if (this.add) b.members.forEach((m) => this.selection.toggle(m)); else this.selection.set(b.members); }
+  }
+  /** A finger held still for LONG_PRESS_MS: on empty space a box select starts where it landed; on a block (group, cable) the press becomes select + properties and the drag it started is undone. */
+  _touchLongPress() {
+    const T = this.touchPress;
+    if (!T || T.moved || T.consumed) return;
+    if (this.controls.touches?.size > 1) return;
+    if (!T.target) {
+      if (this.marquee || this.drag || this.connect || this.pendingDetach || this.pendingWaypoint || this.wpDrag) return;
+      this._startMarquee({ clientX: T.x, clientY: T.y }, false);   // disables the Navigator, so the finger stops orbiting
+      return;
+    }
+    this.cancel({ editor: false });   // the block springs back, nothing is recorded
+    this.touchPress = T; T.consumed = true;
+    this.controls.enabled = false;    // the rest of this press belongs to nobody
+    this.selection.set([T.target]);
+    this.onOpenPanel(T.target);
   }
   _beginBlockDrag(block, point, e) {
     if (block.subSelection) { block.subSelection = null; block.faceDirty = true; if (this.selection.has(block)) this.selection.refresh(); }
@@ -779,6 +841,12 @@ export class Interaction {
 
   onUp(e) {
     if (this.gizmo && this.gizmo.dragging) return;
+    if (e.pointerType === 'touch') {
+      const T = this.touchPress;
+      if (!T || T.id !== e.pointerId) return;   // a second finger, or a press the Navigator's pinch already cancelled
+      clearTimeout(T.timer); this.touchPress = null;
+      if (T.consumed) { this.controls.enabled = true; return; }
+    }
     if (e.button !== 0 && !this.keyDrag) return;
     this.controls.enabled = true;
     this.pendingDetach = null; this.pendingWaypoint = null;
@@ -1070,11 +1138,12 @@ export class Interaction {
     if (targets.length) this.onFocus(targets);
   }
   /** Esc: abandon whatever is in flight. A detached cable goes back where it was. */
-  cancel() {
+  /** Drop every press in flight: cables back where they were, dragged blocks spring back (no history), the marquee vanishes. `editor: false` leaves edit mode alone (a second finger landing). */
+  cancel({ editor = true } = {}) {
+    if (this.touchPress) { clearTimeout(this.touchPress.timer); this.touchPress = null; }
     this.pendingDetach = null;
     this.pressField = null;
-    this.fieldEditor?.cancel();
-    this.fieldEditor?.leaveEdit();
+    if (editor) { this.fieldEditor?.cancel(); this.fieldEditor?.leaveEdit(); }
     if (this.connect) {
       const C = this.connect; this.connect = null;
       C.snapped?.setHover(false);

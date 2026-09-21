@@ -18,7 +18,9 @@ export class Gizmo {
     this._before = null;
 
     this.control = new TransformControls(camera, renderer.domElement);
-    this.control.setSize(0.85);
+    // TransformControls handles touch pointers itself (its invisible pickers are already fatter than the handles); a finger gets a larger gizmo
+    let coarse = false; try { coarse = !!window.matchMedia?.('(pointer: coarse)').matches; } catch (_) { /* ignore */ }
+    this.control.setSize(coarse ? 1.15 : 0.85);
     this.control.enabled = false;
     this.control.visible = false;
     this.control.addEventListener('dragging-changed', (e) => {

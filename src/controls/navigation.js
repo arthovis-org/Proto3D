@@ -24,6 +24,13 @@
 // wheel events (non-integer deltas, horizontal deltas without Shift, a pinch) are counted; after
 // a few the controller dispatches one 'trackpad' event that ui/nav-hint.js turns into a suggestion.
 //
+// Touch (pointerType 'touch') ignores the preset's mouse rows. The controller tracks the active
+// fingers by pointerId: one finger orbits (pans in 2D) unless the interaction layer takes the press
+// (it disables the controller, as for a block drag with the mouse); when a second finger lands the
+// controller dispatches 'multitouch' (the interaction layer drops whatever it was doing and
+// re-enables the controller) and pans by the centroid delta while zooming towards the centroid by
+// the distance ratio. The first touch ever dispatches 'touch' (`touchSeen`) for the hints.
+//
 // 2D editing mode (plan.js): `planMode` remaps the preset — orbit and turn are off (a middle or
 // right button that would orbit pans instead, a left button that would orbit does nothing so the
 // interaction layer can box-select), Space + left-drag pans, the wheel always zooms about the
@@ -120,6 +127,9 @@ export class Navigator extends THREE.EventDispatcher {
     this.trackpadEvents = 0;   // trackpad-like wheel events seen (auto-detection; ui/nav-hint.js listens for 'trackpad')
     this.trackpadSeen = false; // the 'trackpad' event has fired
     this._gesture = null;      // Safari pinch: { scale } while a gesture runs (suppresses the Ctrl-wheel path)
+    this.touches = new Map();  // pointerId → { x, y } of every finger on the canvas
+    this.touch = null;         // { mode: 'single', id } | { mode: 'pinch', cx, cy, d }
+    this.touchSeen = false;    // a touch pointer was seen (the hints and the help sheet switch to gestures)
     this._lastPointer = { x: 0, y: 0 };
     this._clock = performance.now();
 
@@ -167,6 +177,7 @@ export class Navigator extends THREE.EventDispatcher {
   /** What a press means for the camera right now (the interaction layer asks the same). */
   mouseAction(e) { const a = nav.resolveMouse(e); return this.planMode ? this._planAction(a, e) : a; }
   onPointerDown(e) {
+    if (e.pointerType === 'touch') { this._touchDown(e); return; }
     if (!this.enabled || this.drag) return;
     const action = this.mouseAction(e);
     if (!nav.isCameraAction(action)) return;
@@ -178,6 +189,7 @@ export class Navigator extends THREE.EventDispatcher {
   }
   onPointerMove(e) {
     this._lastPointer = { x: e.clientX, y: e.clientY };
+    if (e.pointerType === 'touch') { this._touchMove(e); return; }
     const d = this.drag; if (!d) return;
     if (!this.enabled) { this.drag = null; this.flying = false; return; }   // the interaction layer took the press (a block drag)
     const dx = e.clientX - d.x, dy = e.clientY - d.y;
@@ -193,6 +205,7 @@ export class Navigator extends THREE.EventDispatcher {
     }
   }
   onPointerUp(e) {
+    if (e.pointerType === 'touch') { this._touchUp(e); return; }
     if (!this.drag) return;
     if (this.drag.pointerId === e.pointerId || e.type === 'pointercancel') {
       this.drag = null; this.flying = false;
@@ -200,6 +213,51 @@ export class Navigator extends THREE.EventDispatcher {
       this.dispatchEvent({ type: 'end' });
     }
   }
+  /* ---------- touch ---------- */
+  _pinchState() { const [a, b] = [...this.touches.values()]; return { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) }; }
+  _touchDown(e) {
+    this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (!this.touchSeen) { this.touchSeen = true; this.dispatchEvent({ type: 'touch' }); }
+    try { this.domElement.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    const n = this.touches.size;
+    if (n === 1) {
+      // one finger: orbit (pan in 2D) unless the interaction layer takes the press, which disables the controller
+      if (!this.enabled) return;
+      this.touch = { mode: 'single', id: e.pointerId };
+      this.dispatchEvent({ type: 'start' });
+    } else if (n === 2) {
+      // a second finger: whatever the first one was doing (a block drag, a marquee, an orbit) ends; the pair pans and pinches
+      this.dispatchEvent({ type: 'multitouch' });
+      this.drag = null; this.flying = false;
+      this.touch = { mode: 'pinch', ...this._pinchState() };
+      this.dispatchEvent({ type: 'start' });
+    }
+  }
+  _touchMove(e) {
+    const t = this.touches.get(e.pointerId); if (!t) return;
+    const px = t.x, py = t.y; t.x = e.clientX; t.y = e.clientY;
+    const T = this.touch; if (!T || !this.enabled) return;   // disabled: the interaction layer has the finger
+    if (T.mode === 'single') {
+      if (T.id !== e.pointerId) return;
+      const dx = e.clientX - px, dy = e.clientY - py;
+      if (this.planMode) { this._panBy(dx, dy); return; }
+      const s = this.settings, h = this.domElement.clientHeight || 1;
+      const rot = (s.invertOrbit ? -1 : 1) * s.orbitSpeed * 2 * Math.PI / h;
+      this.sphericalDelta.theta -= dx * rot; this.sphericalDelta.phi -= dy * rot;
+    } else if (T.mode === 'pinch' && this.touches.size >= 2) {
+      const s = this._pinchState();
+      this._panBy(s.cx - T.cx, s.cy - T.cy);
+      if (s.d > 1 && T.d > 1) { let k = T.d / s.d; if (this.settings.invertZoom) k = 1 / k; this._zoomTowards(s.cx, s.cy, THREE.MathUtils.clamp(k, 0.5, 2)); }
+      Object.assign(T, s);
+    }
+  }
+  _touchUp(e) {
+    this.touches.delete(e.pointerId);
+    try { this.domElement.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    if (this.touches.size === 0) { if (this.touch) { this.touch = null; this.dispatchEvent({ type: 'end' }); } }
+    else if (this.touches.size === 1 && this.touch?.mode === 'pinch') { const [id] = this.touches.keys(); this.touch = { mode: 'single', id }; }   // the remaining finger carries on from where it is
+  }
+
   /** A wheel event that is really a pinch: ctrlKey without a physical Control key (and no Safari gesture running, which reports the same pinch itself). */
   isPinch(e) { return !!e.ctrlKey && !e.metaKey && !this.ctrlHeld && !this._gesture; }
   /** Wheel deltas in pixels (deltaMode lines / pages converted), each axis capped so a flick cannot spin the camera. */

@@ -58,7 +58,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 body.panel-hidden #viewport { right: 0; }
 body.rail-hidden { --rail-w: 0px; }
 body.rail-hidden #left-bar { display: none; }
-#viewport canvas { display: block; }
+#viewport canvas { display: block; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }   /* fingers drive the camera (controls/navigation.js), never the page */
+#viewport { touch-action: none; }
 body.placing, body.placing * { cursor: copy !important; }
 svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 kbd { font: inherit; font-size: 10.5px; color: var(--text); background: var(--field); border: 1px solid var(--border-strong); border-radius: 5px; padding: 0 5px; line-height: 1.5; }
@@ -479,6 +480,30 @@ body.touring #hint-bar { opacity: 0; pointer-events: none; }   /* the tour card 
 #hint-bar .hb-close { padding: 4px; background: none; color: var(--dim); border-radius: 50%; display: grid; place-items: center; }
 #hint-bar .hb-close:hover { color: var(--text); background: var(--field-hover); }
 #hint-bar .hb-close svg { width: 13px; height: 13px; }
+
+/* ---- Coarse pointers (touchscreens): finger-sized targets. The fine-pointer layout above is untouched. ---- */
+@media (pointer: coarse) {
+  :root { --menubar-h: 44px; --tabstrip-h: 40px; }
+  .mnu-title { height: 40px; line-height: 40px; padding: 0 14px; }
+  .mnu-tools .tb { width: 40px; height: 40px; }
+  .ptab { padding: 0 8px 0 14px; gap: 10px; }
+  .ptab-close { width: 32px; height: 32px; opacity: 1; }
+  .ptab-add { width: 40px; }
+  .rail-btn { min-height: 44px; padding: 10px 2px 8px; }
+  #mini-toolbar { height: 48px; padding: 4px; gap: 4px; }
+  .mtb-btn { height: 40px; min-width: 40px; padding: 0 10px; }
+  .row { min-height: 40px; gap: 10px; }
+  .row input, .row select, .row textarea { min-height: 40px; padding: 9px 10px; }
+  .row input[type="checkbox"] { width: 22px; height: 22px; }
+  .row input[type="color"] { height: 40px; }
+  details.sec > summary, #help > summary { min-height: 40px; align-items: center; }
+  #panel button.wide, .btn-group button { min-height: 40px; }
+  #hint-bar, #nav-hint { padding: 6px 8px 6px 14px; gap: 10px; }
+  #hint-bar .hb-close, #nav-hint .nh-close { min-width: 40px; min-height: 40px; }
+  #nav-hint .nh-action { height: 40px; padding: 0 16px; }
+  .tour-next, .tour-skip { min-height: 40px; }
+  .modal-close { min-width: 40px; min-height: 40px; }
+}
 
 /* ---- Navigation hint (ui/nav-hint.js): the trackpad suggestion and the first-run gesture hint, bottom-centre of the viewport, under the toast ---- */
 #nav-hint {
