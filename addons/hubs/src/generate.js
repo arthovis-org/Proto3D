@@ -72,7 +72,7 @@ export function boardFor(tasks) {
 }
 
 /** Node params for a hub-page from a descriptor. */
-export const pageParams = (d) => ({ url: d.url, title: d.title, section: d.section, audience: d.audience, role: d.role || '', device: d.device || 'desktop', status: d.status || 'planned', live: true, client: d.client || '', order: d.order ?? 0 });
+export const pageParams = (d) => ({ url: d.url, title: d.title, section: d.section, audience: d.audience, role: d.role || '', device: d.device || 'desktop', status: d.status || 'planned', live: true, client: d.client || '', order: d.order ?? 0, preview: d.preview || '' });
 /** The same key for a descriptor and for an existing hub-page node (url first, title + section as a fallback). */
 const pageKey = (p) => `${str(p.url).toLowerCase()}|${str(p.section)}|${str(p.title).toLowerCase()}`;
 

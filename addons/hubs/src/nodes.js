@@ -13,7 +13,7 @@
 // Browser-only behaviour (fly to a page, create nodes) is injected through `hooks` by index.js;
 // in the headless engine the nodes still evaluate, emit and render on a stub 2D context.
 import { SECTIONS, SECTION_IDS, AUDIENCES, DEVICES, STATUSES, LANGS, sectionById } from './template.js';
-import { brandOf, clientBySlug } from './clients.js';
+import { brandOf, clientBySlug, previewFor } from './clients.js';
 import { pagesFor, tasksFor, blueprintSlug } from './generate.js';
 import { cardDims, faceSize, faceLayout, embedHeight, CARD, FACE, ASPECTS } from './sizing.js';
 export { faceLayout, cardDims } from './sizing.js';
@@ -83,6 +83,54 @@ function placeholder(g, r, { status, live, section, url, compact = false }) {
   drawText(g, shortUrl(url), r.x + 14, r.y + r.h - 34, r.w - 28, 22, { size: 12, min: 10, color: pal.faceDim, mono: true });
 }
 
+/* ---------- static previews: the base layer of a page's screen ---------- */
+const previews = new Map();   // path → { img, state: 'loading' | 'ready' | 'failed', waiting: Set<instance> }
+/** Absolute URL of a preview path (relative to the add-on directory; the page has <base> at the core root). */
+export const previewUrl = (path) => new URL(`../${String(path).replace(/^\.?\//, '')}`, import.meta.url).href;
+/**
+ * The preview image for a hub-page, loaded lazily and cached per path; `instance` gets faceDirty when
+ * it arrives so the face repaints. Returns the HTMLImageElement when ready, else null.
+ */
+export function previewImage(params, instance = null) {
+  const path = previewFor(params);
+  if (!path || typeof Image === 'undefined') return null;
+  let e = previews.get(path);
+  if (!e) {
+    e = { img: new Image(), state: 'loading', waiting: new Set() };
+    e.img.decoding = 'async';
+    e.img.onload = () => { e.state = 'ready'; for (const n of e.waiting) n.faceDirty = true; e.waiting.clear(); };
+    e.img.onerror = () => { e.state = 'failed'; e.waiting.clear(); };
+    e.img.src = previewUrl(path);
+    previews.set(path, e);
+  }
+  if (e.state === 'ready') return e.img;
+  if (e.state === 'loading' && instance) e.waiting.add(instance);
+  return null;
+}
+export const previewState = (params) => previews.get(previewFor(params))?.state || (previewFor(params) ? 'none' : 'missing');
+/** Draw `img` cover-fit and top-aligned into the rounded rect `r`, with a soft fade at the bottom. */
+function drawPreview(g, img, r, radius) {
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  if (!iw || !ih) return false;
+  const k = Math.max(r.w / iw, r.h / ih);
+  const sw = r.w / k, sh = r.h / k, sx = (iw - sw) / 2, sy = 0;   // the page's header stays in view
+  g.save();
+  host.draw.roundRect(g, r.x, r.y, r.w, r.h, radius); g.clip();
+  g.drawImage(img, sx, sy, sw, sh, r.x, r.y, r.w, r.h);
+  if (typeof g.createLinearGradient === 'function') {
+    const fade = g.createLinearGradient(0, r.y + r.h * 0.8, 0, r.y + r.h);
+    fade.addColorStop(0, 'rgba(0,0,0,0)'); fade.addColorStop(1, 'rgba(0,0,0,0.35)');
+    g.fillStyle = fade; g.fillRect(r.x, r.y + r.h * 0.8, r.w, r.h * 0.2);
+  }
+  g.restore();
+  return true;
+}
+/** Keep the face content at every LOD: the core would lift the title and fade details past 110 units; a page card is its content. */
+function keepFaceAtEveryLOD(instance) {
+  if (typeof instance.setLOD !== 'function') return;
+  instance.setLOD = function setLOD(level, distance = 0) { this.lodDistance = distance; this.lod = 0; };
+}
+
 /* ---------- hub-page ---------- */
 export const descriptorOf = (params) => ({ url: str(params.url), title: str(params.title), section: params.section, audience: params.audience, role: str(params.role), device: params.device, status: params.status, live: params.live !== false, client: str(params.client), order: +params.order || 0 });
 export function openPage(instance, source = 'event') {
@@ -92,8 +140,8 @@ export function openPage(instance, source = 'event') {
   try { hooks.open?.(instance, source); } catch (e) { console.warn('[hubs] open hook failed:', e); }
   return true;
 }
-/** The face: a slim strip (route · section · audience / role · status) and the page frame the live layer covers. */
-function renderPage(g, w, h, { params, palette }) {
+/** The face: a slim strip (route · section · audience / role · status) and the page frame: the static preview (assets/previews) when it is loaded, the placeholder otherwise; the live layer's iframe covers the same rect. */
+function renderPage(g, w, h, { params, palette, instance }) {
   const { clear, drawText } = host.draw; const pal = palette || P();
   const brand = brandOf(params.client, pal.faceAccent);
   const L = faceLayout(params, w, h);
@@ -108,14 +156,15 @@ function renderPage(g, w, h, { params, palette }) {
   const routeW = L.strip.w - 8 - stw - x - 8;
   if (routeW > 60) drawText(g, routeLabel(params.url), x, y, routeW, ch, { size: 13, min: 10, color: pal.faceDim, mono: true, align: 'right' });
   // the frame
+  const img = params.status === 'live' || params.status === 'building' ? previewImage(params, instance) : null;
   if (L.kind === 'phone') {
     fillRound(g, L.bezel, FACE.radius + 8, '#0d1117', pal.faceLine);
-    fillRound(g, L.screen, FACE.radius, pal.faceCard);
+    fillRound(g, L.screen, FACE.radius, pal.faceCard, pal.faceLine);
+    if (!(img && drawPreview(g, img, L.screen, FACE.radius))) placeholder(g, L.screen, { status: params.status, live: params.live !== false, section: params.section, url: params.url, compact: true });
     g.fillStyle = '#0d1117'; host.draw.roundRect(g, L.screen.x + L.screen.w / 2 - 30, L.screen.y + 6, 60, 12, 6); g.fill();   // the notch
-    placeholder(g, L.screen, { status: params.status, live: params.live !== false, section: params.section, url: params.url, compact: true });
   } else {
     fillRound(g, L.screen, 10, pal.faceCard, pal.faceLine);
-    placeholder(g, L.screen, { status: params.status, live: params.live !== false, section: params.section, url: params.url });
+    if (!(img && drawPreview(g, img, L.screen, 10))) placeholder(g, L.screen, { status: params.status, live: params.live !== false, section: params.section, url: params.url });
   }
 }
 /** The card body: a slab sized per instance (sizing.js), a brand accent line under the title band, the face below. */
@@ -178,8 +227,10 @@ const pageDef = {
     { key: 'height', label: 'card height (0 = global)', type: 'number', default: 0, min: 0, max: CARD.maxHeight, step: 0.5 },
     { key: 'aspect', label: 'page width', type: 'select', options: [...ASPECTS], default: 'device' },
     { key: 'pageWidth', label: 'custom width (px)', type: 'number', default: 1280, min: 240, max: 2560, step: 10 },
+    { key: 'preview', label: 'preview image (path)', type: 'text', default: '' },
   ],
   body3d: pageBody,
+  onCreate: keepFaceAtEveryLOD,
   onEvent(ctx, key) { if (key === 'open') openPage(ctx.instance, 'event'); },
   evaluate({ params }) { return { page: descriptorOf(params) }; },
   footer: ({ params }) => `${sectionById(params.section)?.short || params.section} · ${statusWord(params.status).toLowerCase()} · ${params.device}`,
@@ -286,6 +337,7 @@ const blueprintDef = {
     { key: 'sections', label: 'sections', type: 'json', default: [...SECTION_IDS] },
     { key: 'status', label: 'status', type: 'select', options: [...STATUSES], default: 'planned' },
   ],
+  onCreate: keepFaceAtEveryLOD,
   onEvent(ctx, key) { if (key === 'generate') requestGenerate(ctx.instance, 'event'); },
   evaluate({ params, instance }) { const c = blueprintCache(instance, params); return { pages: c.pages, tasks: c.tasks, count: c.pages.length }; },
   footer: ({ params, instance }) => { const c = blueprintCache(instance, params); return `${c.pages.length} pages · ${c.tasks.length} sections · ${statusWord(params.status).toLowerCase()}`; },

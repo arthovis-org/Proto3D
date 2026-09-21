@@ -21,7 +21,7 @@ function heightSlider(cls, api) {
   return { wrap, range, out, sync(v) { range.value = String(v); out.textContent = (+v).toFixed(1); } };
 }
 
-const BUDGETS = [0, 4, 8, 12, 16];
+const BUDGETS = [0, 4, 8, 16, 24, 40];
 
 export function installUI(host, api) {
   const flowbar = document.createElement('div'); flowbar.id = 'hub-flowbar'; flowbar.setAttribute('role', 'toolbar'); flowbar.setAttribute('aria-label', 'Hub flows');
@@ -50,7 +50,7 @@ export function installUI(host, api) {
     panelHeight = heightSlider('hub-row hub-height-row', api); panelHeight.range.id = 'hub-embed-height'; body.appendChild(panelHeight.wrap);
     const r1 = h('div', 'hub-row'); const l1 = h('label', null, 'Live frames'); liveCheck = document.createElement('input'); liveCheck.type = 'checkbox'; liveCheck.id = 'hub-live-check';
     liveCheck.addEventListener('change', () => api.setLive(liveCheck.checked)); l1.htmlFor = liveCheck.id; r1.append(l1, liveCheck); body.appendChild(r1);
-    const r2 = h('div', 'hub-row'); const l2 = h('label', null, 'Budget'); range = document.createElement('input'); range.type = 'range'; range.min = '0'; range.max = '16'; range.step = '1'; range.id = 'hub-budget';
+    const r2 = h('div', 'hub-row'); const l2 = h('label', null, 'Budget'); range = document.createElement('input'); range.type = 'range'; range.min = '0'; range.max = '40'; range.step = '1'; range.id = 'hub-budget';
     rangeOut = h('output'); range.addEventListener('input', () => { rangeOut.textContent = range.value; api.setBudget(+range.value); }); l2.htmlFor = range.id; r2.append(l2, range, rangeOut); body.appendChild(r2);
     countsEl = h('div', 'hub-counts'); body.appendChild(countsEl);
     const flows = h('div', 'hub-flows');
@@ -69,7 +69,7 @@ export function installUI(host, api) {
       { label: 'Live pages', items: [
         { label: 'Show live frames', checked: !!api.settings.live, run: () => api.setLive(!api.settings.live) },
         { sep: true, label: 'Budget (nearest pages with a live frame)' },
-        ...BUDGETS.map((n) => ({ label: n === 0 ? 'None' : `${n} pages`, checked: api.settings.budget === n, radio: true, run: () => api.setBudget(n) })),
+        ...BUDGETS.map((n) => ({ label: n === 0 ? 'None' : n === 40 ? 'All (up to 40)' : `${n} pages`, checked: api.settings.budget === n, radio: true, run: () => api.setBudget(n) })),
       ] },
       { sep: true },
       { label: sel ? `Open ${sel.title}` : 'Open selected page', hint: 'fly to the selected page and make its live frame interactive', disabled: !sel, shortcut: 'Enter on a page', run: () => api.interact(sel) },
@@ -97,7 +97,7 @@ export function installUI(host, api) {
     liveBtn.classList.toggle('is-on', !!c.enabled);
     liveBtn.innerHTML = `<i></i>Live <b>${c.enabled ? `${c.live}/${c.eligible}` : 'off'}</b>`;
     count.textContent = `${c.pages} page${c.pages === 1 ? '' : 's'} · ${clients.length} client${clients.length === 1 ? '' : 's'}`;
-    if (range) { range.value = String(c.budget); rangeOut.textContent = String(c.budget); }
+    if (range) { range.value = String(c.budget); rangeOut.textContent = c.budget >= 40 ? 'All' : String(c.budget); }
     barHeight.sync(api.settings.embedHeight); panelHeight?.sync(api.settings.embedHeight);
     if (liveCheck) liveCheck.checked = !!c.enabled;
     if (countsEl) countsEl.innerHTML = `<b>${c.pages}</b> pages · <b>${c.live}</b> live frame${c.live === 1 ? '' : 's'} of <b>${c.eligible}</b> eligible · <b>${clients.length}</b> client${clients.length === 1 ? '' : 's'}${c.interactive ? ' · <b>interactive</b>' : ''}`;

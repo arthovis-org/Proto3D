@@ -44,10 +44,10 @@ test('hubs page: boots with zero errors, CTL OS demo, CSS3D live layer with stub
     await page.waitForFunction(() => document.querySelectorAll('.hub-live iframe[src*="imagine-os.github.io/cal-tenant-law/"]').length > 0, null, { timeout: 15000 });
     await page.waitForTimeout(600);
     const live = await page.evaluate(() => ({ frames: [...document.querySelectorAll('.hub-live iframe')].map((f) => f.src), counts: window.__addon.api.counts(), wrappers: [...document.querySelectorAll('.hub-live')].map((w) => getComputedStyle(w).pointerEvents) }));
-    assert.ok(live.frames.length > 0 && live.frames.length <= 8, `frames within the budget: ${live.frames.length}`);
+    assert.ok(live.frames.length > 0 && live.frames.length <= 16, `frames within the budget: ${live.frames.length}`);
     assert.ok(live.frames.every((s) => s.startsWith('https://imagine-os.github.io/cal-tenant-law/')), live.frames.join('\n'));
     assert.ok(live.wrappers.every((pe) => pe === 'none'), 'no frame is interactive before a click');
-    assert.equal(live.counts.pages, 21); assert.equal(live.counts.eligible, 21); assert.ok(live.counts.live > 0 && live.counts.live <= 8); assert.equal(live.counts.budget, 8);
+    assert.equal(live.counts.pages, 21); assert.equal(live.counts.eligible, 21); assert.ok(live.counts.live > 0 && live.counts.live <= 16); assert.equal(live.counts.budget, 16);
     assert.ok(stubbed > 0, 'the stub served the iframes');
 
     /* ---- 3. interact mode through the api, Escape leaves ---- */
@@ -85,7 +85,7 @@ test('hubs page: boots with zero errors, CTL OS demo, CSS3D live layer with stub
     const after = await page.evaluate(positions);
     assert.notDeepEqual(after, lanes, 'compare moved the pages again');
     assert.equal(new Set(after.map(([, x, y, z]) => `${x}|${y}|${z}`)).size, after.length, 'no two pages share a position');
-    assert.ok(new Set(after.map(([, , y]) => y)).size <= 2, 'compare with one client: one level (the back bank sits 2 units up)');
+    assert.ok(new Set(after.map(([, , y]) => y)).size <= 3, 'compare with one client: one level (back banks sit 2 units up each)');
     assert.ok(before.some(([, , , , ry]) => Math.abs(ry) > 0.2), 'the delivery arc rotated cards toward its centre');
     const flowState = await page.evaluate(() => ({ active: document.querySelector('#hub-flowbar .hub-flow.is-active')?.dataset.flow, canUndo: window.__proto.history.canUndo, labels: window.__proto.history.undoStack.map((c) => c.label), saved: JSON.parse(localStorage.getItem('proto3d.addon.hubs.settings.v1')).flow }));
     assert.equal(flowState.active, 'compare'); assert.equal(flowState.canUndo, true); assert.match(flowState.labels.at(-1), /^Arrange · Compare/); assert.match(flowState.labels.at(-2), /^Arrange · Audience/); assert.equal(flowState.saved, 'compare');
@@ -131,6 +131,36 @@ test('hubs page: boots with zero errors, CTL OS demo, CSS3D live layer with stub
     assert.equal(await page.evaluate(() => window.__proto.world.nodes.filter((n) => n.typeId === 'hub-page').length), 21);
     await page.waitForTimeout(400);
     assert.equal(await page.evaluate(() => [...document.querySelectorAll('.hub-live')].every((w) => window.__proto.world.nodes.some((n) => n.uid === w.dataset.uid))), true, 'no element for a removed node lingers');
+
+    /* ---- 6b. previews, budget "All", facing: the screen always shows page content ---- */
+    await page.evaluate(() => window.__addon.api.frame('delivery')); await page.waitForTimeout(1500);
+    await page.evaluate(() => { const P = window.__proto; const t = P.ws.controls.target.clone(); const dir = P.ws.camera.position.clone().sub(t).normalize(); P.ws.flyTo(t.clone().addScaledVector(dir, 180), t, 0); });   // far out: 180 units
+    await page.waitForFunction(() => window.__proto.world.nodes.filter((n) => n.typeId === 'hub-page').every((n) => n.lod === 0), null, { timeout: 5000 });
+    await page.waitForTimeout(2500);   // previews load (served locally by the harness), faces repaint
+    const far = await page.evaluate(() => {
+      const P = window.__proto; const cam = P.ws.camera;
+      const pages = P.world.nodes.filter((n) => n.typeId === 'hub-page');
+      const sample = (n) => { const f = n.face; const g = f.canvas.getContext('2d'); const s = f.scale; const cw = f.canvas.width, ch = f.canvas.height; const pts = [[0.3, 0.45], [0.5, 0.5], [0.7, 0.6], [0.5, 0.75]].map(([u, v]) => g.getImageData(Math.floor(cw * u), Math.floor(ch * v), 1, 1).data); const colours = new Set(pts.map((d) => `${d[0]},${d[1]},${d[2]}`)); return { colours: colours.size, white: pts.every((d) => d[0] > 245 && d[1] > 245 && d[2] > 245), s }; };
+      return { dist: +cam.position.distanceTo(P.ws.controls.target).toFixed(0), lod: pages.map((n) => n.lod), samples: pages.slice(0, 6).map(sample), states: pages.map((n) => window.__addon.api.previewState(n.params)) };
+    });
+    assert.ok(far.dist >= 170, `camera far out (${far.dist})`); assert.ok(far.lod.every((l) => l === 0), 'hub-page faces are never at far LOD');
+    assert.ok(far.states.filter((st) => st === 'ready').length >= 15, `previews loaded: ${JSON.stringify(far.states)}`);
+    assert.ok(far.samples.every((sm) => sm.colours >= 2 && !sm.white), `far faces show page imagery, not a blank frame: ${JSON.stringify(far.samples)}`);
+    // budget "All": more than 8 frames live at once
+    await page.evaluate(() => window.__addon.api.setBudget(40)); await page.waitForTimeout(900);
+    const all = await page.evaluate(() => window.__addon.api.counts());
+    assert.ok(all.live > 8, `All: ${all.live} live frames`); assert.equal(all.budget, 40);
+    // facing: a back-facing card hides its frame, a 70° oblique one keeps it
+    const facing = await page.evaluate(async () => {
+      const P = window.__proto; const live = window.__addon.api.live;
+      const pick = P.world.nodes.filter((n) => n.typeId === 'hub-page' && live.entries.get(n)?.live).slice(0, 2);
+      const yaw = (n, deg) => { const t = P.ws.camera.position.clone().sub(n.position); n.rotation.y = Math.atan2(t.x, t.z) + deg * Math.PI / 180; };
+      yaw(pick[0], 180); yaw(pick[1], 70);
+      await new Promise((r) => setTimeout(r, 500));
+      return { back: live.entries.get(pick[0]).obj.visible, oblique: live.entries.get(pick[1]).obj.visible, backEl: live.entries.get(pick[0]).el.style.display, obliqueEl: live.entries.get(pick[1]).el.style.display };
+    });
+    assert.equal(facing.back, false); assert.equal(facing.backEl, 'none'); assert.equal(facing.oblique, true); assert.notEqual(facing.obliqueEl, 'none');
+    await page.evaluate(() => window.__addon.api.setBudget(16));
 
     /* ---- 7. storage: everything the page wrote is under the add-on prefix (the theme passes through) ---- */
     const rawKeys = await page.evaluate(() => { const raw = window.__protoStorageIsolation.raw.localStorage; const ks = []; for (let i = 0; i < raw.length; i++) ks.push(raw.key(i)); return ks; });

@@ -3,15 +3,15 @@
 
 /* ---- live layer: a DOM plane over the WebGL canvas (live-layer.js) ---- */
 #hub-live-layer { position: absolute; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
-.hub-live { pointer-events: none; box-sizing: border-box; background: #0b0f14; border-radius: 12px; overflow: hidden; contain: layout paint; }
-.hub-live[data-device="phone"] { border-radius: 20px; background: #000; }
+.hub-live { pointer-events: none; box-sizing: border-box; background: transparent; border-radius: 12px; overflow: hidden; contain: layout paint; }   /* transparent: the face's static preview shows until the page paints */
+.hub-live[data-device="phone"] { border-radius: 20px; }
 .hub-live-chrome { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 6px; padding: 0 14px; box-sizing: border-box; background: #1a2230; color: #8b9ab5; font: 500 13px/1 "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
 .hub-live-chrome i { width: 10px; height: 10px; border-radius: 50%; background: #ff5c6c; flex: none; }
 .hub-live-chrome i:nth-child(2) { background: #f5b942; } .hub-live-chrome i:nth-child(3) { background: #34c99a; }
 .hub-live-url { margin-left: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hub-live-screen { position: absolute; overflow: hidden; background: #fff; }
+.hub-live-screen { position: absolute; overflow: hidden; background: transparent; }
 .hub-live[data-device="phone"] .hub-live-screen { border-radius: 18px; }
-.hub-live iframe { display: block; border: 0; background: #fff; }
+.hub-live iframe { display: block; border: 0; background: transparent; }
 .hub-live-done { display: none; position: absolute; right: 10px; top: 4px; z-index: 2; height: 26px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--accent, #5aa9ff); color: #fff; font: 700 13px/26px Inter, system-ui, sans-serif; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
 .hub-live[data-device="phone"] .hub-live-done { top: 30px; right: 50%; transform: translateX(50%); }
 .hub-live.is-interactive { pointer-events: auto; outline: 4px solid var(--accent, #5aa9ff); outline-offset: 2px; box-shadow: 0 0 0 10px rgba(90,169,255,.18), 0 20px 60px rgba(0,0,0,.45); }

@@ -5,13 +5,14 @@
 // same rectangle). The element measures the frame's face pixels and the CSS3DObject is scaled by
 // 1 / 120 (sizes.face.pxPerUnit), so it covers the frame exactly.
 //
-// Rules: only the N nearest on-screen pages with live = true and status = live get an iframe (the
-// budget, default 8, with hysteresis so frames do not thrash); the layer itself is pointer-events:
+// Rules: only the N biggest on-screen pages (projected area) with live = true and status = live get an
+// iframe (the budget, default 16, "All" = 40, with hysteresis so frames do not thrash); the layer itself is pointer-events:
 // none so dragging, selecting and the camera keep working; a click on a page face makes that one
 // element interactive (pointer-events: auto, an accent outline, a Done button) and flies the camera
 // to face it; Done, Escape or a pointerdown on the WebGL canvas leave. Elements are hidden while
-// the face is back-facing, off-screen, too small on screen (< 44 px wide) or the node hidden, and
-// disposed when the node is gone, resized or out of the budget for a while.
+// the face is back-facing (past ~85°, with hysteresis), off-screen, invisible (< 10 px) or the node
+// hidden — the face's static preview shows instead — and disposed when the node is gone, resized or
+// out of the budget for a while.
 //
 // Limits: a DOM layer is always drawn over the WebGL scene, so a live frame is never occluded by a
 // nearer block; cross-origin pages cannot be read or styled; nothing renders while `status` is not
@@ -26,9 +27,10 @@ import * as motion from './motion.js';
 const RANK_EVERY = 0.25;       // seconds between budget re-evaluations
 const HYSTERESIS = 0.8;        // a page already live counts as this much closer
 const UNLOAD_AFTER = 20;       // seconds out of the budget before its iframe is dropped
-const FACING_MIN = 0.12;       // cos of the largest angle at which a face still shows its frame
+const FACING_ON = 0.09, FACING_OFF = 0.05;   // cos thresholds (~85°): a frame shows once the face turns past ON and hides past OFF (hysteresis); the static preview covers the rest
 const INTERACT_FILL = 0.7;     // the face fills this much of the viewport when interacting
-const MIN_PX = 44;             // a card narrower than this on screen shows its canvas face only (no iframe)
+const MIN_PX = 10;             // a card narrower than this on screen is invisible anyway: no iframe
+export const BUDGET_MAX = 40;  // "All"
 
 export function createLiveLayer(host, { budget = 8, enabled = true, onChange = null } = {}) {
   const proto = window.__proto;
@@ -45,7 +47,7 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
   viewport.appendChild(root);
   const cssScene = new THREE.Scene();
   const entries = new Map();   // node → entry
-  const state = { budget: Math.max(0, +budget || 0), enabled: enabled !== false, interactive: null, rankAt: -1, liveCount: 0, running: false, raf: 0, last: 0 };
+  const state = { budget: Math.min(BUDGET_MAX, Math.max(0, +budget || 0)), enabled: enabled !== false, interactive: null, rankAt: -1, liveCount: 0, running: false, raf: 0, last: 0 };
 
   function resize() {
     const c = ws.renderer.domElement;
@@ -101,17 +103,21 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
   /* ---- placement ---- */
   const _pos = new THREE.Vector3(), _quat = new THREE.Quaternion(), _scl = new THREE.Vector3(), _off = new THREE.Vector3(), _n = new THREE.Vector3(), _v = new THREE.Vector3();
   const _box = new THREE.Box3(), _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4();
-  function facing(camera) {   // _pos / _quat hold the face's world transform
+  function facing(e, camera) {   // _pos / _quat hold the face's world transform; hysteresis per entry
     _n.set(0, 0, 1).applyQuaternion(_quat);
     if (camera.isOrthographicCamera) camera.getWorldDirection(_v).negate(); else _v.copy(camera.position).sub(_pos).normalize();
-    return _n.dot(_v) > FACING_MIN;
+    const d = _n.dot(_v);
+    e.facing = e.facing ? d > FACING_OFF : d > FACING_ON;
+    return e.facing;
   }
-  /** Device pixels the card's width covers on screen (perspective: at its distance; orthographic: anywhere). */
-  function projectedWidth(n, camera) {
+  /** Device pixels one world unit covers at the card (perspective: at its distance; orthographic: anywhere). */
+  function pxPerUnit(n, camera) {
     const Hpx = ws.renderer.domElement.height || 1;
-    const ppu = camera.isOrthographicCamera ? Hpx * (camera.zoom || 1) / Math.max(1e-6, camera.top - camera.bottom) : Hpx / (2 * Math.max(1e-3, camera.position.distanceTo(n.position)) * Math.tan(THREE.MathUtils.degToRad(camera.fov || 42) / 2));
-    return ppu * n.width * (n.scale?.x || 1);
+    return camera.isOrthographicCamera ? Hpx * (camera.zoom || 1) / Math.max(1e-6, camera.top - camera.bottom) : Hpx / (2 * Math.max(1e-3, camera.position.distanceTo(n.position)) * Math.tan(THREE.MathUtils.degToRad(camera.fov || 42) / 2));
   }
+  const projectedWidth = (n, camera) => pxPerUnit(n, camera) * n.width * (n.scale?.x || 1);
+  /** Projected area in px²: the budget goes to the biggest cards on screen. */
+  const projectedArea = (n, camera) => { const k = pxPerUnit(n, camera) * (n.scale?.x || 1); return k * n.width * k * n.height; };
   function place(e, camera) {
     const n = e.node, mesh = n.face?.mesh;
     const show = state.enabled && e.live && mesh && n.visible !== false && (state.interactive === n || projectedWidth(n, camera) >= MIN_PX);
@@ -119,7 +125,7 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     if (e.key !== sizeKey(n)) { e.obj.visible = false; state.rankAt = -1; return false; }   // resized this frame: the ranking pass rebuilds it
     mesh.updateWorldMatrix(true, false);
     mesh.matrixWorld.decompose(_pos, _quat, _scl);
-    if (!facing(camera) || !_frustum.intersectsBox(n.getAABB(_box))) { e.obj.visible = false; return false; }
+    if (!facing(e, camera) || !_frustum.intersectsBox(n.getAABB(_box))) { e.obj.visible = false; return false; }
     const L = e.layout, f = n.face;
     _off.set((L.element.x + L.element.w / 2 - f.cw / 2) / px * _scl.x, -(L.element.y + L.element.h / 2 - f.ch / 2) / px * _scl.y, 0.01).applyQuaternion(_quat);
     e.obj.position.copy(_pos).add(_off);
@@ -139,12 +145,12 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
       if (!state.enabled || !eligible(n) || n.visible === false) { if (e) e.live = false; continue; }
       const pinned = state.interactive === n;
       if (!pinned && (projectedWidth(n, camera) < MIN_PX || !_frustum.intersectsBox(n.getAABB(_box)))) { if (e) e.live = false; continue; }
-      let d = camera.position.distanceTo(n.position);
-      if (e?.live) d *= HYSTERESIS;
-      if (pinned) d = -1;
-      cands.push({ n, d });
+      let score = projectedArea(n, camera);   // bigger on screen ranks first
+      if (e?.live) score /= HYSTERESIS;
+      if (pinned) score = Infinity;
+      cands.push({ n, score });
     }
-    cands.sort((a, b) => a.d - b.d);
+    cands.sort((a, b) => b.score - a.score);
     let live = 0;
     cands.forEach(({ n }, i) => {
       const on = i < state.budget || state.interactive === n;
@@ -234,7 +240,7 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     let pages = 0, eligibleCount = 0; for (const n of world.nodes) if (n.typeId === 'hub-page') { pages++; if (eligible(n)) eligibleCount++; }
     return { pages, eligible: eligibleCount, live: state.liveCount, loaded: entries.size, budget: state.budget, enabled: state.enabled, interactive: state.interactive?.uid || null };
   }
-  function setBudget(n) { state.budget = Math.max(0, Math.min(32, Math.round(+n) || 0)); state.rankAt = -1; onChange?.(counts()); return state.budget; }
+  function setBudget(n) { state.budget = Math.max(0, Math.min(BUDGET_MAX, Math.round(+n) || 0)); state.rankAt = -1; onChange?.(counts()); return state.budget; }
   function setEnabled(on) { state.enabled = !!on; if (!on) { leave({ quiet: true }); for (const e of entries.values()) e.live = false; } state.rankAt = -1; onChange?.(counts()); return state.enabled; }
   /** Drop every element (a world load / example / clear): they are rebuilt for the nodes that are still there. */
   function reset() { leave({ quiet: true }); for (const e of [...entries.values()]) dispose(e); state.rankAt = -1; state.liveCount = 0; onChange?.(counts()); }
@@ -243,5 +249,5 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     window.removeEventListener('keydown', onKey); ws.renderer.domElement.removeEventListener('pointerdown', onCanvasDown); root.remove();
   }
 
-  return { root, css, scene: cssScene, entries, state, start, stop, interact, leave, flyToFace, counts, setBudget, setEnabled, reset, destroy, resize, get interactive() { return state.interactive; }, get budget() { return state.budget; }, get enabled() { return state.enabled; } };
+  return { root, css, scene: cssScene, entries, state, BUDGET_MAX, start, stop, interact, leave, flyToFace, counts, setBudget, setEnabled, reset, destroy, resize, get interactive() { return state.interactive; }, get budget() { return state.budget; }, get enabled() { return state.enabled; } };
 }

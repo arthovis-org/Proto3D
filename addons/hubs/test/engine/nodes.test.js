@@ -7,7 +7,7 @@ import { createHeadlessWorld } from '../../../sdk/testing/headless-engine.js';
 import { scanAddons } from '../../../sdk/testing/drift-guard.js';
 import manifest from '../../addon.json' with { type: 'json' };
 import { register, install, HUB_TYPES } from '../../src/index.js';
-import { blueprintLayout, routeLabel, rgba, hooks } from '../../src/nodes.js';
+import { blueprintLayout, routeLabel, rgba, hooks, previewImage, previewState } from '../../src/nodes.js';
 import { faceLayout, cardDims, faceSize, setEmbedHeight, embedHeight, pageWidthOf, PX, CARD, DEFAULT_EMBED_HEIGHT } from '../../src/sizing.js';
 import { blueprintParams } from '../../src/clients.js';
 import { makeExamples } from '../../src/examples.js';
@@ -23,9 +23,9 @@ test('register() put the three hub- types into the registry with icons; install(
   assert.deepEqual(host.nodes.ids(), HUB_TYPES);
   assert.ok(host.icons.has('hubs') && host.icons.has('hub-page') && host.icons.has('hub-blueprint'));
   assert.ok(host.nodes.get('hub-page').body3d, 'hub-page is a body3d card sized per instance'); assert.deepEqual(host.nodes.get('hub-page').body3d.dims(host.nodes.get('hub-page')), { width: 8.6, height: DEFAULT_EMBED_HEIGHT, depth: 0.16, kind: 'desktop', pageW: 1280 }); assert.equal(host.nodes.get('hub-section').size, 'M');
-  assert.deepEqual(host.nodes.get('hub-page').params.map((p) => p.key), ['url', 'title', 'section', 'audience', 'role', 'device', 'status', 'live', 'client', 'order', 'height', 'aspect', 'pageWidth']);
+  assert.deepEqual(host.nodes.get('hub-page').params.map((p) => p.key), ['url', 'title', 'section', 'audience', 'role', 'device', 'status', 'live', 'client', 'order', 'height', 'aspect', 'pageWidth', 'preview']);
   assert.equal(host.nodes.get('hub-blueprint').outputs.find((o) => o.key === 'tasks').subtype, 'tasks');
-  assert.equal(api.examples.length, 6); assert.equal(api.live, null); assert.equal(host._rec.worldListeners.length, 1); assert.equal(host._rec.errorHandlers.length, 1);
+  assert.equal(api.examples.length, 7); assert.equal(api.live, null); assert.equal(host._rec.worldListeners.length, 1); assert.equal(host._rec.errorHandlers.length, 1);
   assert.equal(hooks.open, null); assert.equal(hooks.generate, null);
   assert.deepEqual(scanAddons(new URL('../../..', import.meta.url).pathname).filter((v) => v.file.includes('/hubs/')), [], 'drift guard: no core imports from the add-on');
 });
@@ -71,6 +71,15 @@ test('hub-page: `page` output describes the page; the `open` event and a face cl
   assert.equal(def.face.onPointer(ctxFor(pg), { type: 'click', u: 0.5, v: 0.5, button: 0 }), true);
   hw.tick(); assert.equal(pulses(pg, 'opened'), 2); assert.equal(pg.state.lastOpen, 'face');
   hw.remove(pg); hw.remove(log);
+});
+
+test('the face stays at every LOD: setLOD on a hub-page / hub-blueprint instance never marks it far; previews are a no-op without Image', () => {
+  const pg = hw.add('hub-page', { url: 'https://imagine-os.github.io/petrock/#/app', client: 'petrock', status: 'live' });
+  pg.setLOD = (level, d) => { pg.lod = level; pg.lodDistance = d; };   // the core Block3D method, as the instance would have it
+  host.nodes.get('hub-page').onCreate(pg);
+  pg.setLOD(1, 180); assert.equal(pg.lod, 0); assert.equal(pg.lodDistance, 180);
+  assert.equal(previewImage(pg.params, pg), null, 'no Image in Node: the face keeps its placeholder'); assert.equal(previewState(pg.params), 'none'); assert.equal(previewState({ client: 'nope' }), 'missing');
+  hw.remove(pg);
 });
 
 test('faces render on a stub 2D context for every device / status without throwing; the blueprint button and checklist are clickable', () => {
@@ -138,14 +147,14 @@ test('sizing: the card is the width of the page, the iframe fills the frame at t
 
 test('demo scenes build in the headless world (hub part only: no PM components registered here)', () => {
   const examples = makeExamples(host);
-  assert.deepEqual(examples.map((e) => e.id), ['hub-cal-tenant-law', 'hub-petrock', 'hub-hoy', 'hub-dorum-lifestyle', 'hub-compare', 'hub-new-client']);
+  assert.deepEqual(examples.map((e) => e.id), ['hub-cal-tenant-law', 'hub-petrock', 'hub-hoy', 'hub-dorum-lifestyle', 'hub-aluzina', 'hub-compare', 'hub-new-client']);
   const named = hw.buildExample(examples[0]);
   assert.equal(named.pages.length, 21); assert.equal(named.bp.typeId, 'hub-blueprint'); assert.equal(hw.world.groups.length, 11); assert.equal(named.timeline, undefined);
   hw.tick(); assert.equal(named.bp.out.count, 21);
   assert.equal(api.counts().pages, 21); assert.equal(api.counts().eligible, 21);
-  const cmp = hw.buildExample(examples[4]);
-  assert.equal(cmp.bps.length, 4); assert.equal(cmp.pages.length, 65);
-  const nc = hw.buildExample(examples[5]);
+  const cmp = hw.buildExample(examples[5]);
+  assert.equal(cmp.bps.length, 5); assert.equal(cmp.pages.length, 89); assert.equal(cmp.labels.length, 5);
+  const nc = hw.buildExample(examples[6]);
   assert.equal(nc.bp.params.client, 'New client'); hw.tick(); assert.equal(nc.bp.out.count, 13);
   assert.equal(api.loadDemo('hub-petrock').pages.length, 15); assert.equal(host._rec.examples.length, 1);
   hw.world.clear();
@@ -155,7 +164,8 @@ test('settings persist under the add-on namespace', () => {
   api.setBudget(12); api.setLive(false);
   assert.deepEqual(host.storage.keys(), ['settings.v1']);
   assert.deepEqual(host.storage.get('settings.v1'), { budget: 12, live: false, flow: 'delivery', client: null, embedHeight: DEFAULT_EMBED_HEIGHT });
+  assert.equal(api.setBudget(99), 40, 'All caps at 40'); assert.equal(api.settings.budget, 40);
   assert.equal(api.setEmbedHeight(10), 10); assert.equal(embedHeight(), 10); assert.equal(host.storage.get('settings.v1').embedHeight, 10); api.setEmbedHeight(DEFAULT_EMBED_HEIGHT);
   assert.ok([...host.storage.raw.keys()].every((k) => k.startsWith('proto3d.addon.hubs.')));
-  api.setBudget(8); api.setLive(true);
+  api.setBudget(16); api.setLive(true);
 });

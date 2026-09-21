@@ -5,13 +5,13 @@
 //                   demo on an empty page, and the api under window.__addon.api (tests use it)
 // Only ../sdk/** and this directory are imported; the core is reached through `host`, plus the
 // documented off-contract seams in live-layer.js / arrange.js / generate.js (window.__proto).
-import { registerNodes, setHooks, isHubNode, HUB_TYPES, openPage } from './nodes.js';
+import { registerNodes, setHooks, isHubNode, HUB_TYPES, openPage, previewState } from './nodes.js';
 import { generate } from './generate.js';
 import { makeExamples } from './examples.js';
 import { FLOWS, FLOW_IDS } from './flows.js';
 import { setEmbedHeight, embedHeight, DEFAULT_EMBED_HEIGHT, EMBED_HEIGHT } from './sizing.js';
 
-const DEFAULTS = Object.freeze({ budget: 8, live: true, flow: 'delivery', client: null, embedHeight: DEFAULT_EMBED_HEIGHT });
+const DEFAULTS = Object.freeze({ budget: 16, live: true, flow: 'delivery', client: null, embedHeight: DEFAULT_EMBED_HEIGHT });
 let registered = false;
 
 export function register(host) {
@@ -45,7 +45,7 @@ export async function install(host, { sample = true } = {}) {
       api.ui?.refresh();
       return settings.embedHeight;
     },
-    embedHeight: () => embedHeight(), EMBED_HEIGHT,
+    embedHeight: () => embedHeight(), EMBED_HEIGHT, previewState,
     /** Load a demo scene by id (hub-cal-tenant-law, hub-petrock, hub-hoy, hub-dorum-lifestyle, hub-compare, hub-new-client) or client slug. */
     loadDemo(id) {
       const ex = examples.find((e) => e.id === id || e.client === id); if (!ex) return null;
@@ -71,7 +71,7 @@ export async function install(host, { sample = true } = {}) {
     leaveInteract() { return api.live ? api.live.leave() : false; },
     selectedPage() { return host.selection.nodes().find((n) => n.typeId === 'hub-page') || null; },
     selectedBlueprint() { return host.selection.nodes().find((n) => n.typeId === 'hub-blueprint') || null; },
-    setBudget(n) { settings.budget = Math.max(0, Math.round(+n) || 0); api.live?.setBudget(settings.budget); api.saveSettings(); api.ui?.refresh(); return settings.budget; },
+    setBudget(n) { settings.budget = Math.max(0, Math.min(40, Math.round(+n) || 0)); api.live?.setBudget(settings.budget); api.saveSettings(); api.ui?.refresh(); return settings.budget; },
     setLive(on) { settings.live = !!on; api.live?.setEnabled(settings.live); api.saveSettings(); api.ui?.refresh(); return settings.live; },
     counts() {
       if (api.live) return api.live.counts();
