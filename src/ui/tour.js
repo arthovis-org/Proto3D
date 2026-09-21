@@ -14,8 +14,8 @@ export const TOUR_KEY = 'proto3d.tour.v1';
 export function tourSeen(key = TOUR_KEY) { try { return localStorage.getItem(key) === 'done'; } catch (_) { return true; } }
 export function markTourSeen(key = TOUR_KEY) { try { localStorage.setItem(key, 'done'); } catch (_) { /* private mode */ } }
 
-/** Step 1 reads the active navigation preset so the hint matches the mouse bindings. */
-const navHint = () => `${nav.binding('orbit') || 'Drag'} orbits, ${nav.binding('pan') || 'right-drag'} pans, the wheel zooms (${nav.preset.label} controls; change them under View → Navigation).`;
+/** Step 1 reads the active navigation preset so the hint matches the bindings (ui/nav-hint.js reuses it for the first-run hint). */
+export const navHint = () => `${nav.binding('orbit') || 'Drag'} orbits, ${nav.binding('pan') || 'right-drag'} pans, ${nav.preset.wheel.plain === 'dolly' ? 'the wheel zooms' : `${(nav.binding('dolly') || 'pinch').toLowerCase()} zooms`} (${nav.preset.label} controls; change them under View → Navigation).`;
 const startOpen = () => { const el = document.getElementById('start'); return !!el && !el.hidden; };
 const STEPS = [
   { id: 'toolbar', title: () => (startOpen() ? 'Start with a template' : 'Add and move around'), text: () => (startOpen()

@@ -11,7 +11,18 @@
 // the two never disagree about what a press means.
 //
 // The preset and its per-preset settings (invert orbit / zoom, sensitivities, zoom to cursor,
-// fly speed) persist in localStorage["proto3d.nav.v1"].
+// fly speed) persist in localStorage["proto3d.nav.v1"], with two flags: `chosen` (the person picked
+// a preset in some UI, so auto-detection stays quiet) and `asked` (the trackpad suggestion was
+// dismissed once and never comes back).
+//
+// Trackpads: a wheel event with ctrlKey set while no physical Control key is down is a pinch
+// (macOS / Windows / Linux browsers all report it that way); it dollies towards the cursor in every
+// preset, scaled by its magnitude. Safari's gesturestart / gesturechange events (scale) do the
+// same and suppress the Ctrl-wheel path while they run. Wheel deltas are normalised to pixels
+// (deltaMode lines / pages) and clamped per event so a flick never spins the camera. The two-axis
+// wheel actions `orbit` and `pan` (the Trackpad preset) read deltaX and deltaY. Trackpad-like
+// wheel events (non-integer deltas, horizontal deltas without Shift, a pinch) are counted; after
+// a few the controller dispatches one 'trackpad' event that ui/nav-hint.js turns into a suggestion.
 //
 // 2D editing mode (plan.js): `planMode` remaps the preset — orbit and turn are off (a middle or
 // right button that would orbit pans instead, a left button that would orbit does nothing so the
@@ -26,8 +37,8 @@ import { PLAN_PHI } from '../plan.js';
 const KEY = 'proto3d.nav.v1';
 const CAMERA_ACTIONS = new Set(['orbit', 'pan', 'dolly', 'turn']);
 const listeners = new Set();
-let state = { preset: DEFAULT_PRESET, settings: {} };
-try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && PRESETS[s.preset]) state = { preset: s.preset, settings: s.settings || {} }; } catch (_) { /* ignore */ }
+let state = { preset: DEFAULT_PRESET, settings: {}, chosen: false, asked: false };
+try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && PRESETS[s.preset]) state = { preset: s.preset, settings: s.settings || {}, chosen: !!s.chosen, asked: !!s.asked }; } catch (_) { /* ignore */ }
 function persist() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) { /* private mode */ } }
 const modsMatch = (row, e) => {
   const m = row.mods || {};
@@ -38,7 +49,13 @@ const modsMatch = (row, e) => {
 export const nav = {
   get preset() { return PRESETS[state.preset] || PRESETS[DEFAULT_PRESET]; },
   get presetId() { return this.preset.id; },
-  setPreset(id) { if (!PRESETS[id] || id === state.preset) return; state.preset = id; persist(); listeners.forEach((cb) => cb('preset', id)); },
+  /** Switch presets. Every caller is a UI the person used, so this also records `chosen` (auto-detection stays quiet from then on). */
+  setPreset(id) { if (!PRESETS[id]) return; state.chosen = true; if (id === state.preset) { persist(); return; } state.preset = id; persist(); listeners.forEach((cb) => cb('preset', id)); },
+  /** The person picked a preset explicitly at some point in this browser. */
+  get chosen() { return !!state.chosen; },
+  /** The trackpad suggestion was shown and dismissed; it never comes back. */
+  get asked() { return !!state.asked; },
+  markAsked() { state.asked = true; persist(); },
   /** Effective settings for the active preset (defaults overlaid with the user's changes). */
   get settings() { return { ...this.preset.settings, ...(state.settings[state.preset] || {}) }; },
   setSetting(key, value) { state.settings[state.preset] = { ...(state.settings[state.preset] || {}), [key]: value }; persist(); listeners.forEach((cb) => cb('setting', key)); },
@@ -49,8 +66,8 @@ export const nav = {
   isCameraAction: (a) => CAMERA_ACTIONS.has(a),
   /** Shift+click (Blender, Maya, Simple) or Ctrl+click (Unreal) adds to the selection. */
   isAddModifier(e) { return this.preset.addModifier === 'ctrl' ? !!(e.ctrlKey || e.metaKey) : !!e.shiftKey; },
-  /** The wheel action for a wheel event: dolly | panY | panX | null. */
-  resolveWheel(e) { const w = this.preset.wheel; return (e.shiftKey && w.shift) || ((e.ctrlKey || e.metaKey) && w.ctrl) || (!e.shiftKey && !e.ctrlKey && !e.metaKey && w.plain) || null; },
+  /** The wheel action for a wheel event: dolly | panY | panX | orbit | pan | null. A pinch (`pinch: true`, decided by the controller) always dollies. */
+  resolveWheel(e, { pinch = false } = {}) { if (pinch) return 'dolly'; const w = this.preset.wheel; return (e.shiftKey && w.shift) || ((e.ctrlKey || e.metaKey) && w.ctrl) || (!e.shiftKey && !e.ctrlKey && !e.metaKey && w.plain) || null; },
   /** The key action for a keydown, or null. Ctrl+Code also matches Meta. */
   keyAction(e) {
     for (const [action, codes] of Object.entries(this.preset.keys)) {
@@ -70,6 +87,10 @@ export const nav = {
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _plane = new THREE.Plane(), _ray = new THREE.Raycaster();
 const UP = new THREE.Vector3(0, 1, 0);
 const EPS = 1e-6;
+const WHEEL_LINE_PX = 16, WHEEL_CLAMP_PX = 80;      // deltaMode lines → pixels; per-event cap per axis for the two-axis wheel actions
+const WHEEL_ORBIT = Math.PI / 1000;                 // radians per pixel of two-finger scroll: a swipe across a trackpad (~1000 px) is about half a turn
+const PINCH_RATE = 0.01, PINCH_CLAMP_PX = 60;       // pinch dolly: scale = e^(deltaY × rate), deltaY capped
+const TRACKPAD_EVENTS = 4;                          // trackpad-like wheel events before the 'trackpad' event fires
 
 export class Navigator extends THREE.EventDispatcher {
   /** @param {THREE.PerspectiveCamera} camera  @param {HTMLElement} domElement  @param {object} o { onCameraSwap(camera) } */
@@ -95,6 +116,10 @@ export class Navigator extends THREE.EventDispatcher {
     this.planMode = false;     // 2D editing mode: remapped mouse, no orbit (plan.js)
     this.planLock = false;     // hold the camera top-down (after the entry flight)
     this.spaceHeld = false;    // Space + left-drag pans in 2D
+    this.ctrlHeld = false;     // a physical Control key is down (a Ctrl-wheel without it is a pinch)
+    this.trackpadEvents = 0;   // trackpad-like wheel events seen (auto-detection; ui/nav-hint.js listens for 'trackpad')
+    this.trackpadSeen = false; // the 'trackpad' event has fired
+    this._gesture = null;      // Safari pinch: { scale } while a gesture runs (suppresses the Ctrl-wheel path)
     this._lastPointer = { x: 0, y: 0 };
     this._clock = performance.now();
 
@@ -110,15 +135,19 @@ export class Navigator extends THREE.EventDispatcher {
     domElement.addEventListener('pointercancel', this._onUp);
     domElement.addEventListener('wheel', this._onWheel, { passive: false });
     domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+    // Safari reports a trackpad pinch as gesture events with a running `scale` (other browsers: a wheel with ctrlKey)
+    this._onGesture = (e) => this.onGesture(e);
+    for (const t of ['gesturestart', 'gesturechange', 'gestureend']) domElement.addEventListener(t, this._onGesture, { passive: false });
     window.addEventListener('keydown', this._onKeyDown);
     window.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('blur', () => { this.flyKeys.clear(); this.spaceHeld = false; });
+    window.addEventListener('blur', () => { this.flyKeys.clear(); this.spaceHeld = false; this.ctrlHeld = false; });
     this.update();
   }
   dispose() {
     const el = this.domElement;
     el.removeEventListener('pointerdown', this._onDown); el.removeEventListener('pointermove', this._onMove); el.removeEventListener('pointerup', this._onUp);
     el.removeEventListener('pointercancel', this._onUp); el.removeEventListener('wheel', this._onWheel);
+    for (const t of ['gesturestart', 'gesturechange', 'gestureend']) el.removeEventListener(t, this._onGesture);
     window.removeEventListener('keydown', this._onKeyDown); window.removeEventListener('keyup', this._onKeyUp);
   }
 
@@ -171,23 +200,63 @@ export class Navigator extends THREE.EventDispatcher {
       this.dispatchEvent({ type: 'end' });
     }
   }
+  /** A wheel event that is really a pinch: ctrlKey without a physical Control key (and no Safari gesture running, which reports the same pinch itself). */
+  isPinch(e) { return !!e.ctrlKey && !e.metaKey && !this.ctrlHeld && !this._gesture; }
+  /** Wheel deltas in pixels (deltaMode lines / pages converted), each axis capped so a flick cannot spin the camera. */
+  _wheelDeltas(e, cap = WHEEL_CLAMP_PX) {
+    const k = e.deltaMode === 1 ? WHEEL_LINE_PX : e.deltaMode === 2 ? (this.domElement.clientHeight || 600) : 1;
+    const c = (v) => THREE.MathUtils.clamp(v * k, -cap, cap);
+    return { dx: c(e.deltaX || 0), dy: c(e.deltaY || 0) };
+  }
+  /** Trackpad-like: a pinch, sideways scrolling without Shift, or small fractional pixel deltas. A mouse wheel (integer deltaY, no deltaX) never counts. */
+  _noteTrackpad(e, pinch) {
+    const like = pinch || (e.deltaX !== 0 && !e.shiftKey) || (e.deltaMode === 0 && e.deltaY !== 0 && Math.abs(e.deltaY) < 30 && !Number.isInteger(e.deltaY));
+    if (!like || this.trackpadSeen) return;
+    if (++this.trackpadEvents >= TRACKPAD_EVENTS) { this.trackpadSeen = true; this.dispatchEvent({ type: 'trackpad' }); }
+  }
   onWheel(e) {
     if (!this.enabled) return;
-    const action = nav.resolveWheel(e);
+    const pinch = this.isPinch(e);
+    this._noteTrackpad(e, pinch);
+    let action = nav.resolveWheel(e, { pinch });
+    if (this.planMode && action === 'orbit') action = 'pan';   // 2D: a two-finger scroll pans (orbit is off)
     if (!action && !this.flying) return;
     e.preventDefault();
     const s = this.settings;
     const dir = (e.deltaY > 0 ? 1 : -1) * (s.invertZoom ? -1 : 1);
     if (this.flying) { nav.setSetting('flySpeed', THREE.MathUtils.clamp(s.flySpeed * (dir > 0 ? 0.8 : 1.25), 0.1, 10)); return; }
     if (action === 'dolly') {
-      const k = Math.pow(0.95, -dir * 1.35);
+      // a mouse wheel notch is one fixed step; a pinch scales with how far the fingers moved
+      const k = pinch ? Math.exp(THREE.MathUtils.clamp(e.deltaY, -PINCH_CLAMP_PX, PINCH_CLAMP_PX) * PINCH_RATE * (s.invertZoom ? -1 : 1)) : Math.pow(0.95, -dir * 1.35);
       if (s.zoomToCursor || this.planMode) this._zoomTowards(e.clientX, e.clientY, k); else this.scale *= k;
       this.dispatchEvent({ type: 'start' });
     } else if (action === 'panY') this._panBy(0, -Math.sign(e.deltaY) * 40);
     else if (action === 'panX') this._panBy(-Math.sign(e.deltaY) * 40, 0);
+    else if (action === 'orbit') {
+      // two-finger scroll: the scene follows the fingers like a drag (natural scrolling reports the finger motion negated)
+      const { dx, dy } = this._wheelDeltas(e);
+      const rot = (s.invertOrbit ? -1 : 1) * s.orbitSpeed * WHEEL_ORBIT;
+      this.sphericalDelta.theta += dx * rot; this.sphericalDelta.phi += dy * rot;
+      this.dispatchEvent({ type: 'start' });
+    } else if (action === 'pan') { const { dx, dy } = this._wheelDeltas(e); this._panBy(-dx, -dy); }
     this.dispatchEvent({ type: 'end' });
   }
+  /** Safari trackpad pinch (gesturestart / gesturechange / gestureend): dolly towards the cursor by the scale ratio between events. */
+  onGesture(e) {
+    if (!this.enabled) return;
+    e.preventDefault();
+    if (e.type === 'gesturestart') { this._gesture = { scale: e.scale || 1 }; this._noteTrackpad({ deltaX: 0, deltaY: 0, deltaMode: 0 }, true); return; }
+    if (e.type === 'gestureend') { this._gesture = null; this.dispatchEvent({ type: 'end' }); return; }
+    if (!this._gesture || !e.scale) return;
+    const s = this.settings;
+    let k = this._gesture.scale / e.scale; this._gesture.scale = e.scale;
+    if (s.invertZoom) k = 1 / k;
+    k = THREE.MathUtils.clamp(k, 0.5, 2);
+    if (s.zoomToCursor || this.planMode) this._zoomTowards(e.clientX, e.clientY, k); else this.scale *= k;
+    this.dispatchEvent({ type: 'start' });
+  }
   onKey(e, down) {
+    if (e.code === 'ControlLeft' || e.code === 'ControlRight') this.ctrlHeld = down;
     if (e.code === 'Space') {
       const t = e.target, typing = t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.tagName === 'BUTTON' || t.isContentEditable || t.closest?.('.modal-backdrop'));
       if (!typing) { this.spaceHeld = down; if (this.planMode && down) e.preventDefault(); }

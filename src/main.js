@@ -46,6 +46,7 @@ import { layoutPlan, layoutCommand, updateTweens, tweening } from './layout.js';
 import { examples, templates, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { StartPanel, startOnLaunch } from './ui/start-panel.js';
 import { HintBar } from './ui/hint-bar.js';
+import { NavHint } from './ui/nav-hint.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
 import { portTypes, subtypes, states, sizes, hex, getTheme, setTheme, toggleTheme, onThemeChange, refreshLabel } from './theme.js';
 import { formatValue, typeInfo, subtypeInfo, kindOf, portTypeName, mismatchReason } from './core/types.js';
@@ -320,6 +321,7 @@ document.addEventListener('paste', (e) => {
 
 /* ---- Start panel and the template hint bar ---- */
 const hintBar = new HintBar({ el: $('hint-bar'), onDismiss: () => { if (tabs.active?.hint) tabs.active.hint.dismissed = true; } });
+const navHint = new NavHint({ controls: ws.controls, toast: (t, ms) => overlays.toast(t, ms) });   // trackpad suggestion + first-run navigation hint (ui/nav-hint.js)
 /** The empty-scene arrow shows only while the room is empty and the Start panel is not over it. */
 const syncEmptyHint = () => overlays.setEmptyHint(world.nodes.length === 0 && !start?.isOpen);
 const start = new StartPanel({
@@ -844,7 +846,7 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, glideSetting, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, glideSetting, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, navHint, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
   plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
   cables, setCableOption, bundles,
