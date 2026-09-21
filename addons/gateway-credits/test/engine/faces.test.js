@@ -104,12 +104,14 @@ test('gw-agent: slots light up when sub-nodes attach, the timeline shows planned
   assert.match(agent.state.gw.answer, /^\[Gemini 2.5 Flash\]/, 'the answer the face previews (drawText is a no-op on the fake canvas)');
 });
 
-test('the sample (Justin\'s shape): flowLayout positions have no overlaps and hang the sub-nodes under the agent; its gateway part runs on the headless engine and meters every step plus one bypassed row', async () => {
+test('the sample (Justin\'s shape): flowLayout positions have no overlaps and stand the sub-nodes on the floor under the agent; its gateway part runs on the headless engine and meters every step plus one bypassed row', async () => {
   const P = samplePositions();
   assert.equal(P.size, 11); assert.deepEqual(overlapping([...P.keys()].map((uid) => ({ uid, size: { trigger: 'S', memory: 'S', agent: 'L' }[uid] || 'M' })), P), []);
-  for (const k of ['model', 'memory', 'search', 'crawl', 'pdf']) assert.ok(P.get(k)[1] > P.get('agent')[1], `${k} below the agent`);
+  for (const k of ['model', 'memory', 'search', 'crawl', 'pdf']) assert.ok(P.get(k)[1] < P.get('agent')[1] && Math.abs(P.get(k)[2] - P.get('agent')[2]) <= 1.2, `${k} on the floor beneath the agent`);
   assert.ok(P.get('trigger')[0] < P.get('agent')[0] && P.get('agent')[0] < P.get('draft')[0] && P.get('draft')[0] < P.get('log')[0]);
-  assert.ok(P.get('budget')[1] < P.get('agent')[1] && P.get('meter')[1] < P.get('agent')[1], 'top row');
+  assert.ok(P.get('budget')[1] > P.get('agent')[1] && P.get('meter')[1] > P.get('agent')[1], 'governance row above the flow');
+  assert.equal(new Set([...P.values()].map((p) => p[1])).size, 3, 'three levels');
+  assert.deepEqual(example.camera.target[0], example.camera.position[0], 'the sample camera looks at the chain from the front');
   // the core Input / Log need Three, so the headless build keeps the gw- part of the sample (the page test covers the whole graph)
   const named = {}; const skipped = [];
   example.build({ add: (typeId, pos, o) => { if (!host.nodes.has(typeId)) { skipped.push(typeId); return { typeId, skipped: true, getPort: () => null }; } const n = hw.add(typeId, o.params, { title: o.title }); return n; }, connect: (a, k1, b, k2) => { if (a.skipped || b.skipped) return null; return hw.connect(a, k1, b, k2); } });

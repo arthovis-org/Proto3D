@@ -55,9 +55,11 @@ test('gateway-credits page: boots with zero errors, faces expose fields, Run sam
       return {
         fields, llmSize: llm.def.size, face: [llm.face.cw, llm.face.ch], agentFace: [agent.face.cw, agent.face.ch],
         agentFields: agent.fields().map((f) => f.id), editable: window.__proto.fieldEditor.editable(llm),
-        under: ['Chat model', 'Memory', 'Web search', 'Crawl pages', 'Parse PDFs'].map((t) => byTitle(t).position.z > agent.position.z),
+        under: ['Chat model', 'Memory', 'Web search', 'Crawl pages', 'Parse PDFs'].map((t) => byTitle(t).position.y < agent.position.y && Math.abs(byTitle(t).position.z - agent.position.z) <= 1.2),
+        onFloor: ['Chat model', 'Memory', 'Web search', 'Crawl pages', 'Parse PDFs'].map((t) => +(byTitle(t).position.y - byTitle(t).height / 2).toFixed(2)),
         chain: [byTitle('New research request').position.x < agent.position.x, agent.position.x < byTitle('Draft summary').position.x, byTitle('Draft summary').position.x < byTitle('Report').position.x],
-        top: [byTitle('Research budget').position.z < agent.position.z, byTitle('Credits meter').position.z < agent.position.z],
+        levels: [...new Set(W.nodes.map((n) => n.position.y))].length, agentY: agent.position.y,
+        top: [byTitle('Research budget').position.y > agent.position.y + agent.height / 2, byTitle('Credits meter').position.y > agent.position.y + agent.height / 2],
         slotCables: slotCables.length, slotHue: [...new Set(slotCables.map((c) => c.color.getHexString()))], eventHue: W.connections.find((c) => c.to.key === 'trigger').color.getHexString(),
         glyphIcons: Object.keys(window.__proto.icons).filter((k) => k.startsWith('gw-svc-')).length,
       };
@@ -67,17 +69,21 @@ test('gateway-credits page: boots with zero errors, faces expose fields, Run sam
     assert.ok(faces.fields.some((f) => f.id === 'tier:premium' && f.kind === 'action') && faces.fields.some((f) => f.id === 'credential'));
     assert.equal(faces.llmSize, 'M'); assert.deepEqual(faces.face, [485, 288]); assert.deepEqual(faces.agentFace, [701, 432]); assert.equal(faces.editable, true, 'the core field editor sees the face fields');
     assert.ok(faces.agentFields.includes('run') && faces.agentFields.includes('prompt'));
-    assert.deepEqual(faces.under, [true, true, true, true, true], 'slot sub-nodes hang below the agent (larger z)'); assert.deepEqual(faces.chain, [true, true, true]); assert.deepEqual(faces.top, [true, true]);
+    assert.deepEqual(faces.under, [true, true, true, true, true], 'slot sub-nodes stand on the floor beneath the agent (lower y, same z within a unit)'); assert.deepEqual(faces.chain, [true, true, true]); assert.deepEqual(faces.top, [true, true], 'budget / meter float above the flow');
+    assert.equal(faces.levels, 3, 'three levels'); assert.equal(faces.agentY, 9);
+    for (const b of faces.onFloor) assert.ok(b >= 0.19 && b <= 0.5, `a sub-node's bottom rests on the floor (${faces.onFloor})`);
     assert.equal(faces.slotCables, 5); assert.equal(faces.slotHue.length, 1); assert.notEqual(faces.slotHue[0], faces.eventHue, 'slot cables (data) read differently from the event chain');
     assert.equal(faces.glyphIcons, 18);
 
     /* ---- 3. Credits → Run sample: every agent step settles, the own-key draft bypasses, the flow layout runs ---- */
-    const beforeLayout = await page.evaluate(() => Object.fromEntries(window.__proto.world.nodes.map((n) => [n.title, [n.position.x, n.position.z]])));
+    const r3 = (v) => Math.round(v * 1000) / 1000;
+    const beforeLayout = await page.evaluate(() => Object.fromEntries(window.__proto.world.nodes.map((n) => [n.title, [n.position.x, n.position.y, n.position.z]])));
     await page.evaluate(() => window.__proto.history.execute(window.__proto.cmd.transform(window.__proto.world, window.__proto.world.nodes.slice(0, 3), window.__proto.world.nodes.slice(0, 3).map(window.__proto.cmd.snapshot), window.__proto.world.nodes.slice(0, 3).map((n) => ({ p: [n.position.x + 7, n.position.y, n.position.z + 5], r: 0, s: 1 })))));   // scramble three blocks so the layout has something to fix
     await page.click('#menubar .mnu-title[data-menu="gateway-credits:credits"]');
     await page.waitForSelector('.mnu-menu .mnu-item');
     const heading = await page.$eval('.mnu-menu .mnu-heading', (e) => e.textContent); assert.match(heading, /^Balance 2,300\.00 cr/);
-    assert.ok(await page.$('.mnu-menu .mnu-item:has-text("Flow layout")'), 'Credits → Flow layout exists');
+    const menuItem = (re) => page.locator('.mnu-menu .mnu-item').filter({ hasText: re });   // the label is followed by its hint inside the item
+    assert.equal(await menuItem(/^Flow layout(?! \()/).count(), 1, 'Credits → Flow layout exists'); assert.equal(await menuItem(/^Flow layout \(flat\)/).count(), 1, 'Credits → Flow layout (flat) exists');
     await page.click('.mnu-menu .mnu-item:has-text("Run sample")');
     await page.waitForFunction(() => window.__gateway.ledger.rows(50).filter((r) => r.status === 'settled').length >= 5 && window.__gateway.ledger.rows(50).some((r) => r.status === 'bypassed'), null, { timeout: 30000 });
     await page.waitForFunction(() => document.querySelectorAll('#gw-ledger tbody tr[data-status="settled"]').length >= 5);
@@ -85,7 +91,7 @@ test('gateway-credits page: boots with zero errors, faces expose fields, Run sam
       const L = window.__gateway.ledger; const rows = L.rows(50).reverse(); const W = window.__proto.world; const agent = W.nodes.find((n) => n.typeId === 'gw-agent');
       return { statuses: rows.map((r) => r.status), titles: rows.map((r) => r.nodeTitle), providers: rows.map((r) => r.providerId), balance: L.available(), held: L.held(), spend: L.spend(), domRows: document.querySelectorAll('#gw-ledger tbody tr[data-status]').length, tile: document.querySelector('#gw-admin .gw-tile.hero .val').textContent,
         log: W.nodes.find((n) => n.typeId === 'log')?.state, steps: agent.state.gw.steps.map((s) => s.status), answer: agent.state.gw.answer, memory: W.nodes.find((n) => n.typeId === 'gw-memory').state.exchanges.length,
-        positions: Object.fromEntries(W.nodes.map((n) => [n.title, [n.position.x, n.position.z]])), undo: window.__proto.history.undoStack.at(-1)?.label,
+        positions: Object.fromEntries(W.nodes.map((n) => [n.title, [n.position.x, n.position.y, n.position.z]])), undo: window.__proto.history.undoStack.at(-1)?.label,
         expected: (() => { const g = window.__gateway.host.layout.graph(); const m = window.__gateway.flowLayout(g.nodes, g.connections); return Object.fromEntries(W.nodes.map((n) => [n.title, m.get(n.uid)])); })() };
     });
     assert.ok(run.balance < 2300, `balance dropped: ${run.balance}`); assert.equal(run.held, 0); assert.ok(run.spend > 0);
@@ -96,9 +102,28 @@ test('gateway-credits page: boots with zero errors, faces expose fields, Run sam
     assert.equal(run.log.total, 1); assert.match(run.log.entries[0].text, /via own key/);
     assert.equal(run.domRows, run.statuses.length); assert.match(run.tile, /cr$/); assert.notEqual(run.tile, '2,300.00 cr');
     // the flow layout ran after the sample: every block sits where the pure flowLayout of the live graph (measured footprints) puts it, as one undoable command; the scrambled three moved
-    for (const t of Object.keys(run.expected)) assert.deepEqual(run.positions[t], run.expected[t], `${t} at its flow position`);
-    assert.ok(Object.keys(beforeLayout).some((t) => run.positions[t][0] !== beforeLayout[t][0] + 7 || run.positions[t][1] !== beforeLayout[t][1] + 5), 'the scramble was undone by the layout');
+    for (const t of Object.keys(run.expected)) { assert.equal(run.expected[t].length, 3, `${t}: [x, y, z]`); assert.deepEqual(run.positions[t].map(r3), run.expected[t], `${t} at its flow position`); }
+    assert.ok(Object.keys(beforeLayout).some((t) => run.positions[t][0] !== beforeLayout[t][0] + 7 || run.positions[t][2] !== beforeLayout[t][2] + 5), 'the scramble was undone by the layout');
     assert.equal(run.undo, 'Flow layout');
+    const agentY = run.positions['Research agent'][1];
+    for (const t of ['Chat model', 'Memory', 'Web search', 'Crawl pages', 'Parse PDFs']) assert.ok(run.positions[t][1] < agentY, `${t} below the agent after Run sample (y ${run.positions[t][1]} < ${agentY})`);
+    for (const t of ['Research budget', 'Credits meter']) assert.ok(run.positions[t][1] > agentY, `${t} above the agent after Run sample`);
+
+    /* ---- 3a. the 2D plan: Credits → Flow layout applies the flat variant by itself — heights untouched, children behind the agent — then back to 3D ---- */
+    await page.evaluate(() => window.__proto.plan.set(true));
+    await page.click('#menubar .mnu-title[data-menu="gateway-credits:credits"]'); await page.waitForSelector('.mnu-menu .mnu-item');
+    await menuItem(/^Flow layout(?! \()/).click();
+    const plan = await page.evaluate(() => {
+      const W = window.__proto.world; const agent = W.nodes.find((n) => n.typeId === 'gw-agent');
+      return { on: window.__proto.plan.isOn(), undo: window.__proto.history.undoStack.at(-1)?.label, positions: Object.fromEntries(W.nodes.map((n) => [n.title, [n.position.x, n.position.y, n.position.z]])),
+        behind: ['Chat model', 'Memory', 'Web search', 'Crawl pages', 'Parse PDFs'].map((t) => W.nodes.find((n) => n.title === t).position.z > agent.position.z) };
+    });
+    assert.equal(plan.on, true); assert.equal(plan.undo, 'Flow layout (flat)');
+    for (const t of Object.keys(run.positions)) assert.equal(plan.positions[t][1], run.positions[t][1], `${t} keeps its height in the plan`);
+    assert.deepEqual(plan.behind, [true, true, true, true, true], 'flat: children behind the agent');
+    await page.evaluate(() => { window.__proto.plan.set(false); window.__gateway.applyFlowLayout(); });
+    const back = await page.evaluate(() => { const W = window.__proto.world; return { undo: window.__proto.history.undoStack.at(-1)?.label, positions: Object.fromEntries(W.nodes.map((n) => [n.title, [n.position.x, n.position.y, n.position.z]])) }; });
+    assert.equal(back.undo, 'Flow layout'); for (const t of Object.keys(run.positions)) assert.deepEqual(back.positions[t].map(r3), run.expected[t], `${t} back on its level`);
 
     /* ---- 3b. the face Run field runs the node (the field mechanism the core's editor uses); a tier chip sets the param undoably ---- */
     await page.evaluate(() => { const n = window.__proto.world.nodes.find((x) => x.title === 'Web search'); n.fields().find((f) => f.id === 'run').run(n); });

@@ -66,13 +66,16 @@ export function install(host, { sample = true } = {}) {
     }
   });
 
-  /* ---- 4. Flow layout: the n8n-style arrangement (flowLayout.js, pure) applied as one undoable move through the SDK ---- */
-  function applyFlowLayout({ frame = true } = {}) {
+  /* ---- 4. Flow layout: the three-level arrangement (flowLayout.js, pure) applied as one undoable move through the SDK.
+          `flat` gives the ground-plane variant for the 2D plan (children behind their parent, y kept); it is the default while the plan is on ---- */
+  const planOn = () => { try { return !!host.ui.plan?.(); } catch (_) { return false; } };
+  function applyFlowLayout({ frame = true, flat } = {}) {
     const g = host.layout.graph();
     if (!g.nodes.length) { toast('Nothing to lay out'); return 0; }
-    const positions = flowLayout(g.nodes, g.connections);
-    const moved = host.layout.apply(positions, { label: 'Flow layout', frame });
-    if (moved) toast(`Flow layout · ${moved} block${moved === 1 ? '' : 's'} arranged left → right, sub-nodes under their agent`, 2200);
+    const isFlat = flat ?? planOn();
+    const positions = flowLayout(g.nodes, g.connections, { flat: isFlat });
+    const moved = host.layout.apply(positions, { label: isFlat ? 'Flow layout (flat)' : 'Flow layout', frame });
+    if (moved) toast(isFlat ? `Flow layout (flat) · ${moved} block${moved === 1 ? '' : 's'} arranged left → right, sub-nodes behind their agent` : `Flow layout · ${moved} block${moved === 1 ? '' : 's'} on three levels: budget / meter above, the flow at eye level, sub-nodes on the floor under their agent`, 2200);
     return moved;
   }
 

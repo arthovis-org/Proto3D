@@ -165,16 +165,27 @@ test('gw-memory keeps the last `window` exchanges, clears on a pulse and reports
   const text = hw.add('gw-tool', { service: 'Brave Search' }); void text;
 });
 
-test('Run sample prefers the agent at the head of the chain and applies the flow layout through host.layout (slot children below the agent)', async () => {
+test('Run sample prefers the agent at the head of the chain and applies the flow layout through host.layout (positions with y: slot children on the floor beneath the agent)', async () => {
   const { agent, llm, mem, tools } = rig();
   const after = hw.add('gw-llm', { credential: 'Own key', provider: 'OpenAI', model: 'gpt5-mini', tier: 'fixed', apiKey: 'k', workflow: WF }, { title: 'Draft' });
   hw.connect(agent, 'done', after, 'trigger');
   hw.tick();
   assert.equal(api.runSample(), true);
   assert.equal(host._rec.layouts.length, 1); assert.equal(host._rec.layouts[0].moved, 7);
-  for (const c of [llm, mem, ...tools]) assert.ok(c.position.z > agent.position.z, `${c.title} hangs below the agent (z ${c.position.z} > ${agent.position.z})`);
+  assert.ok(host._rec.layouts[0].positions.every(([, p]) => p.length === 3 && Number.isFinite(p[1])), 'the fake host recorded [x, y, z] positions');
+  assert.equal(host._rec.layouts[0].opts.label, 'Flow layout');
+  assert.equal(agent.position.y, 9, 'the chain at eye level');
+  for (const c of [llm, mem, ...tools]) { assert.ok(c.position.y < agent.position.y, `${c.title} stands beneath the agent (y ${c.position.y} < ${agent.position.y})`); assert.ok(Math.abs(c.position.z - agent.position.z) <= 1.2, `${c.title} directly under it (z ${c.position.z})`); }
   assert.ok(after.position.x > agent.position.x, 'the next node in the chain sits to the right');
-  assert.equal(after.position.z, agent.position.z);
+  assert.equal(after.position.z, agent.position.z); assert.equal(after.position.y, agent.position.y);
+  // the flat variant (what the 2D plan gets) keeps every height and hangs the children behind the agent
+  const ys = new Map(hw.world.nodes.map((n) => [n.uid, n.position.y]));
+  assert.equal(api.applyFlowLayout({ flat: true }), 7); assert.equal(host._rec.layouts.at(-1).opts.label, 'Flow layout (flat)');
+  for (const n of hw.world.nodes) assert.equal(n.position.y, ys.get(n.uid), `${n.title} keeps its height in the flat layout`);
+  for (const c of [llm, mem, ...tools]) assert.ok(c.position.z > agent.position.z, `${c.title} behind the agent in the flat layout`);
+  host._rec.plan = true; assert.equal(api.applyFlowLayout(), 7); assert.equal(host._rec.layouts.at(-1).opts.label, 'Flow layout (flat)', 'the plan picks the flat variant by itself'); host._rec.plan = false;
+  assert.equal(api.applyFlowLayout(), 7); assert.equal(host._rec.layouts.at(-1).opts.label, 'Flow layout'); assert.ok(llm.position.y < agent.position.y);
+  host._rec.layouts.length = 1;
   await hw.run(7);
   assert.equal(pulses(agent, 'done'), 1); assert.equal(statuses().at(-1), 'bypassed', 'the own-key node after the agent ran too');
   assert.ok(host._rec.toasts.some((t) => /^Flow layout · 7 blocks/.test(t.text)));

@@ -4,7 +4,7 @@
 // recorded for assertions, drawing helpers are no-ops, storage is an in-memory namespaced map.
 // Give it a headless world (`createHeadlessWorld()`) and `host.engine` / `host.world` bind to it.
 import { validateManifest, nodePrefix, ownsNodeId, storageNamespace } from '../manifest.js';
-import { SDK_VERSION, HostError } from '../host.js';
+import { SDK_VERSION, HostError, readPosition } from '../host.js';
 import { registry as coreRegistry } from '../../../src/core/registry.js';
 
 /** A palette with the fields faces read, so face renderers can be exercised against a fake canvas. */
@@ -61,6 +61,7 @@ export function createFakeHost(manifest, { registry = coreRegistry, headless = n
       toast(text, ms) { rec.toasts.push({ text, ms }); },
       togglePanel() {}, frameBlocks() {}, hideStart() {}, stylesheet(href) { rec.stylesheets.push(href); },
       wiring(on) { if (on !== undefined) rec.wiring = !!on; return !!rec.wiring; },
+      plan(on) { if (on !== undefined) rec.plan = !!on; return !!rec.plan; },
     }),
     selection: Object.freeze({ clear() {}, set() {}, nodes: () => [] }),
     draw: Object.freeze({
@@ -96,12 +97,12 @@ export function createFakeHost(manifest, { registry = coreRegistry, headless = n
       editing: () => ({ block: null, open: null }), leave() {},
     }),
     layout: Object.freeze({
-      graph() { const w = need('layout.graph', world); return { nodes: w.nodes.map((n) => ({ uid: n.uid, type: n.typeId, size: n.def?.size || 'S', w: n.width || 0, d: n.height || 0, x: n.position?.x ?? 0, z: n.position?.z ?? 0 })), connections: w.connections.map((c) => ({ from: c.from.owner.uid, to: c.to.owner.uid, fromKey: c.from.key, toKey: c.to.key })) }; },
-      /** Records the call and writes `position` on the headless nodes (no history in Node). */
+      graph() { const w = need('layout.graph', world); return { nodes: w.nodes.map((n) => ({ uid: n.uid, type: n.typeId, size: n.def?.size || 'S', w: n.width || 0, d: n.height || 0, h: n.height || 0, x: n.position?.x ?? 0, y: n.position?.y ?? 0, z: n.position?.z ?? 0 })), connections: w.connections.map((c) => ({ from: c.from.owner.uid, to: c.to.owner.uid, fromKey: c.from.key, toKey: c.to.key })) }; },
+      /** Records the call and writes `position` on the headless nodes (no history in Node): [x, z] keeps y, [x, y, z] / { x, y, z } sets it. */
       apply(positions, opts = {}) {
         const w = need('layout.apply', world); const entries = positions instanceof Map ? [...positions.entries()] : Object.entries(positions || {});
         let moved = 0;
-        for (const [uid, pos] of entries) { const n = w.nodes.find((x) => x.uid === uid); if (!n) continue; const x = Array.isArray(pos) ? pos[0] : pos.x, z = Array.isArray(pos) ? pos[1] : pos.z; n.position = { x, y: n.position?.y ?? 0, z }; moved += 1; }
+        for (const [uid, pos] of entries) { const n = w.nodes.find((x) => x.uid === uid); if (!n) continue; const { x, y, z } = readPosition(pos); if (!Number.isFinite(x) || !Number.isFinite(z)) continue; n.position = { x, y: Number.isFinite(y) ? y : (n.position?.y ?? 0), z }; moved += 1; }
         rec.layouts.push({ positions: entries, opts, moved }); if (moved) w.changed('move');
         return moved;
       },

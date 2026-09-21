@@ -8,7 +8,8 @@
 //   top row: gw-budget "Research budget" · gw-meter "Credits meter"
 //
 // Positions come from flowLayout() (the same pure function Credits → Flow layout applies), so the
-// sample opens already arranged n8n-style: chain left → right, sub-nodes under the agent.
+// sample opens already arranged on three levels: budget / meter floating above, the chain left →
+// right at eye level, the agent's sub-nodes standing on the floor directly beneath it.
 import { flowLayout } from './flowLayout.js';
 
 export const WORKFLOW = 'Research desk';
@@ -21,18 +22,20 @@ const LINKS = [
   ['trigger', 'agent', 'trigger'], ['agent', 'draft', 'trigger'], ['agent', 'draft', 'prompt'], ['draft', 'log', 'trigger'], ['draft', 'log', 'in'],
   ['model', 'agent', 'model'], ['memory', 'agent', 'memory'], ['search', 'agent', 'tools'], ['crawl', 'agent', 'tools'], ['pdf', 'agent', 'tools'],
 ];
-/** The sample's positions (uid → [x, z]) from the pure layout; exported so tests can check the shape without a world. */
-export function samplePositions() {
-  return flowLayout(SPEC.map(([uid, type, size]) => ({ uid, type, size })), LINKS.map(([from, to, toKey]) => ({ from, to, toKey })));
+/** The sample's positions (uid → [x, y, z]) from the pure layout; exported so tests can check the shape without a world. */
+export function samplePositions(opts) {
+  return flowLayout(SPEC.map(([uid, type, size]) => ({ uid, type, size })), LINKS.map(([from, to, toKey]) => ({ from, to, toKey })), opts);
 }
+/** The chain's x-centre: the sample camera looks at it from the front, elevated, so all three levels read. */
+const MID_X = (() => { const P = samplePositions(); return +((P.get('trigger')[0] + P.get('log')[0]) / 2).toFixed(2); })();
 
 export default {
   id: 'gateway-research', label: 'Gateway credits · Research desk',
   description: 'Trigger → research agent (chat model, memory and three tools as sub-nodes, every step metered) → own-key draft → log; with a workflow budget and a credits meter',
-  camera: { position: [14, 30, 44], target: [14, 1, 4] },
+  camera: { position: [MID_X, 22, 40], target: [MID_X, 8, 2] },
   focus: (named) => [named.trigger, named.agent, named.draft, named.log, named.model, named.memory, named.search, named.crawl, named.pdf, named.budget, named.meter],
   build({ add, connect }) {
-    const P = samplePositions(); const at = (k) => [P.get(k)[0], null, P.get(k)[1]];
+    const P = samplePositions(); const at = (k) => P.get(k);   // [x, y, z]: the level is part of the layout
     const trigger = add('input', at('trigger'), { title: 'New research request', params: { mode: 'button', label: 'Run', key: 'Space', payload: 'Compare the September pricing changes across model providers' } });
     const agent = add('gw-agent', at('agent'), { title: 'Research agent', params: { prompt: 'Compare the September pricing changes across model providers', maxTools: 3, workflow: WORKFLOW } });
     const model = add('gw-llm', at('model'), { title: 'Chat model', params: { credential: 'Gateway credits', provider: 'Anthropic', model: 'auto', tier: 'standard', workflow: WORKFLOW } });

@@ -190,6 +190,8 @@ export function createHost(proto, manifest, core) {
     /** Frame blocks in the viewport (instant or animated), keeping the Add rail's width out of the framing. */
     frameBlocks(blocks, opts = {}) { const p = P('ui.frameBlocks'); return p.ws.frameBlocks(blocks, { insetLeft: p.leftBar?.isOpen ? 300 : 0, ...opts }); },
     hideStart: () => P('ui.hideStart').start.hide('addon'),
+    /** The 2D plan view: `plan()` reads whether it is on, `plan(true|false)` enters / leaves it (window.__proto.plan). */
+    plan(on) { const p = P('ui.plan'); if (!p.plan || typeof p.plan.isOn !== 'function' || typeof p.plan.set !== 'function') throw new HostError('core seam missing: window.__proto.plan.{isOn,set}', 'window.__proto.plan'); if (on !== undefined) p.plan.set(!!on); return p.plan.isOn(); },
     /** The Wiring switch (ports and cables shown): `wiring()` reads it, `wiring(true|false)` sets it (persisted by the core in this page's storage). */
     wiring(on) { const p = P('ui.wiring'); if (!p.wiring || typeof p.wiring.set !== 'function' || typeof p.wiring.isOn !== 'function') throw new HostError('core seam missing: window.__proto.wiring.{isOn,set}', 'window.__proto.wiring'); if (on !== undefined) p.wiring.set(!!on); return p.wiring.isOn(); },
     /** Add a stylesheet to the page. Pass an absolute URL (e.g. new URL('./x.css', import.meta.url).href): the shell sets <base> to the core root, so a page-relative href would resolve there, not in the add-on directory. */
@@ -286,20 +288,22 @@ export function createHost(proto, manifest, core) {
   /* ---------------- layout ---------------- */
   const layout = Object.freeze({
     /**
-     * The graph as plain data for layout code: nodes { uid, type, size, w, d, x, z } (plan footprint =
-     * width × height in world units, scale applied) and connections { from, to, fromKey, toKey } (uids).
+     * The graph as plain data for layout code: nodes { uid, type, size, w, d, h, x, y, z } (plan footprint
+     * w × d = width × card height, h = the card's height, in world units with the scale applied) and
+     * connections { from, to, fromKey, toKey } (uids).
      */
     graph() {
       const p = P('layout.graph');
       const nodes = p.world.nodes.filter((n) => n.visible !== false && n.kind !== 'group' && n.kind !== 'connection')
-        .map((n) => { const k = n.scale?.x || 1; return { uid: n.uid, type: n.typeId, size: n.def?.size || 'S', w: (n.width || 0) * k, d: (n.height || 0) * k, x: n.position?.x ?? 0, z: n.position?.z ?? 0 }; });
+        .map((n) => { const k = n.scale?.x || 1; return { uid: n.uid, type: n.typeId, size: n.def?.size || 'S', w: (n.width || 0) * k, d: (n.height || 0) * k, h: (n.height || 0) * k, x: n.position?.x ?? 0, y: n.position?.y ?? 0, z: n.position?.z ?? 0 }; });
       const connections = p.world.connections.filter((c) => c.from?.owner && c.to?.owner).map((c) => ({ from: c.from.owner.uid, to: c.to.owner.uid, fromKey: c.from.key, toKey: c.to.key }));
       return { nodes, connections };
     },
     /**
-     * Move blocks to `positions` (Map or object: uid → [x, z] | { x, z }; y is kept) as ONE undoable
-     * command through the core history (`cmd.transform`, the command Auto-layout and the gizmo use),
-     * then frame everything. Returns how many blocks moved.
+     * Move blocks to `positions` (Map or object: uid → [x, z] | [x, y, z] | { x, y?, z }; a pair or a
+     * missing y keeps the block's height) as ONE undoable command through the core history
+     * (`cmd.transform`, the command Auto-layout and the gizmo use), then frame everything. Returns how
+     * many blocks moved.
      */
     apply(positions, { label = 'Flow layout', frame = true } = {}) {
       const p = P('layout.apply');
@@ -309,9 +313,9 @@ export function createHost(proto, manifest, core) {
       for (const [uid, pos] of entries) {
         const n = p.world.nodeByUid ? p.world.nodeByUid(uid) : p.world.nodes.find((x) => x.uid === uid);
         if (!n || !pos) continue;
-        const x = Array.isArray(pos) ? pos[0] : pos.x, z = Array.isArray(pos) ? pos[1] : pos.z;
+        const { x, y, z } = readPosition(pos);
         if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
-        nodes.push(n); after.push({ p: [x, n.position.y, z], r: n.rotation.y, s: n.scale.x });
+        nodes.push(n); after.push({ p: [x, Number.isFinite(y) ? y : n.position.y, z], r: n.rotation.y, s: n.scale.x });
       }
       if (!nodes.length) return 0;
       const before = nodes.map((n) => p.cmd.snapshot(n));
@@ -333,6 +337,12 @@ export function createHost(proto, manifest, core) {
     /** True once window.__proto exists (install phase). */
     get booted() { return !!getProto(); },
   });
+}
+
+/** A layout position as { x, y, z }: [x, z] (y undefined → kept), [x, y, z] or { x, y?, z }. */
+export function readPosition(pos) {
+  if (Array.isArray(pos)) return pos.length >= 3 ? { x: pos[0], y: pos[1], z: pos[2] } : { x: pos[0], y: undefined, z: pos[1] };
+  return { x: pos?.x, y: pos?.y, z: pos?.z };
 }
 
 /** Tiny element helper handed to panelSection builders: h(tag, className?, text?). */

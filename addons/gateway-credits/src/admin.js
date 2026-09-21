@@ -20,7 +20,8 @@ export function installAdmin(host, { ledger, runSample, loadSample, applyFlowLay
       return [
         { sep: true, label: `Balance ${fmtBal(avail)} cr · ${usd(avail)} · ${held > 1e-6 ? `${fmt(held)} cr on hold` : 'no holds'} · spend ${fmt(ledger.spend())} cr` },
         { label: 'Run sample', hint: 'pulse the trigger feeding the agent, then tidy the flow', action: () => runSample() },
-        { label: 'Flow layout', hint: 'left → right by rank, sub-nodes hung under their agent, budget / meter on top (undoable)', action: () => applyFlowLayout?.() },
+        { label: 'Flow layout', hint: 'three levels: budget / meter above, the chain left → right at eye level, sub-nodes on the floor under their agent (undoable; flat while the 2D plan is on)', action: () => applyFlowLayout?.() },
+        { label: 'Flow layout (flat)', hint: 'the plan-view variant on one level: sub-nodes behind their agent, budget / meter behind the chain, heights kept', action: () => applyFlowLayout?.({ flat: true }) },
         { label: 'Top up +500', hint: 'manual top-up row', action: () => ledger.topUp(500, 'manual top-up +500') },
         { label: 'Show admin block', hint: 'balance, policy, ledger in the panel', action: () => { host.ui.togglePanel(true); admin.open = true; admin.scrollIntoView({ block: 'nearest' }); } },
         { sep: true, label: 'Demo' },
