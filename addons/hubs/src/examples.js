@@ -10,16 +10,24 @@
 import { CLIENTS, blueprintParams } from './clients.js';
 import { PHASES } from './template.js';
 import { pagesFor, tasksFor, boardFor, pageParams } from './generate.js';
-import { layoutFlow } from './flows.js';
+import { layoutFlow, dimsOf } from './flows.js';
+
+/** Place a freshly added block at a flow position: centre y from the base elevation and the real height, rotation y when the builder made a THREE object. */
+function placeAt(n, p) {
+  if (!n || !p) return n;
+  if (n.position && typeof n.height === 'number') n.position.set(p.x, p.y + n.height / 2 + 0.4, p.z);
+  if (n.rotation) n.rotation.y = p.ry || 0;
+  return n;
+}
+const at = (pos, uid) => { const p = pos.get(uid); return [p.x, null, p.z]; };
 
 /** Add a blueprint and its pages at the flow positions; returns { bp, pages: [node], byId }. */
 function addClient(api, params, { flow = 'delivery', origin = [0, 0], groups = true } = {}) {
   const descriptors = pagesFor(params);
   const items = [{ uid: 'bp', type: 'hub-blueprint', params }, ...descriptors.map((d, i) => ({ uid: `p${i}`, type: 'hub-page', params: pageParams(d) }))];
   const pos = layoutFlow(flow, items, { origin });
-  const at = (uid) => { const p = pos.get(uid); return [p[0], null, p[2]]; };
-  const bp = api.add('hub-blueprint', at('bp'), { title: params.client, params });
-  const pages = descriptors.map((d, i) => api.add('hub-page', at(`p${i}`), { title: d.title, params: pageParams(d) }));
+  const bp = placeAt(api.add('hub-blueprint', at(pos, 'bp'), { title: params.client, params }), pos.get('bp'));
+  const pages = descriptors.map((d, i) => placeAt(api.add('hub-page', at(pos, `p${i}`), { title: d.title, params: pageParams(d) }), pos.get(`p${i}`)));
   if (groups) for (const s of PHASES) { const members = pages.filter((n) => n.params.section === s.id); if (members.length) api.group(s.label, members); }
   return { bp, pages, descriptors };
 }
@@ -29,14 +37,15 @@ export function clientExample(client, has = () => false) {
   return {
     id: `hub-${client.slug}`, label: `${client.name} · deliverable hub`, client: client.slug,
     description: `${client.industry}: blueprint → ${pagesFor(params).length} live pages in the Delivery flow, one task per section on a timeline and a kanban`,
-    // the opening shot: the blueprint and the first pages, close enough (< LOD distance) for their live frames to load
-    focus: (named) => [named.bp, ...(named.pages || []).slice(0, 4)].filter(Boolean),
+    // the opening shot: the front of the arc (blueprint, plan, the first pages) close enough for live frames; the whole arc is one F away
+    focus: (named) => [named.bp, named.timeline, named.board, ...(named.pages || []).slice(0, 3)].filter(Boolean),
     build(api) {
       const { bp, pages, descriptors } = addClient(api, params);
       const named = { bp, pages };
       const tasks = tasksFor(params, descriptors);
-      if (has('timeline')) { named.timeline = api.add('timeline', [bp.position?.x ?? 0, null, 15], { title: `${client.name} · delivery plan` }); api.connect(bp, 'tasks', named.timeline, 'tasks'); }
-      if (has('kanban-board')) named.board = api.add('kanban-board', [(bp.position?.x ?? 0) + 16, null, 15], { title: `${client.name} · build board`, params: { board: boardFor(tasks), peopleView: 'auto' } });
+      const bz = bp.position?.z ?? 0;   // the plan sits beside the blueprint at the front of the arc
+      if (has('timeline')) { named.timeline = api.add('timeline', [(bp.position?.x ?? 0) - 16, null, bz + 2], { title: `${client.name} · delivery plan` }); api.connect(bp, 'tasks', named.timeline, 'tasks'); }
+      if (has('kanban-board')) named.board = api.add('kanban-board', [(bp.position?.x ?? 0) + 16, null, bz + 2], { title: `${client.name} · build board`, params: { board: boardFor(tasks), peopleView: 'auto' } });
       return named;
     },
   };
@@ -46,7 +55,7 @@ export function compareExample() {
   return {
     id: 'hub-compare', label: 'All four clients · compare',
     description: 'The four blueprints with their pages in the Compare flow: the same section of every client lines up in a column',
-    focus: (named) => [...(named.bps || []).slice(0, 1), ...(named.pages || []).filter((n) => ['hub', 'site', 'app'].includes(n.params.section))],
+    focus: (named) => [...(named.bps || []).slice(0, 1), ...(named.pages || []).filter((n) => ['hub', 'site', 'app'].includes(n.params.section)).slice(0, 8)],
     build(api) {
       const all = CLIENTS.map((c) => blueprintParams(c));
       const items = [];
@@ -55,7 +64,7 @@ export function compareExample() {
       const bps = [], pages = [];
       for (const it of items) {
         const p = pos.get(it.uid);
-        const n = api.add(it.type, [p[0], null, p[2]], { title: it.type === 'hub-blueprint' ? it.params.client : it.title, params: it.params });
+        const n = placeAt(api.add(it.type, [p.x, null, p.z], { title: it.type === 'hub-blueprint' ? it.params.client : it.title, params: it.params }), p);
         (it.type === 'hub-blueprint' ? bps : pages).push(n);
       }
       return { bps, pages };

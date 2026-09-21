@@ -1,6 +1,6 @@
 // arrange.js — apply a flow preset to the hub nodes of the current world as one undoable, animated
-// move. The set keeps the centre it had (so the flows do not wander off), y is untouched, and the
-// moved blocks are framed when the tween lands. Off-contract seams: window.__proto.{world, history}.
+// move (position and rotation y). The set keeps the floor-plan centre it had (so the flows do not
+// wander off), y comes from the flow's levels, and the moved blocks are framed when the tween lands. Off-contract seams: window.__proto.{world, history}.
 import { layoutFlow, flowById, layoutBounds } from './flows.js';
 import { isHubNode } from './nodes.js';
 import { blueprintSlug } from './generate.js';
@@ -17,14 +17,15 @@ export function arrangeFlow(host, flowId, { client = null, frame = true, duratio
   const { world, history } = proto;
   const nodes = world.nodes.filter((n) => isHubNode(n) && n.visible !== false && (!client || clientKeyOf(n) === client));
   if (!nodes.length) { host.ui.toast('No hub nodes to arrange — load a demo from the Hubs menu'); return null; }
-  const items = nodes.map((n) => ({ uid: n.uid, type: n.typeId, params: n.params }));
+  const items = nodes.map((n) => ({ uid: n.uid, type: n.typeId, params: n.params, width: n.width * (n.scale?.x || 1), height: n.height * (n.scale?.x || 1) }));
   const map = layoutFlow(flow.id, items);
   const b = layoutBounds(map);
   const cx = nodes.reduce((s, n) => s + n.position.x, 0) / nodes.length, cz = nodes.reduce((s, n) => s + n.position.z, 0) / nodes.length;
   const dx = cx - b.cx, dz = cz - b.cz;
-  const positions = nodes.map((n) => { const [x, , z] = map.get(n.uid); return [+(x + dx).toFixed(3), n.position.y, +(z + dz).toFixed(3)]; });
-  const before = nodes.map((n) => n.position.toArray());
-  const after = () => { if (frame) host.ui.frameBlocks(nodes, { fill: 0.8 }); };
+  // y: the flow gives the base elevation; the block's origin is its centre, the floor gap 0.4 as the example builder uses
+  const positions = nodes.map((n) => { const p = map.get(n.uid); return [+(p.x + dx).toFixed(3), +(p.y + (n.height * (n.scale?.x || 1)) / 2 + 0.4).toFixed(3), +(p.z + dz).toFixed(3), p.ry]; });
+  const before = nodes.map((n) => [...n.position.toArray(), n.rotation?.y || 0]);
+  const after = () => { if (frame) host.ui.frameBlocks(nodes, { fill: 0.85 }); };
   const cmd = {
     label: `Arrange · ${flow.label} (${nodes.length})`, nodes,
     do: () => tweenNodes(nodes, positions, { duration, world, onDone: after }),

@@ -104,12 +104,13 @@ export function generate(host, bp, { frame = true } = {}) {
   if (!plan.create.length) { host.ui.toast('Nothing to generate: enable at least one section on the blueprint'); return null; }
   const nodes = plan.create.map((d) => createInstance('hub-page', { title: d.title, params: pageParams(d) }));
   // positions: the Delivery flow with the blueprint at its own place
-  const items = [{ uid: bp.uid, type: 'hub-blueprint', params: bp.params }, ...nodes.map((n, i) => ({ uid: `new${i}`, type: 'hub-page', params: n.params }))];
-  const pos = layoutFlow('delivery', items, { origin: [bp.position.x, bp.position.z] });
-  const y = (n) => n.height / 2 + 0.4;
+  const items = [{ uid: bp.uid, type: 'hub-blueprint', params: bp.params, width: bp.width, height: bp.height }, ...nodes.map((n, i) => ({ uid: `new${i}`, type: 'hub-page', params: n.params, width: n.width, height: n.height }))];
+  const pos = layoutFlow('delivery', items);
+  const b0 = pos.get(bp.uid);   // the arc relative to where the blueprint already stands
+  const dx = bp.position.x - b0.x, dz = bp.position.z - b0.z;
   const cmds = [];
   if (plan.remove.length) cmds.push(cmd.removeNodes(world, plan.remove));
-  nodes.forEach((n, i) => { const p = pos.get(`new${i}`); cmds.push(cmd.addNode(world, n, [p[0], y(n), p[2]])); });
+  nodes.forEach((n, i) => { const p = pos.get(`new${i}`); n.rotation.y = p.ry; cmds.push(cmd.addNode(world, n, [p.x + dx, p.y + n.height / 2 + 0.4, p.z + dz])); });
   history.execute(cmd.composite(`${plan.regenerate ? 'Regenerate' : 'Generate'} ${nodes.length} pages`, cmds));
   bp.state.generatedAt = Date.now(); bp.state.generatedCount = nodes.length; bp.faceDirty = true;
   host.selection.set(nodes);
