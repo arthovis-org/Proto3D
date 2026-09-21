@@ -55,6 +55,17 @@ async function check(name, fn) {
 }
 const assert = (c, msg) => { if (!c) throw new Error(msg); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Resolve once `locator`'s bounding box has not changed for `still` ms (polled every 50 ms, capped at `cap` ms); returns the settled box. */
+async function settled(locator, { still = 500, cap = 5000 } = {}) {
+  const same = (a, b) => a && b && Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
+  const t0 = Date.now(); let last = await locator.boundingBox(), since = Date.now();
+  while (Date.now() - t0 < cap) {
+    await sleep(50);
+    const b = await locator.boundingBox();
+    if (same(b, last)) { if (Date.now() - since >= still) return b; } else { last = b; since = Date.now(); }
+  }
+  return last;
+}
 
 /* ---------- page plumbing ---------- */
 function watch(page, tag) {
@@ -188,7 +199,7 @@ try {
   await check('tutorial card drags, stays inside the viewport and keeps its position across a reload', async () => {
     await ev(page, () => { const t = window.__jev.tutorial; t.open(); t.setCollapsed(false); t.dock('right'); });
     const head = page.locator('#jev-tutorial .jt-head');
-    const r0 = await page.locator('#jev-tutorial').boundingBox();
+    const r0 = await settled(page.locator('#jev-tutorial'));   // the docked card re-seats when the jobs tray under it shrinks
     const hb = await head.boundingBox();
     const sx = hb.x + hb.width * 0.45, sy = hb.y + hb.height / 2;
     await page.mouse.move(sx, sy); await page.mouse.down();
