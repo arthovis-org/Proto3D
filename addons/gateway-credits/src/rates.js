@@ -24,6 +24,8 @@ export const PROVIDERS = Object.freeze({
   qwen:        { id: 'qwen',        label: 'Alibaba Qwen',  kind: 'model', color: '#7b6cd6' },
   minimax:     { id: 'minimax',     label: 'MiniMax',       kind: 'model', color: '#e87ba4' },
   kimi:        { id: 'kimi',        label: 'Moonshot Kimi', kind: 'model', color: '#3fae4a' },
+  baseten:     { id: 'baseten',     label: 'Baseten',       kind: 'model', color: '#0ea5e9' },
+  edenai:      { id: 'edenai',      label: 'Eden AI',       kind: 'model', color: '#84cc16' },
   brave:       { id: 'brave',       label: 'Brave Search',  kind: 'tool',  color: '#eda100' },
   firecrawl:   { id: 'firecrawl',   label: 'Firecrawl',     kind: 'tool',  color: '#d9633b' },
   browserbase: { id: 'browserbase', label: 'Browserbase',   kind: 'tool',  color: '#6b7280' },
@@ -48,6 +50,8 @@ export const MODELS = Object.freeze({
   'qwen-max':      { id: 'qwen-max',      label: 'Qwen3 Max',         provider: 'qwen',      tier: 'premium',  in: 120, out: 600 },
   'minimax-m2':    { id: 'minimax-m2',    label: 'MiniMax M2',        provider: 'minimax',   tier: 'standard', in: 30,  out: 120 },
   'kimi-k2':       { id: 'kimi-k2',       label: 'Kimi K2',           provider: 'kimi',      tier: 'standard', in: 60,  out: 250 },
+  'baseten-oss':   { id: 'baseten-oss',   label: 'Open-weights 70B (Baseten)', provider: 'baseten', tier: 'standard', in: 50, out: 150 },
+  'eden-router':   { id: 'eden-router',   label: 'Eden AI router',    provider: 'edenai',    tier: 'economy',  in: 35,  out: 140 },
 });
 export const MODEL_OPTIONS = ['auto', ...Object.keys(MODELS)];
 

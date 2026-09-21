@@ -9,6 +9,7 @@ import { fmt, fmtBal } from './ledger.js';
 import { MODEL_PROVIDER_LABELS, TOOL_SERVICE_LABELS, TIER_OPTIONS, MODEL_OPTIONS, PROVIDERS, providerByLabel, toolByLabel, creditsToUsd } from './rates.js';
 import { resolveModel, fallbackFor } from './routing.js';
 import { adapterFor } from './providers.js';
+import { iconTable } from './glyphs.js';
 
 export const GATEWAY_TYPES = ['gw-llm', 'gw-tool', 'gw-budget', 'gw-meter'];
 const svg = (inner) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
@@ -195,6 +196,7 @@ export function registerNodes(h, l) {
   const { clear, drawText, roundRect } = host.draw;
   const palette = host.theme.palette;
   for (const [name, icon] of Object.entries(ICONS)) host.icons.set(name, icon);
+  for (const [name, svg] of Object.entries(iconTable())) host.icons.set(name, svg);   // service glyphs: gw-svc-<provider|service|role>
 
   /* ---------- gw-llm ---------- */
   host.nodes.register({

@@ -15,7 +15,7 @@ export function fakeCanvasContext() {
   const calls = [];
   const rec = (name) => (...args) => { calls.push([name, ...args]); };
   const g = { calls, fillStyle: '', strokeStyle: '', font: '', textAlign: 'left', textBaseline: 'top', lineWidth: 1 };
-  for (const k of ['fillRect', 'clearRect', 'fill', 'stroke', 'beginPath', 'closePath', 'moveTo', 'lineTo', 'arc', 'arcTo', 'quadraticCurveTo', 'rect', 'save', 'restore', 'translate', 'clip', 'fillText', 'strokeText']) g[k] = rec(k);
+  for (const k of ['fillRect', 'clearRect', 'fill', 'stroke', 'beginPath', 'closePath', 'moveTo', 'lineTo', 'arc', 'arcTo', 'quadraticCurveTo', 'bezierCurveTo', 'rect', 'save', 'restore', 'translate', 'scale', 'rotate', 'clip', 'fillText', 'strokeText', 'setLineDash']) g[k] = rec(k);
   g.measureText = (t) => ({ width: String(t).length * 7 });
   return g;
 }
@@ -62,7 +62,15 @@ export function createFakeHost(manifest, { registry = coreRegistry, headless = n
       togglePanel() {}, frameBlocks() {}, hideStart() {}, stylesheet(href) { rec.stylesheets.push(href); },
     }),
     selection: Object.freeze({ clear() {}, set() {}, nodes: () => [] }),
-    draw: Object.freeze({ clear() {}, drawText() {}, roundRect() {}, font: (px, weight = 500, mono = false) => `${weight} ${px}px ${mono ? 'monospace' : 'sans-serif'}` }),
+    draw: Object.freeze({
+      clear() {}, drawText() { return { px: 12, lines: 1 }; }, roundRect() {}, font: (px, weight = 500, mono = false) => `${weight} ${px}px ${mono ? 'monospace' : 'sans-serif'}`,
+      // the rest of the face design language (faces.js), as no-ops that return what callers measure with;
+      // beginFields is the real thing (a few lines) so tests can read `instance._fields` after a render
+      beginFields(instance) { const list = []; if (instance) instance._fields = list; const cur = instance?._editing || null; return { list, add(spec) { spec.editing = cur === spec.id; list.push(spec); return spec; }, editing: (id) => cur === id }; },
+      drawCaps: (g, text) => String(text).length * 7, drawDivider() {}, drawTile() {}, drawChip: (g, text) => String(text).length * 7 + 18, drawBar() {}, drawStat() {}, drawAvatar() {},
+      fitLine: (g, text) => String(text ?? ''), wrapLines: (g, text) => String(text).split('\n'), tabular() {}, jsonLines: (v) => [JSON.stringify(v)],
+      PAD: 24, GRID: 8, RADIUS: 18,
+    }),
     theme: Object.freeze({ palette: { ...FAKE_PALETTE }, current: () => 'dark', onChange: () => () => {} }),
     icons: Object.freeze({ set(name, svg) { rec.icons[name] = String(svg); return svg; }, get: (name) => rec.icons[name] || '', has: (name) => name in rec.icons }),
     examples: Object.freeze({ build(example) { rec.examples.push(example); return headless ? headless.buildExample(example) : null; } }),

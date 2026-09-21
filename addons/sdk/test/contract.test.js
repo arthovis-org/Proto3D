@@ -61,6 +61,24 @@ test('faces.js / theme.js / icons.js: drawing helpers, live palette, mutable ico
   matches('src/faces.js', /export function drawText\(g, text, x, y, w, h/, 'faces.drawText');
   matches('src/faces.js', /export function roundRect\(g, x, y, w, h, r\)/, 'faces.roundRect');
   matches('src/faces.js', /export const font = \(px, weight = 500, mono = false\)/, 'faces.font');
+  // the optional draw helpers host.draw passes through (SDK 1.1): faces built on them are the add-on's app-like node faces
+  matches('src/faces.js', /export function beginFields\(instance\)/, 'faces.beginFields');
+  has('src/faces.js', "if (instance) instance._fields = list;", 'beginFields writes instance._fields (Block3D.fields / fieldAt read it)');
+  matches('src/faces.js', /spec\.editing = cur === spec\.id/, 'beginFields marks spec.editing from instance._editing');
+  for (const fn of ['drawCaps(g, text, x, y', 'drawDivider(g, x, y, w', 'drawTile(g, x, y, w, h', 'drawChip(g, text, x, y', 'drawBar(g, x, y, w, h, ratio', 'drawStat(g, x, y, w, h, label, value', 'drawAvatar(g, text, cx, cy, r', 'fitLine(g, text, maxW)', 'wrapLines(g, text, maxW', 'jsonLines(v'])
+    has('src/faces.js', `export function ${fn}`, `faces.${fn.split('(')[0]}`);
+  has('src/faces.js', 'export const tabular = (g)', 'faces.tabular');
+  for (const c of ['PAD = 24', 'GRID = 8', 'RADIUS = 18']) has('src/faces.js', `export const ${c}`, `faces.${c.split(' ')[0]}`);
+  // the field kinds and the field editor contract add-on faces rely on
+  has('src/ui/field-editor.js', "const KINDS = new Set(['text', 'multiline', 'number', 'select', 'date', 'checkbox', 'action']);", 'field kinds');
+  has('src/ui/field-editor.js', "if (kind === 'action') { field.run?.(block, api); return true; }", 'action fields run(block, api)');
+  has('src/ui/field-editor.js', 'if (f.set) f.set(v, this._api(block));', 'field set(value, api)');
+  matches('src/ui/field-editor.js', /\n  open\(block, field\)/, 'fieldEditor.open(block, field)');
+  matches('src/block3d.js', /\n  fields\(\) \{/, 'Block3D.fields()');
+  matches('src/block3d.js', /\n  fieldAt\(\{ uv = null, point = null \} = \{\}\)/, 'Block3D.fieldAt');
+  has('src/block3d.js', "if (F?.onPointer) this._cursor('pointer')".replace("if (F?.onPointer) this._cursor('pointer')", 'const handled = F.onPointer(this._faceCtx(this.rt.ctx), ev);'), 'def.face.onPointer(ctx, ev)');
+  has('src/interaction.js', "if (block.onFacePointer({ type: 'down', ...uv, button: 0 })) {", 'a truthy face pointer-down captures the press (no block drag)');
+  has('src/interaction.js', "if (!moved) this.faceDrag.block.onFacePointer({ type: 'click', u: uv.u, v: uv.v, button: 0 });", 'face pointer click after an unmoved press');
   has('src/theme.js', 'export const palette = {}', 'theme.palette (live object)');
   matches('src/theme.js', /export function getTheme\(\)/, 'theme.getTheme');
   matches('src/theme.js', /export function onThemeChange\(cb\)/, 'theme.onThemeChange');

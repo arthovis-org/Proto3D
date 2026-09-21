@@ -39,7 +39,13 @@ export async function loadCore() {
     palette: themeMod.palette,
     getTheme: themeMod.getTheme,
     onThemeChange: themeMod.onThemeChange,
-    faces: { clear: facesMod.clear, drawText: facesMod.drawText, roundRect: facesMod.roundRect, font: facesMod.font },
+    faces: {
+      clear: facesMod.clear, drawText: facesMod.drawText, roundRect: facesMod.roundRect, font: facesMod.font,
+      // additive (SDK 1.1): the rest of the face design language, so add-on faces read like core faces
+      beginFields: facesMod.beginFields, drawCaps: facesMod.drawCaps, drawDivider: facesMod.drawDivider, drawTile: facesMod.drawTile, drawChip: facesMod.drawChip,
+      drawBar: facesMod.drawBar, drawStat: facesMod.drawStat, drawAvatar: facesMod.drawAvatar, fitLine: facesMod.fitLine, wrapLines: facesMod.wrapLines, tabular: facesMod.tabular, jsonLines: facesMod.jsonLines,
+      PAD: facesMod.PAD, GRID: facesMod.GRID, RADIUS: facesMod.RADIUS,
+    },
     buildExample: examplesMod.buildExample,
   };
 }
@@ -60,6 +66,9 @@ const PROTO_SHAPE = {
   'menubar.menus': 'object', 'menubar._build': 'function', 'tabs.replaceActive': 'function', 'start.hide': 'function',
   'selection.clear': 'function', 'selection.set': 'function', 'history.clear': 'function',
 };
+
+/** Draw helpers the host passes through when faces.js exports them (checked lazily: a missing one throws a named HostError when called). */
+const OPTIONAL_DRAW = ['beginFields', 'drawCaps', 'drawDivider', 'drawTile', 'drawChip', 'drawBar', 'drawStat', 'drawAvatar', 'fitLine', 'wrapLines', 'tabular', 'jsonLines'];
 
 const pick = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
 function checkShape(obj, shape, what) {
@@ -191,7 +200,13 @@ export function createHost(proto, manifest, core) {
   });
 
   /* ---------------- drawing / theme / icons ---------------- */
-  const draw = Object.freeze({ ...core.faces });
+  /**
+   * Face drawing helpers (faces.js): the four originals plus, when the core provides them,
+   * beginFields / drawCaps / drawDivider / drawTile / drawChip / drawBar / drawStat / drawAvatar /
+   * fitLine / wrapLines / tabular / jsonLines and the PAD / GRID / RADIUS constants. A helper the
+   * core lacks is a HostError naming it, not an undefined call.
+   */
+  const draw = Object.freeze({ ...core.faces, ...Object.fromEntries(OPTIONAL_DRAW.filter((k) => !(k in core.faces)).map((k) => [k, () => { throw new HostError(`core seam missing: faces.${k} (optional draw helper) — this core does not export it`, `faces.${k}`); }])) });
   const theme = Object.freeze({
     /** The live palette object (mutated in place on theme change — read fields at draw time). */
     palette: core.palette,
