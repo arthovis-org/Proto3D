@@ -12,6 +12,10 @@ import { fileURLToPath } from 'node:url';
 export const REPO_ROOT = path.resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 export const ADDONS_DIR = path.join(REPO_ROOT, 'addons');
 const SKIP_DIRS = new Set(['sdk', 'node_modules', '.git', 'test-results']);
+// Add-ons that predate the SDK and still import the core directly. They are exempt from the
+// guard until they are ported onto addons/sdk/** — remove an entry here when its port lands.
+// A new add-on never belongs in this list.
+export const LEGACY_ADDONS = new Set(['jev']);
 const EXT = new Set(['.js', '.mjs', '.html', '.css']);
 
 const PATTERNS = [
@@ -23,9 +27,13 @@ const PATTERNS = [
   /@import\s+(?:url\()?['"]([^'"]+)['"]/g,                         // css @import
 ];
 
-function walk(dir, out = []) {
+function walk(dir, out = [], { legacy = new Set() } = {}, top = true) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(path.join(dir, e.name), out); continue; }
+    if (e.isDirectory()) {
+      if (SKIP_DIRS.has(e.name) || (top && legacy.has(e.name))) continue;
+      walk(path.join(dir, e.name), out, { legacy }, false);
+      continue;
+    }
     if (EXT.has(path.extname(e.name))) out.push(path.join(dir, e.name));
   }
   return out;
@@ -44,11 +52,12 @@ export function classify(spec, file, repoRoot = REPO_ROOT) {
   return null;
 }
 
-/** All violations under `addonsDir`: [{ file, line, spec, reason }]. */
-export function scanAddons(addonsDir = ADDONS_DIR, repoRoot = REPO_ROOT) {
+/** All violations under `addonsDir`: [{ file, line, spec, reason }]. Top-level directories named in
+ *  `legacy` (default: LEGACY_ADDONS) are skipped. */
+export function scanAddons(addonsDir = ADDONS_DIR, repoRoot = REPO_ROOT, { legacy = LEGACY_ADDONS } = {}) {
   const out = [];
   if (!fs.existsSync(addonsDir)) return out;
-  for (const file of walk(addonsDir)) {
+  for (const file of walk(addonsDir, [], { legacy })) {
     const text = fs.readFileSync(file, 'utf8');
     for (const re of PATTERNS) {
       re.lastIndex = 0;
@@ -67,8 +76,8 @@ export function scanAddons(addonsDir = ADDONS_DIR, repoRoot = REPO_ROOT) {
 export function formatViolations(v) { return v.map((x) => `  ${x.file}:${x.line}  "${x.spec}"  — ${x.reason}`).join('\n'); }
 
 /** Throws with every violation listed. */
-export function assertNoDrift(addonsDir = ADDONS_DIR, repoRoot = REPO_ROOT) {
-  const v = scanAddons(addonsDir, repoRoot);
+export function assertNoDrift(addonsDir = ADDONS_DIR, repoRoot = REPO_ROOT, opts = {}) {
+  const v = scanAddons(addonsDir, repoRoot, opts);
   if (v.length) throw new Error(`drift guard: ${v.length} add-on file(s) reach into the core. Add-ons may import only from addons/sdk/** and their own directory.\n${formatViolations(v)}`);
   return true;
 }

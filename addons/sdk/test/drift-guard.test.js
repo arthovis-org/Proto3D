@@ -3,12 +3,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { scanAddons, assertNoDrift, classify, ADDONS_DIR, REPO_ROOT } from '../testing/drift-guard.js';
+import { scanAddons, assertNoDrift, classify, ADDONS_DIR, REPO_ROOT, LEGACY_ADDONS } from '../testing/drift-guard.js';
 
 test('no add-on imports the core (only addons/sdk/** and its own files)', () => {
   const v = scanAddons(ADDONS_DIR, REPO_ROOT);
   assert.deepEqual(v, [], `violations:\n${v.map((x) => `${x.file}:${x.line} ${x.spec} — ${x.reason}`).join('\n')}`);
   assert.equal(assertNoDrift(), true);
+});
+
+test('legacy add-ons are exempt only while they exist and are named explicitly', () => {
+  for (const dir of LEGACY_ADDONS) assert.ok(fs.existsSync(path.join(ADDONS_DIR, dir)), `LEGACY_ADDONS names "${dir}", which no longer exists — drop it from the list`);
+  const all = scanAddons(ADDONS_DIR, REPO_ROOT, { legacy: new Set() });
+  const legacyHits = all.filter((v) => [...LEGACY_ADDONS].some((d) => v.file.startsWith(path.join('addons', d) + path.sep)));
+  assert.deepEqual(all.filter((v) => !legacyHits.includes(v)), [], 'only legacy add-ons may reach into the core');
 });
 
 test('classify: relative, absolute, bare and URL specifiers', () => {
