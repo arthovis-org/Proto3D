@@ -5,7 +5,8 @@
 //                   Credits menu, the admin block, the sample graph on an empty page, window.__gateway
 // Only ../sdk/** and this directory are imported; the core is reached through `host`.
 import { createLedger, fmt, fmtBal } from './ledger.js';
-import { registerNodes, kick, GATEWAY_TYPES } from './nodes.js';
+import { registerNodes, kick, GATEWAY_TYPES, RUNNABLE_TYPES } from './nodes.js';
+import { flowLayout } from './flowLayout.js';
 import { installAdmin } from './admin.js';
 import { configureSimulation, sim } from './providers.js';
 import example from './example.js';
@@ -63,24 +64,40 @@ export function install(host, { sample = true } = {}) {
     }
   });
 
-  /* ---- 4. "Run sample": pulse the Input feeding the first gateway node, else kick the node directly ---- */
-  function runSample() {
-    const gws = host.engine.order().filter((n) => n.typeId === 'gw-llm' || n.typeId === 'gw-tool');
+  /* ---- 4. Flow layout: the n8n-style arrangement (flowLayout.js, pure) applied as one undoable move through the SDK ---- */
+  function applyFlowLayout({ frame = true } = {}) {
+    const g = host.layout.graph();
+    if (!g.nodes.length) { toast('Nothing to lay out'); return 0; }
+    const positions = flowLayout(g.nodes, g.connections);
+    const moved = host.layout.apply(positions, { label: 'Flow layout', frame });
+    if (moved) toast(`Flow layout · ${moved} block${moved === 1 ? '' : 's'} arranged left → right, sub-nodes under their agent`, 2200);
+    return moved;
+  }
+
+  /* ---- 5. "Run sample": pulse the Input feeding the first runnable gateway node (the agent first), else kick it; then tidy the flow ---- */
+  function runSample({ layout = true } = {}) {
+    const order = host.engine.order();
+    const gws = RUNNABLE_TYPES.flatMap((t) => order.filter((n) => n.typeId === t));
     if (!gws.length) { toast('No gateway node in the graph — add one from the Gateway category'); return false; }
-    const first = gws[0];
+    // the first runnable node in evaluation order whose trigger is not fed by another gateway node (the head of the chain); the agent wins ties
+    const fedByGateway = (n) => host.world.connections().some((c) => c.to && c.to.owner === n && c.to.key === 'trigger' && GATEWAY_TYPES.includes(c.from.owner.typeId));
+    const first = gws.find((n) => !fedByGateway(n)) || gws[0];
+    let ok = false;
     const up = host.world.connections().find((c) => c.to && c.to.owner === first && c.to.key === 'trigger' && c.from.type === 'event');
     if (up) {
       const src = up.from.owner;
-      if (src.typeId === 'input') { src.state.count = (src.state.count || 0) + 1; src.state.pressedAt = performance.now(); src.faceDirty = true; }   // pressedAt: the core Input face compares it against performance.now()
-      if (host.engine.emit(src, up.from.key, 'sample run')) return true;
+      if (src.typeId === 'input') { src.state.count = (src.state.count || 0) + 1; src.state.pressedAt = typeof performance !== 'undefined' ? performance.now() : Date.now(); src.faceDirty = true; }   // pressedAt: the core Input face compares it against performance.now()
+      ok = host.engine.emit(src, up.from.key, 'sample run');
     }
-    return kick(first);
+    if (!ok) ok = kick(first);
+    if (ok && layout) { try { applyFlowLayout({ frame: true }); } catch (e) { console.warn('[gateway-credits] flow layout skipped:', e?.message || e); } }
+    return ok;
   }
 
-  /* ---- 5. Credits menu + admin block (DOM; skipped in headless tests where document is absent) ---- */
-  const ui = typeof document !== 'undefined' ? installAdmin(host, { ledger, runSample, loadSample }) : null;
+  /* ---- 6. Credits menu + admin block (DOM; skipped in headless tests where document is absent) ---- */
+  const ui = typeof document !== 'undefined' ? installAdmin(host, { ledger, runSample, loadSample, applyFlowLayout }) : null;
 
-  const api = { ledger, runSample, loadSample, kick, example, GATEWAY_TYPES, admin: ui?.admin || null, menu: ui?.menu || null, host, configureSimulation, sim };
+  const api = { ledger, runSample, loadSample, applyFlowLayout, flowLayout, kick, example, GATEWAY_TYPES, RUNNABLE_TYPES, admin: ui?.admin || null, menu: ui?.menu || null, host, configureSimulation, sim };
   if (typeof window !== 'undefined') window.__gateway = api;
   return api;
 }

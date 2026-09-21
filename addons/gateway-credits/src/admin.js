@@ -11,7 +11,7 @@ const STATUS_LABEL = { settled: 'settled', held: 'held', refunded: 'refunded', d
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /** Build the Credits menu and the admin section. Returns { menu, admin, render }. */
-export function installAdmin(host, { ledger, runSample, loadSample }) {
+export function installAdmin(host, { ledger, runSample, loadSample, applyFlowLayout }) {
   /* ---- Credits menu: a declarative menu in the core menu bar; items are rebuilt each time it opens ---- */
   const menu = host.ui.menu({
     id: 'credits', label: 'Credits',
@@ -19,7 +19,8 @@ export function installAdmin(host, { ledger, runSample, loadSample }) {
       const avail = ledger.available(), held = ledger.held();
       return [
         { sep: true, label: `Balance ${fmtBal(avail)} cr · ${usd(avail)} · ${held > 1e-6 ? `${fmt(held)} cr on hold` : 'no holds'} · spend ${fmt(ledger.spend())} cr` },
-        { label: 'Run sample', hint: 'pulse the Input feeding the first gateway node', action: runSample },
+        { label: 'Run sample', hint: 'pulse the trigger feeding the agent, then tidy the flow', action: () => runSample() },
+        { label: 'Flow layout', hint: 'left → right by rank, sub-nodes hung under their agent, budget / meter on top (undoable)', action: () => applyFlowLayout?.() },
         { label: 'Top up +500', hint: 'manual top-up row', action: () => ledger.topUp(500, 'manual top-up +500') },
         { label: 'Show admin block', hint: 'balance, policy, ledger in the panel', action: () => { host.ui.togglePanel(true); admin.open = true; admin.scrollIntoView({ block: 'nearest' }); } },
         { sep: true, label: 'Demo' },
@@ -43,7 +44,7 @@ export function installAdmin(host, { ledger, runSample, loadSample }) {
 
     const actions = h('div', 'gw-actions');
     const act = (label, fn, id) => { const b = h('button', null, label); b.type = 'button'; if (id) b.id = id; b.addEventListener('click', fn); actions.appendChild(b); return b; };
-    act('Run sample', runSample, 'gw-run');
+    act('Run sample', () => runSample(), 'gw-run');
     act('Top up +500', () => ledger.topUp(500, 'manual top-up +500'), 'gw-topup');
     act('Reset ledger', () => ledger.reset(), 'gw-reset');
     body.appendChild(actions);

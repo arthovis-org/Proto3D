@@ -9,9 +9,11 @@ import { fmt, fmtBal } from './ledger.js';
 import { MODEL_PROVIDER_LABELS, TOOL_SERVICE_LABELS, TIER_OPTIONS, MODEL_OPTIONS, PROVIDERS, providerByLabel, toolByLabel, creditsToUsd } from './rates.js';
 import { resolveModel, fallbackFor } from './routing.js';
 import { adapterFor } from './providers.js';
-import { iconTable } from './glyphs.js';
+import { iconTable, glyphFor } from './glyphs.js';
 
-export const GATEWAY_TYPES = ['gw-llm', 'gw-tool', 'gw-budget', 'gw-meter'];
+export const GATEWAY_TYPES = ['gw-llm', 'gw-tool', 'gw-budget', 'gw-meter', 'gw-memory', 'gw-agent'];
+/** Types that take a trigger and meter themselves (Run sample looks for these; the agent first). */
+export const RUNNABLE_TYPES = ['gw-agent', 'gw-llm', 'gw-tool'];
 const svg = (inner) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 export const ICONS = {
   gateway: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 7v10M9.2 9.6c0-1 1.2-1.6 2.8-1.6s2.8.6 2.8 1.6c0 2.6-5.6 1.4-5.6 4 0 1 1.2 1.6 2.8 1.6s2.8-.6 2.8-1.6"/>'),
@@ -19,6 +21,8 @@ export const ICONS = {
   'gw-tool': svg('<circle cx="10.5" cy="10.5" r="6"/><path d="M20 20l-4.8-4.8"/>'),
   'gw-budget': svg('<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 10h18M7 15h4"/>'),
   'gw-meter': svg('<path d="M4 16a8 8 0 0116 0"/><path d="M12 16l4-5"/><path d="M3 20h18"/>'),
+  'gw-memory': svg('<path d="M4 6.5C4 4.5 8 3.5 12 3.5s8 1 8 3-4 3-8 3-8-1-8-3z"/><path d="M4 6.5v11c0 2 4 3 8 3s8-1 8-3v-11"/><path d="M4 12c0 2 4 3 8 3s8-1 8-3"/>'),
+  'gw-agent': svg('<rect x="4" y="8" width="16" height="12" rx="3.5"/><path d="M12 8V4.5"/><circle cx="12" cy="3.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="8.8" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.2" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><path d="M9 17h6"/>'),
 };
 
 /* ---------- module state: one ledger + host per page (set by registerNodes) ---------- */
@@ -84,26 +88,34 @@ function fail(ctx, gw, reason) {
   gw.status = 'failed'; gw.error = reason; gw.errorUntil = ctx.time + ERROR_VISIBLE_S;
   ctx.instance.rt.error = reason;
   ctx.emit('failed', reason);
+  return 'failed';
 }
 
-/** One attempt: estimate → hold → async call → queue. Called from evaluate (initial) and from drain (fallback). */
+/**
+ * One attempt: estimate → hold → async call → queue. Called from evaluate (initial), from drain
+ * (fallback) and, for the agent, once per step. `req` = { pulseId, prompt, attempt, route?, note?,
+ * el?, params?, title?, step? }: `params` / `title` / `step` let one node (the agent) meter a call
+ * on behalf of an attached sub-node — the idempotency key then carries `:s<step>` and the ledger
+ * row `title` ("Research agent · step 2"). Returns 'started' | 'bypassed' | 'duplicate' | 'failed'.
+ */
 function startAttempt(ctx, kind, req) {
-  const { instance, params, state } = ctx; const gw = gwState(state);
-  const idem = `${instance.uid}:${req.pulseId}${req.attempt > 1 ? `:a${req.attempt}` : ''}`;
+  const { instance, state } = ctx; const gw = gwState(state);
+  const params = req.params || ctx.params;
+  const idem = `${instance.uid}:${req.pulseId}${req.step != null ? `:s${req.step}` : ''}${req.attempt > 1 ? `:a${req.attempt}` : ''}`;
   const workflow = workflowOf(instance);
   const el = req.el || eligibility(kind, params);
-  const base = { idem, nodeUid: instance.uid, nodeTitle: instance.title, workflow };
+  const base = { idem, nodeUid: instance.uid, nodeTitle: req.title || instance.title, workflow };
   if (el.bypass) {
     if (!el.adapter || (kind === 'llm' && !el.route.model)) return fail(ctx, gw, `own key: ${el.route?.reason || 'no adapter for ' + (params.provider || params.service)}`);
     const est = el.adapter.estimate(params, req.prompt, el.route);
     const row = ledger.bypass({ ...base, providerId: routeProviderId(kind, el.route), provider: routeLabel(kind, el.route), service: routeService(kind, el.route), units: est.units, note: `own API key${params.apiKey ? '' : ' (empty)'}; not metered` });
-    if (!row) return;   // same pulse already processed
-    gw.status = 'bypassed'; gw.route = routeLabel(kind, el.route);
+    if (!row) return 'duplicate';   // same pulse already processed
+    if (req.step == null) { gw.status = 'bypassed'; gw.route = routeLabel(kind, el.route); }
     const P = pend(instance); P.inflight += 1;
     el.adapter.call(params, req.prompt, el.route, { mode: 'own-key' })
-      .then((res) => P.queue.push({ ok: true, holdId: null, res, req }), (err) => P.queue.push({ ok: false, holdId: null, err, req, route: el.route }))
+      .then((res) => P.queue.push({ ok: true, holdId: null, res, req, kind, route: el.route }), (err) => P.queue.push({ ok: false, holdId: null, err, req, kind, route: el.route }))
       .finally(() => { P.inflight -= 1; });
-    return;
+    return 'bypassed';
   }
   if (!el.ok) { ledger.decline({ ...base, provider: params.provider || params.service, service: '—' }, `not gateway-eligible: ${el.why}`); return fail(ctx, gw, `declined: ${el.why}`); }
   const route = req.route || el.route;
@@ -111,13 +123,30 @@ function startAttempt(ctx, kind, req) {
   const est = adapter.estimate(params, req.prompt, route);
   const budget = budgetFor(instance, workflow);
   const hold = ledger.hold({ ...base, providerId: routeProviderId(kind, route), provider: routeLabel(kind, route), service: routeService(kind, route), units: est.units, credits: est.credits, note: req.note || (kind === 'llm' ? route.reason : ''), budget: budget ? { limit: budget.limit, period: budget.period } : null });
-  if (hold.duplicate) return;   // idempotency: this pulse was already billed
+  if (hold.duplicate) return 'duplicate';   // idempotency: this pulse was already billed
   if (!hold.ok) return fail(ctx, gw, `declined: ${hold.reason}`);
-  gw.status = 'held'; gw.route = routeLabel(kind, route); gw.holdId = hold.holdId;
+  if (req.step == null) { gw.status = 'held'; gw.route = routeLabel(kind, route); }
+  gw.holdId = hold.holdId;
   const P = pend(instance); P.inflight += 1;
   adapter.call(params, req.prompt, route, { simulateFailure: policy().fallback })
-    .then((res) => P.queue.push({ ok: true, holdId: hold.holdId, res, req, route }), (err) => P.queue.push({ ok: false, holdId: hold.holdId, err, req, route }))
+    .then((res) => P.queue.push({ ok: true, holdId: hold.holdId, res, req, kind, route }), (err) => P.queue.push({ ok: false, holdId: hold.holdId, err, req, kind, route }))
     .finally(() => { P.inflight -= 1; });
+  return 'started';
+}
+
+/** After a provider error: refund the hold and, for a model call with the fallback policy on, retry once elsewhere. Returns true when a fallback attempt started. */
+function tryFallback(ctx, item, kind, reason) {
+  const { instance } = ctx;
+  if (item.holdId) ledger.refund(item.holdId, `${reason} · hold released`);
+  if (kind === 'llm' && policy().fallback && item.req.attempt < 2 && item.route?.model) {
+    const fb = fallbackFor(item.route.model);
+    if (fb) {
+      toast(`${item.req.title || instance.title}: ${item.route.model.label} failed, falling back to ${fb.label}`, 2200);
+      const r = startAttempt(ctx, kind, { ...item.req, attempt: item.req.attempt + 1, route: { model: fb, reason: `fallback from ${item.route.model.label}` }, note: `fallback from ${item.route.model.label} after ${reason}` });
+      return r === 'started' || r === 'bypassed';
+    }
+  }
+  return false;
 }
 
 /** Drain resolved calls: settle / refund on this frame, then emit. Fallback re-enters startAttempt. */
@@ -127,23 +156,22 @@ function drain(ctx, kind) {
     const item = P.queue.shift();
     if (item.ok) {
       if (item.holdId) { if (!ledger.isOpen(item.holdId)) continue; ledger.settle(item.holdId, item.res.credits, { units: item.res.units, note: item.req.note || (kind === 'llm' ? item.route?.reason : '') }); }
-      gw.status = item.holdId ? 'settled' : 'bypassed'; gw.lastCost = item.holdId ? item.res.credits : 0; gw.result = item.res.result; gw.runs = (gw.runs || 0) + 1; gw.holdId = null; gw.error = null;
+      gw.status = item.holdId ? 'settled' : 'bypassed'; gw.lastCost = item.holdId ? item.res.credits : 0; gw.result = item.res.result; gw.runs = (gw.runs || 0) + 1; gw.holdId = null; gw.error = null; gw.lastAt = ctx.time;
       touch('result'); touch('cost'); emit('done', gw.result);
       continue;
     }
     const reason = item.err?.message || String(item.err);
-    if (item.holdId) ledger.refund(item.holdId, `${reason} · hold released`);
     gw.holdId = null;
-    if (kind === 'llm' && policy().fallback && item.req.attempt < 2 && item.route?.model) {
-      const fb = fallbackFor(item.route.model);
-      if (fb) {
-        toast(`${instance.title}: ${item.route.model.label} failed, falling back to ${fb.label}`, 2200);
-        startAttempt(ctx, kind, { ...item.req, attempt: item.req.attempt + 1, route: { model: fb, reason: `fallback from ${item.route.model.label}` }, note: `fallback from ${item.route.model.label} after ${reason}` });
-        continue;
-      }
-    }
+    if (tryFallback(ctx, item, kind, reason)) continue;
     fail(ctx, gw, `${reason}${policy().fallback ? ' · no fallback left' : ' · fallback policy off'}`);
   }
+}
+
+/** The `handle` a gw-llm / gw-tool publishes so an agent slot can run it: who it is and how it is configured (never the key itself). */
+export function handleOf(kind, instance) {
+  const p = instance.params;
+  const params = kind === 'llm' ? { credential: p.credential, provider: p.provider, model: p.model, tier: p.tier, hasKey: !!p.apiKey } : { credential: p.credential, service: p.service, units: Number(p.units) || 1, hasKey: !!p.apiKey };
+  return { kind, uid: instance.uid, title: instance.title, params, glyph: glyphFor(kind, p).id };
 }
 
 function gatewayEvaluate(kind) {
@@ -160,7 +188,7 @@ function gatewayEvaluate(kind) {
     }
     drain(ctx, kind);
     if (gw.error && time < (gw.errorUntil || 0)) instance.rt.error = gw.error;
-    return { result: gw.result, cost: gw.lastCost ?? 0 };
+    return { result: gw.result, cost: gw.lastCost ?? 0, handle: handleOf(kind, instance) };
   };
 }
 const statusWord = { idle: 'idle', held: 'held…', settled: 'settled', bypassed: 'own key', failed: 'failed', declined: 'declined' };
@@ -190,7 +218,168 @@ function gatewayPanel(kind) {
   };
 }
 
-/** Register the four gw- components. Called once per page from index.js `register(host)`. */
+
+/* ======================================================================================
+ * gw-agent: an n8n-style agent whose Chat model, Memory and Tools are SUB-NODES attached to
+ * slot inputs (`model`, `memory`, `tools` — the last one is `multi`, one slot per cable). A run is a
+ * metered loop entirely through the ledger: PLAN (a model call on the attached gw-llm's provider /
+ * model / tier / credential) → up to `maxTools` TOOL steps (one per attached gw-tool, through its
+ * service) → ANSWER (a model call). Each step is its own hold → settle (or bypass for an own-key
+ * model) with the idempotency key `<agent>:<pulse>:s<n>` and the row title "<agent> · step n"; a
+ * decline or provider error mid-way refunds the open hold, marks the rest skipped and emits
+ * `failed`. Steps live in `state.gw.steps` [{ n, kind, role, service, status, credits, ms }] so the
+ * face can draw the timeline; the answer is remembered in the attached gw-memory (last N).
+ * ====================================================================================== */
+const AGENT_ROLES = { plan: 'plan', tool: 'tool', answer: 'answer' };
+/** The attached sub-node behind a handle (its live params win over the handle's snapshot). */
+function resolveHandle(instance, h) {
+  if (!h || typeof h !== 'object' || !h.kind) return null;
+  const node = instance.world?.nodeByUid?.(h.uid) || null;
+  return { kind: h.kind, uid: h.uid, title: node?.title || h.title || h.kind, params: node?.params || { ...h.params }, node };
+}
+/** The agent's attachments from its slot inputs: { model, memory, tools[] }. */
+export function attachments(instance, inputs = {}) {
+  const model = resolveHandle(instance, inputs.model); const memory = resolveHandle(instance, inputs.memory);
+  const raw = Array.isArray(inputs.tools) ? inputs.tools : inputs.tools ? [inputs.tools] : [];
+  const tools = raw.map((h) => resolveHandle(instance, h)).filter((t) => t && t.kind === 'tool');
+  return { model: model && model.kind === 'llm' ? model : null, memory: memory && memory.kind === 'memory' ? memory : null, tools };
+}
+/** The step plan for a run (pure): plan → one step per tool (capped) → answer. */
+export function planSteps(att, maxTools = 3) {
+  const steps = [];
+  const modelService = att.model ? (eligibility('llm', att.model.params).route?.model?.label || att.model.params.provider) : '—';
+  steps.push({ n: 1, kind: 'llm', role: AGENT_ROLES.plan, uid: att.model?.uid || null, service: modelService, status: 'planned', credits: null, ms: null });
+  att.tools.slice(0, Math.max(0, Math.round(Number(maxTools) || 0))).forEach((t) => steps.push({ n: steps.length + 1, kind: 'tool', role: AGENT_ROLES.tool, uid: t.uid, service: t.params.service, status: 'planned', credits: null, ms: null }));
+  steps.push({ n: steps.length + 1, kind: 'llm', role: AGENT_ROLES.answer, uid: att.model?.uid || null, service: modelService, status: 'planned', credits: null, ms: null });
+  return steps;
+}
+/** Estimated credits for a whole run with the current attachments (0 for own-key steps). */
+export function estimateAgentRun(instance, inputs, params) {
+  const att = attachments(instance, inputs);
+  if (!att.model) return { credits: 0, steps: 0, att };
+  const steps = planSteps(att, params.maxTools);
+  let credits = 0;
+  for (const st of steps) { const sub = st.kind === 'llm' ? att.model : att.tools.find((t) => t.uid === st.uid); if (sub) credits += estimateRun(st.kind, sub.params).credits; }
+  return { credits, steps: steps.length, att };
+}
+const agentState = (state) => { const gw = gwState(state); gw.steps = gw.steps || []; gw.total = gw.total || 0; return gw; };
+const stepPrompt = (run, step, k) => step.role === 'plan' ? `Plan the research for: ${run.prompt}${run.memoryNote || ''}`
+  : step.role === 'tool' ? `${run.prompt} — step ${k + 1}: ${step.service}`
+  : `Write the final answer for "${run.prompt}" from ${run.findings.length} finding${run.findings.length === 1 ? '' : 's'}: ${run.findings.map((f) => f.slice(0, 40)).join(' | ')}`;
+
+function startStep(ctx, gw) {
+  const run = gw.run; const step = gw.steps[run.idx]; if (!step) return finishRun(ctx, gw, 'done');
+  const att = run.att;
+  const sub = step.kind === 'llm' ? att.model : att.tools.find((t) => t.uid === step.uid);
+  if (!sub) { step.status = 'failed'; return finishRun(ctx, gw, 'failed', `step ${step.n}: attached ${step.kind === 'llm' ? 'model' : 'tool'} is gone`); }
+  step.startedAt = Date.now(); step.status = 'held';
+  const r = startAttempt(ctx, step.kind, { pulseId: run.pulseId, prompt: stepPrompt(run, step, run.idx), attempt: 1, params: sub.params, title: `${ctx.instance.title} · step ${step.n}`, step: step.n });
+  if (r === 'bypassed') step.status = 'bypassing';
+  if (r === 'failed') { step.status = 'failed'; finishRun(ctx, gw, 'failed', gw.error, { emitted: true }); }
+  if (r === 'duplicate') { step.status = 'skipped'; run.idx += 1; return startStep(ctx, gw); }
+  ctx.instance.faceDirty = true;
+  return r;
+}
+function finishRun(ctx, gw, status, reason = null, { emitted = false } = {}) {
+  const run = gw.run; if (!run) return;
+  for (const st of gw.steps) if (st.status === 'planned' || st.status === 'held' || st.status === 'bypassing') st.status = st.status === 'planned' ? 'skipped' : 'failed';
+  gw.run = null; gw.runs = (gw.runs || 0) + 1; gw.lastAt = ctx.time; gw.ms = Date.now() - run.startedAt;
+  if (status === 'done') {
+    gw.status = run.total > 0 || !run.att.model ? 'settled' : 'bypassed'; gw.answer = run.answer; gw.lastCost = run.total; gw.error = null;
+    remember(run.att.memory, { prompt: run.prompt, answer: run.answer, credits: run.total, steps: gw.steps.length, at: new Date().toISOString() });
+    ctx.touch('answer'); ctx.touch('steps'); ctx.touch('cost'); ctx.emit('done', run.answer);
+  } else {
+    gw.lastCost = run.total;
+    if (!emitted) fail(ctx, gw, reason || 'agent run failed'); else gw.status = 'failed';
+    ctx.touch('steps'); ctx.touch('cost');
+  }
+  ctx.instance.faceDirty = true;
+}
+/** Write an exchange into the attached gw-memory node (last `window` kept). */
+function remember(mem, exchange) {
+  const node = mem?.node; if (!node || node.typeId !== 'gw-memory') return false;
+  const win = Math.max(1, Math.round(Number(node.params.window) || 6));
+  node.state.exchanges = [...(node.state.exchanges || []), exchange].slice(-win);
+  node.state.total = (node.state.total || 0) + 1;
+  node.faceDirty = true;
+  return true;
+}
+function drainAgent(ctx) {
+  const { instance, state } = ctx; const gw = agentState(state); const P = pend(instance);
+  while (P.queue.length) {
+    const item = P.queue.shift();
+    const step = gw.steps.find((st) => st.n === item.req.step);
+    if (!step || !gw.run) { if (item.holdId && ledger.isOpen(item.holdId)) ledger.refund(item.holdId, 'agent run ended · hold released'); continue; }
+    const run = gw.run;
+    if (item.ok) {
+      if (item.holdId) { if (!ledger.isOpen(item.holdId)) { step.status = 'skipped'; run.idx += 1; startStep(ctx, gw); continue; } ledger.settle(item.holdId, item.res.credits, { units: item.res.units, note: item.req.note || (item.kind === 'llm' ? item.route?.reason : '') }); }
+      step.status = item.holdId ? 'settled' : 'bypassed'; step.credits = item.holdId ? item.res.credits : 0; step.ms = Date.now() - (step.startedAt || Date.now()); step.result = String(item.res.result || '').slice(0, 160);
+      run.total += step.credits; gw.total = run.total;
+      if (step.role === 'tool') run.findings.push(String(item.res.result || ''));
+      if (step.role === 'plan') run.plan = String(item.res.result || '');
+      if (step.role === 'answer') { run.answer = item.res.result; finishRun(ctx, gw, 'done'); continue; }
+      run.idx += 1; startStep(ctx, gw);
+      continue;
+    }
+    const reason = item.err?.message || String(item.err);
+    gw.holdId = null;
+    if (tryFallback(ctx, item, item.kind, reason)) { step.status = 'held'; step.fallback = true; continue; }
+    step.status = 'failed'; step.error = reason;
+    finishRun(ctx, gw, 'failed', `step ${step.n} (${step.service}): ${reason}${policy().fallback ? ' · no fallback left' : ' · fallback policy off'}`);
+  }
+}
+function agentEvaluate(ctx) {
+  const { inputs, params, state, time, instance } = ctx; const gw = agentState(state);
+  let pulse = inputs.trigger || null;
+  if (kicks.delete(instance)) pulse = { n: `m${++manualSeq}`, payload: 'manual run' };
+  if (pulse) {
+    if (gw.run) toast(`${instance.title}: already running (step ${gw.run.idx + 1} of ${gw.steps.length})`, 1800);
+    else {
+      const att = attachments(instance, inputs);
+      const raw = inputs.prompt; const fromPulse = typeof pulse.payload === 'string' && pulse.payload !== 'manual run' && pulse.payload !== 'sample run' ? pulse.payload : undefined;
+      const prompt = raw !== undefined && raw !== null && raw !== '' ? String(raw) : params.prompt || fromPulse || 'research request';
+      gw.error = null;
+      if (!att.model) { gw.steps = []; fail(ctx, gw, 'no model attached: cable a Model call into the Chat model slot'); }
+      else {
+        const mem = att.memory?.node?.state?.exchanges || [];
+        gw.steps = planSteps(att, params.maxTools); gw.total = 0; gw.answer = undefined;
+        gw.run = { pulseId: pulseId(pulse), prompt, att, idx: 0, total: 0, findings: [], startedAt: Date.now(), memoryNote: mem.length ? ` (with ${mem.length} remembered exchange${mem.length === 1 ? '' : 's'})` : '' };
+        gw.status = 'running';
+        startStep(ctx, gw);
+      }
+    }
+  }
+  drainAgent(ctx);
+  if (gw.error && time < (gw.errorUntil || 0)) instance.rt.error = gw.error;
+  return { answer: gw.answer, steps: gw.steps, cost: gw.lastCost ?? gw.total ?? 0 };
+}
+const agentFooter = ({ state, inputs, params, instance }) => {
+  const gw = state.gw || {}; const steps = gw.steps || [];
+  const done = steps.filter((s) => s.status === 'settled' || s.status === 'bypassed').length;
+  if (gw.run) return `running · step ${gw.run.idx + 1} of ${steps.length} · ${fmt(gw.run.total)} cr`;
+  if (gw.status === 'failed' && steps.length) return `failed · ${done}/${steps.length} steps · ${fmt(gw.lastCost || 0)} cr`;
+  if (steps.length && done) return `${done} steps · ${fmt(gw.lastCost || 0)} cr · ${gw.runs || 0}×`;
+  const est = estimateAgentRun(instance, inputs, params);
+  return est.att.model ? `${est.steps} steps · est ${fmt(est.credits)} cr` : 'attach a model to the Chat model slot';
+};
+function agentPanel(api, block) {
+  const s = api.section('Agent run');
+  const att = () => attachments(block, block.rt?.inputs || {});
+  api.readonly(s, 'chat model', () => { const a = att(); return a.model ? `${a.model.title} · ${a.model.params.provider}${a.model.params.credential === 'Own key' ? ' · own key' : ''}` : 'none attached'; });
+  api.readonly(s, 'memory', () => { const a = att(); return a.memory ? `${a.memory.title} · ${(a.memory.node?.state?.exchanges || []).length} exchanges` : 'none'; });
+  api.readonly(s, 'tools', () => { const a = att(); return a.tools.length ? a.tools.map((t) => t.params.service).join(', ') : 'none'; });
+  api.readonly(s, 'est. cost / run', () => { const e = estimateAgentRun(block, block.rt?.inputs || {}, block.params); return e.att.model ? `${fmt(e.credits)} cr · ${e.steps} steps` : '—'; });
+  const list = api.h('div', 'gw-steps'); s.appendChild(list);
+  api.live(() => {
+    const steps = block.state.gw?.steps || [];
+    list.textContent = steps.length ? steps.map((st) => `${st.n}. ${st.role} · ${st.service} · ${st.status}${st.credits != null ? ` · ${fmt(st.credits)} cr` : ''}`).join('\n') : 'no run yet';
+  });
+  api.readonly(s, 'last run', () => { const gw = block.state.gw || {}; return gw.runs ? `${fmt(gw.lastCost || 0)} cr · ${gw.ms ? `${(gw.ms / 1000).toFixed(1)} s` : ''}` : '—'; });
+  api.readonly(s, 'balance', () => `${fmtBal(ledger.available())} cr available`);
+  api.action(s, 'Run now (no upstream pulse needed)', () => kick(block), `gw-run-${block.uid}`);
+}
+
+/** Register the gw- components. Called once per page from index.js `register(host)`. */
 export function registerNodes(h, l) {
   host = h; ledger = l;
   const { clear, drawText, roundRect } = host.draw;
@@ -203,7 +392,7 @@ export function registerNodes(h, l) {
     id: 'gw-llm', category: 'gateway', label: 'Model call', icon: ICONS['gw-llm'], size: 'S',
     description: 'Calls a model through Gateway credits (metered) or your own key (bypassed); simulated providers',
     inputs: [{ key: 'trigger', label: 'trigger', type: 'event' }, { key: 'prompt', label: 'prompt', type: 'text', optional: true }],
-    outputs: [{ key: 'result', label: 'result', type: 'text' }, { key: 'cost', label: 'cost', type: 'number' }, { key: 'done', label: 'done', type: 'event' }, { key: 'failed', label: 'failed', type: 'event' }],
+    outputs: [{ key: 'result', label: 'result', type: 'text' }, { key: 'cost', label: 'cost', type: 'number' }, { key: 'done', label: 'done', type: 'event' }, { key: 'failed', label: 'failed', type: 'event' }, { key: 'handle', label: 'as model', type: 'data' }],
     params: [
       { key: 'credential', label: 'credential', type: 'select', options: ['Gateway credits', 'Own key'], default: 'Gateway credits' },
       { key: 'provider', label: 'provider', type: 'select', options: MODEL_PROVIDER_LABELS, default: 'Anthropic' },
@@ -224,7 +413,7 @@ export function registerNodes(h, l) {
     id: 'gw-tool', category: 'gateway', label: 'Tool call', icon: ICONS['gw-tool'], size: 'S',
     description: 'Search, crawl, browse or parse through a tool service, priced per request / page / minute',
     inputs: [{ key: 'trigger', label: 'trigger', type: 'event' }, { key: 'query', label: 'query', type: 'text', optional: true }],
-    outputs: [{ key: 'result', label: 'result', type: 'text' }, { key: 'cost', label: 'cost', type: 'number' }, { key: 'done', label: 'done', type: 'event' }, { key: 'failed', label: 'failed', type: 'event' }],
+    outputs: [{ key: 'result', label: 'result', type: 'text' }, { key: 'cost', label: 'cost', type: 'number' }, { key: 'done', label: 'done', type: 'event' }, { key: 'failed', label: 'failed', type: 'event' }, { key: 'handle', label: 'as tool', type: 'data' }],
     params: [
       { key: 'credential', label: 'credential', type: 'select', options: ['Gateway credits', 'Own key'], default: 'Gateway credits' },
       { key: 'service', label: 'service', type: 'select', options: TOOL_SERVICE_LABELS, default: 'Brave Search' },
@@ -297,6 +486,42 @@ export function registerNodes(h, l) {
         drawText(g, last == null ? '—' : `${fmt(last)} cr`, 28 + cw + 6, y + 36, cw - 30, 40, { size: 28, weight: 600, mono: true, color: palette.faceAccent, align: 'left' });
       },
     },
+  });
+  /* ---------- gw-memory ---------- */
+  host.nodes.register({
+    id: 'gw-memory', category: 'gateway', label: 'Memory', icon: ICONS['gw-memory'], size: 'S',
+    description: 'Attach to an agent\'s Memory slot: keeps the last N exchanges (prompt, answer, cost) and tells the agent about them',
+    inputs: [{ key: 'clear', label: 'clear', type: 'event', optional: true }],
+    outputs: [{ key: 'handle', label: 'as memory', type: 'data' }, { key: 'count', label: 'count', type: 'number' }, { key: 'recent', label: 'recent', type: 'data' }],
+    params: [{ key: 'window', label: 'window (exchanges kept)', type: 'number', default: 6, min: 1, max: 50, step: 1 }],
+    evaluate({ inputs, params, state, instance }) {
+      const win = Math.max(1, Math.round(Number(params.window) || 6));
+      if (inputs.clear) { state.exchanges = []; instance.faceDirty = true; }
+      state.exchanges = (state.exchanges || []).slice(-win);
+      const last = state.exchanges[state.exchanges.length - 1];
+      return { handle: { kind: 'memory', uid: instance.uid, title: instance.title, window: win, count: state.exchanges.length, glyph: 'memory' }, count: state.exchanges.length, recent: last ? { prompt: last.prompt, answer: last.answer, at: last.at } : undefined };
+    },
+    footer: ({ state, params }) => `${(state.exchanges || []).length} of ${params.window} exchanges${state.total ? ` · ${state.total} total` : ''}`,
+  });
+
+  /* ---------- gw-agent ---------- */
+  host.nodes.register({
+    id: 'gw-agent', category: 'gateway', label: 'Research agent', icon: ICONS['gw-agent'], size: 'L',
+    description: 'An agent whose Chat model, Memory and Tools are sub-nodes on its slots; every step (plan, tools, answer) is metered through the ledger',
+    inputs: [
+      { key: 'trigger', label: 'trigger', type: 'event' }, { key: 'prompt', label: 'prompt', type: 'text', optional: true },
+      { key: 'model', label: 'Chat model *', type: 'data', optional: true }, { key: 'memory', label: 'Memory', type: 'data', optional: true }, { key: 'tools', label: 'Tools', type: 'data', multi: true, optional: true },
+    ],
+    outputs: [{ key: 'answer', label: 'answer', type: 'text' }, { key: 'steps', label: 'steps', type: 'data' }, { key: 'cost', label: 'cost', type: 'number' }, { key: 'done', label: 'done', type: 'event' }, { key: 'failed', label: 'failed', type: 'event' }],
+    params: [
+      { key: 'prompt', label: 'request (if unconnected)', type: 'text', default: 'Research the latest pricing changes across model providers' },
+      { key: 'maxTools', label: 'tool steps per run (max)', type: 'number', default: 3, min: 0, max: 6, step: 1 },
+      { key: 'workflow', label: 'workflow (empty = group)', type: 'text', default: '' },
+    ],
+    evaluate: agentEvaluate,
+    footer: agentFooter,
+    panel: agentPanel,
+    onDestroy(instance) { const n = ledger.releaseHolds(instance.uid, 'agent removed · hold released'); if (n) toast(`${instance.title}: ${n} hold${n > 1 ? 's' : ''} released`); },
   });
   return GATEWAY_TYPES;
 }

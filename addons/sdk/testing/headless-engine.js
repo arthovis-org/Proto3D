@@ -27,6 +27,7 @@ export class HeadlessNode {
     this.params = { ...defaultParams(def), ...(params || {}) };
     this.state = state || {};
     this.enabled = enabled; this.rt = {}; this.derivedState = 'idle'; this.visible = true; this.group = null; this.world = null;
+    this.position = { x: 0, y: 0, z: 0 }; this.faceDirty = false;   // what layout code and faces touch on a Block3D
     this.inputs = def.inputs.map((p) => new HeadlessPort(this, p));
     this.outputs = def.outputs.map((p) => new HeadlessPort(this, p));
     this.ports = [...this.inputs, ...this.outputs];

@@ -255,6 +255,45 @@ export function createHost(proto, manifest, core) {
     keys() { const s = backing(); if (!s) return []; const out = []; try { for (let i = 0; i < s.length; i++) { const k = s.key(i); if (k && k.startsWith(ns)) out.push(k.slice(ns.length)); } } catch (_) { /* blocked */ } return out; },
   });
 
+  /* ---------------- layout ---------------- */
+  const layout = Object.freeze({
+    /**
+     * The graph as plain data for layout code: nodes { uid, type, size, w, d, x, z } (plan footprint =
+     * width × height in world units, scale applied) and connections { from, to, fromKey, toKey } (uids).
+     */
+    graph() {
+      const p = P('layout.graph');
+      const nodes = p.world.nodes.filter((n) => n.visible !== false && n.kind !== 'group' && n.kind !== 'connection')
+        .map((n) => { const k = n.scale?.x || 1; return { uid: n.uid, type: n.typeId, size: n.def?.size || 'S', w: (n.width || 0) * k, d: (n.height || 0) * k, x: n.position?.x ?? 0, z: n.position?.z ?? 0 }; });
+      const connections = p.world.connections.filter((c) => c.from?.owner && c.to?.owner).map((c) => ({ from: c.from.owner.uid, to: c.to.owner.uid, fromKey: c.from.key, toKey: c.to.key }));
+      return { nodes, connections };
+    },
+    /**
+     * Move blocks to `positions` (Map or object: uid → [x, z] | { x, z }; y is kept) as ONE undoable
+     * command through the core history (`cmd.transform`, the command Auto-layout and the gizmo use),
+     * then frame everything. Returns how many blocks moved.
+     */
+    apply(positions, { label = 'Flow layout', frame = true } = {}) {
+      const p = P('layout.apply');
+      if (typeof p.cmd?.transform !== 'function' || typeof p.cmd?.snapshot !== 'function' || typeof p.history?.execute !== 'function') throw new HostError('core seam missing: window.__proto.cmd.transform / cmd.snapshot / history.execute (needed by host.layout.apply)', 'window.__proto.cmd.transform');
+      const entries = positions instanceof Map ? [...positions.entries()] : Object.entries(positions || {});
+      const nodes = [], after = [];
+      for (const [uid, pos] of entries) {
+        const n = p.world.nodeByUid ? p.world.nodeByUid(uid) : p.world.nodes.find((x) => x.uid === uid);
+        if (!n || !pos) continue;
+        const x = Array.isArray(pos) ? pos[0] : pos.x, z = Array.isArray(pos) ? pos[1] : pos.z;
+        if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+        nodes.push(n); after.push({ p: [x, n.position.y, z], r: n.rotation.y, s: n.scale.x });
+      }
+      if (!nodes.length) return 0;
+      const before = nodes.map((n) => p.cmd.snapshot(n));
+      const c = p.cmd.transform(p.world, nodes, before, after); c.label = label;
+      p.history.execute(c);
+      if (frame) p.frameAll?.({ instant: false });
+      return nodes.length;
+    },
+  });
+
   /* ---------------- persistence ---------------- */
   const persist = Object.freeze({
     serialize: () => P('persist.serialize').serialize(),
@@ -262,7 +301,7 @@ export function createHost(proto, manifest, core) {
   });
 
   return Object.freeze({
-    version: SDK_VERSION, manifest: m, nodes, engine, world, ui, selection, draw, theme, icons, examples, storage, persist,
+    version: SDK_VERSION, manifest: m, nodes, engine, world, ui, selection, draw, theme, icons, examples, storage, persist, layout,
     /** True once window.__proto exists (install phase). */
     get booted() { return !!getProto(); },
   });

@@ -125,6 +125,12 @@ test('main.js: window.__proto exposes every member the host uses', () => {
   assert.ok(block.length > 100, seam('window.__proto'));
   for (const k of ['ws', 'world', 'engine', 'history', 'selection', 'overlays', 'menubar', 'tabs', 'start', 'leftBar', 'registry', 'togglePanel', 'frameAll', 'serialize:', 'load:'])
     assert.ok(new RegExp(`[\\s{,]${k.replace('.', '\\.')}[,:\\s]`).test(block), seam(`window.__proto.${k.replace(':', '')}`));
+  for (const k of ['cmd', 'fieldEditor', 'createInstance']) assert.ok(new RegExp(`[\\s{,]${k}[,:\\s]`).test(block), seam(`window.__proto.${k}`));
+  matches('src/core/commands.js', /export function transform\(world, nodes, before, after\)/, 'cmd.transform(world, nodes, before, after) (host.layout.apply)');
+  has('src/core/commands.js', 'export const snapshot = (n) => ({ p: n.position.toArray(), r: n.rotation.y, s: n.scale.x });', 'cmd.snapshot shape');
+  matches('src/core/commands.js', /export function setParam\(world, node, key, value\)/, 'cmd.setParam');
+  matches('src/core/history.js', /\n  execute\(cmd\) \{/, 'history.execute(cmd)');
+  matches('src/core/world.js', /nodeByUid\(uid\)/, 'world.nodeByUid');
   matches('src/tabs.js', /replaceActive\(fn, \{ name = null \} = \{\}\)/, 'tabs.replaceActive(fn, { name })');
   matches('src/ui/start-panel.js', /\n  hide\(reason = 'close'\)/, 'start.hide(reason)');
   matches('src/ui/overlays.js', /\n  toast\(text, ms = 1600\)/, 'overlays.toast(text, ms)');

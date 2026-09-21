@@ -24,7 +24,7 @@ export function createFakeHost(manifest, { registry = coreRegistry, headless = n
   const m = validateManifest(manifest);
   const prefix = nodePrefix(m);
   const ns = storageNamespace(m);
-  const rec = { defs: [], menus: [], sections: [], toasts: [], errorHandlers: [], worldListeners: [], icons: {}, examples: [], stylesheets: [], warnings: [] };
+  const rec = { defs: [], menus: [], sections: [], toasts: [], errorHandlers: [], worldListeners: [], icons: {}, examples: [], stylesheets: [], warnings: [], layouts: [] };
   const ownIds = new Set();
   const world = headless?.world || null;
   const engine = headless?.engine || null;
@@ -82,6 +82,17 @@ export function createFakeHost(manifest, { registry = coreRegistry, headless = n
       keys() { return [...storage.keys()].filter((k) => k.startsWith(ns)).map((k) => k.slice(ns.length)); },
       /** Test-only: the raw backing map. */
       raw: storage,
+    }),
+    layout: Object.freeze({
+      graph() { const w = need('layout.graph', world); return { nodes: w.nodes.map((n) => ({ uid: n.uid, type: n.typeId, size: n.def?.size || 'S', w: n.width || 0, d: n.height || 0, x: n.position?.x ?? 0, z: n.position?.z ?? 0 })), connections: w.connections.map((c) => ({ from: c.from.owner.uid, to: c.to.owner.uid, fromKey: c.from.key, toKey: c.to.key })) }; },
+      /** Records the call and writes `position` on the headless nodes (no history in Node). */
+      apply(positions, opts = {}) {
+        const w = need('layout.apply', world); const entries = positions instanceof Map ? [...positions.entries()] : Object.entries(positions || {});
+        let moved = 0;
+        for (const [uid, pos] of entries) { const n = w.nodes.find((x) => x.uid === uid); if (!n) continue; const x = Array.isArray(pos) ? pos[0] : pos.x, z = Array.isArray(pos) ? pos[1] : pos.z; n.position = { x, y: n.position?.y ?? 0, z }; moved += 1; }
+        rec.layouts.push({ positions: entries, opts, moved }); if (moved) w.changed('move');
+        return moved;
+      },
     }),
     persist: Object.freeze({ serialize: () => ({ app: 'proto3d', nodes: world ? world.nodes.map((n) => n.serialize()) : [] }), load: () => ({ skipped: [] }) }),
   });
