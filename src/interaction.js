@@ -1,5 +1,7 @@
 // interaction.js — pointer + keyboard model for the 3D workspace.
-//   hover: ports > sub pickables > faces > bodies > connections (ends first) > group frames
+//   hover: one depth-sorted raycast over everything pickable; the nearest hit wins, and only among
+//          hits at the same depth (PICK_EPS) the order ports > sub pickables > faces > bodies >
+//          connections (ends first) > group frames decides
 //   click: select (Shift adds / toggles) · click empty: clear · double-click a block: edit mode
 //   drag body: move every selected node (Shift: vertically)
 //   ports: hovering one explains it (tooltip: name, type, value, links) and lights every
@@ -11,8 +13,8 @@
 //          Esc to put it back; a connected single input picks up its existing cable the same way
 //   selection: a selected block brightens its cables (others dim to 25 %, their flow slows) and labels their far
 //          ends; a selected cable makes both ports pulse
-//   sub pickables (cards, tiles, handles owned by a Shape3D body) are picked right after ports:
-//   the owning block gets down / drag / drop / click through body3d.onSubPointer
+//   sub pickables (cards, tiles, handles owned by a Shape3D body) beat the surface they sit on, but
+//   not a block standing in front of them: the owning block gets down / drag / drop / click through body3d.onSubPointer
 //   Shift+drag on empty floor: marquee select · drag on a live face: the component handles it
 //   edit mode (faces.js beginFields, ui/field-editor.js): nothing shows on hover; a double-click on
 //          a block (Enter with it selected, the pencil, Edit → Edit content) enters edit mode on it —
@@ -54,6 +56,11 @@ const GUIDE_TICK = 1.4;     // length of a grid tick beside the block (world uni
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const portName = (p) => `${p.owner.title}.${p.label}`;
 const FADE = 0.28;
+/** Picking: kinds in priority order — decides only between hits at (nearly) the same depth. */
+const PICK_RANK = { port: 0, sub: 1, face: 2, block: 3, connection: 4, group: 5 };
+const PICK_EPS = 1e-3;      // "same depth": within this fraction of the hit distance …
+const PICK_EPS_MIN = 0.02;  // … or this many world units (coplanar helper meshes sit 0.01–0.02 apart)
+const CABLE_PICK_BIAS = 0.16;   // the fat invisible pick tube / end rings compete at the depth of the thin cable axis, not their inflated surface
 
 export class Interaction {
   constructor({ camera, renderer, controls, world, selection, history, gizmo = null, createInstance, overlays = null, guides = null, onHoverConnection = () => {}, onFocus = () => {}, onFrameAll = () => {}, onGizmoMode = () => {}, onTogglePanel = () => {}, onOpenPanel = () => {} }) {
@@ -115,38 +122,72 @@ export class Interaction {
   }
   _visibleNodes() { return this.world.nodes.filter((n) => n.visible); }
   /** Ports that can be picked: only on blocks that show them (wiring switch or per-block override). */
-  _allPorts() {
+  _allPorts(nodes = this._visibleNodes()) {
     const out = [];
-    for (const n of this._visibleNodes()) if (n.portsVisible) for (const p of n.ports) out.push(p);
+    for (const n of nodes) if (n.portsVisible) for (const p of n.ports) out.push(p);
     for (const g of this.world.groups) if (g.collapsed) for (const p of g.ports) out.push(p);
     return out;
   }
-  _portMeshes() { return this._allPorts().flatMap((p) => p.pickMeshes || [p.mesh, p.shell]); }
-  _faceMeshes() { return this._visibleNodes().filter((n) => n.face?.mesh).map((n) => n.face.mesh); }
-  _subMeshes() { return this._visibleNodes().flatMap((n) => (n.subMeshes ? n.subMeshes() : [])); }
-  _bodyMeshes() { return this._visibleNodes().flatMap((n) => (n.meshes ? n.meshes.filter((m) => m !== n.face?.mesh) : [n.body, n.header].filter(Boolean))); }
+  _portMeshes(nodes) { return this._allPorts(nodes).flatMap((p) => p.pickMeshes || [p.mesh, p.shell]); }
+  _faceMeshes(nodes = this._visibleNodes()) { return nodes.filter((n) => n.face?.mesh && n.face.mesh.visible !== false).map((n) => n.face.mesh); }
+  _subMeshes(nodes = this._visibleNodes()) { return nodes.flatMap((n) => (n.subMeshes ? n.subMeshes() : [])); }
+  _bodyMeshes(nodes = this._visibleNodes()) { return nodes.flatMap((n) => (n.meshes ? n.meshes.filter((m) => m !== n.face?.mesh) : [n.body, n.header]).filter((m) => m && m.visible !== false)); }
   _tubeMeshes() { return this.world.connections.filter((c) => c.visible).flatMap((c) => [c.pickTube, ...c.rings]); }
   _groupMeshes() { return this.world.groups.flatMap((g) => (g.collapsed && g.slab ? [g.slab.body, g.slab.header] : [g.fill, g.edge])); }
-
-  /** { kind: 'port'|'sub'|'face'|'block'|'connection'|'group', target, point, uv, sub, end } or null. */
-  pick() {
-    let hits = this.ray.intersectObjects(this._portMeshes(), false);
-    if (hits.length) return { kind: 'port', target: hits[0].object.userData.port, point: hits[0].point };
-    hits = this.ray.intersectObjects(this._subMeshes(), false);
-    if (hits.length) { const sub = hits[0].object.userData.sub; return { kind: 'sub', target: sub.block, sub, point: hits[0].point, mesh: hits[0].object }; }
-    hits = this.ray.intersectObjects(this._faceMeshes(), false);
-    if (hits.length) return { kind: 'face', target: hits[0].object.userData.block, point: hits[0].point, uv: hits[0].uv, mesh: hits[0].object };
-    hits = this.ray.intersectObjects(this._bodyMeshes(), false);
-    if (hits.length) return { kind: 'block', target: hits[0].object.userData.block, point: hits[0].point };
-    hits = this.ray.intersectObjects(this._tubeMeshes(), false);
-    if (hits.length) {
-      const c = hits[0].object.userData.connection;
-      const end = hits[0].object.userData.end || c.endNear(hits[0].point);
-      return { kind: 'connection', target: c, point: hits[0].point, end };
+  /**
+   * Everything the pointer can hit, tagged by kind: port pins (+ their hidden oversize shells and
+   * slot fills), sub pickables, faces, body parts, cables (the hidden fat pick tube and the end
+   * rings) and group slabs / frames. Hidden body parts and faces are skipped; the port shells and
+   * the pick tube are hidden on purpose (a wider grab area) and stay in. A mesh registered under
+   * two kinds keeps the higher-priority one (a device screen is both its face and a body part).
+   * `exclude` leaves one block out (the block being dragged in `_updateBlockDrop`).
+   */
+  _pickables({ exclude = null } = {}) {
+    const nodes = exclude ? this._visibleNodes().filter((n) => n !== exclude) : this._visibleNodes();
+    const meshes = [], kinds = new Map();
+    const push = (list, kind) => { for (const m of list) if (m && !kinds.has(m)) { kinds.set(m, kind); meshes.push(m); } };
+    push(this._portMeshes(nodes), 'port');
+    push(this._subMeshes(nodes), 'sub');
+    push(this._faceMeshes(nodes), 'face');
+    push(this._bodyMeshes(nodes), 'block');
+    push(this._tubeMeshes(), 'connection');
+    push(this._groupMeshes(), 'group');
+    return { meshes, kinds };
+  }
+  /** The hit descriptor for a tagged raycast hit. */
+  _describeHit(h) {
+    const o = h.object;
+    switch (h.kind) {
+      case 'port': return { kind: 'port', target: o.userData.port, point: h.point, distance: h.distance };
+      case 'sub': { const sub = o.userData.sub; return { kind: 'sub', target: sub.block, sub, point: h.point, mesh: o, distance: h.distance }; }
+      case 'face': return { kind: 'face', target: o.userData.block, point: h.point, uv: h.uv, mesh: o, distance: h.distance };
+      case 'block': return { kind: 'block', target: o.userData.block, point: h.point, distance: h.distance };
+      case 'connection': { const c = o.userData.connection; return { kind: 'connection', target: c, point: h.point, end: o.userData.end || c.endNear(h.point), distance: h.distance }; }
+      case 'group': return { kind: 'group', target: o.userData.group, point: h.point, distance: h.distance };
     }
-    hits = this.ray.intersectObjects(this._groupMeshes(), false);
-    if (hits.length) return { kind: 'group', target: hits[0].object.userData.group, point: hits[0].point };
     return null;
+  }
+  /**
+   * What the pointer ray hits first — depth-correct: one raycast over every pickable mesh, sorted
+   * by distance. A sticky note standing in front of a board therefore beats the board's cards.
+   * The kind order (PICK_RANK: port > sub > face > block > connection > group) only breaks ties
+   * between hits at effectively the same depth (PICK_EPS of the distance, at least PICK_EPS_MIN),
+   * so on one surface a pin beats the body it sticks out of, a card beats the column behind it and
+   * a face beats the body it is painted on. Cable hits (the fat pick tube, the end rings) are
+   * pushed back by CABLE_PICK_BIAS so a thin cable competes at its axis depth: a pin still wins at
+   * the cable's end, a body still wins under a cable that grazes it, a cable clearly in front wins.
+   * Returns { kind: 'port'|'sub'|'face'|'block'|'connection'|'group', target, point, uv, sub, end, mesh, distance } or null.
+   */
+  pick(opts) {
+    const { meshes, kinds } = this._pickables(opts);
+    const hits = this.ray.intersectObjects(meshes, false);
+    if (!hits.length) return null;
+    for (const h of hits) { h.kind = kinds.get(h.object); if (h.kind === 'connection') h.distance += CABLE_PICK_BIAS; }
+    hits.sort((a, b) => a.distance - b.distance);
+    const d0 = hits[0].distance, eps = Math.max(d0 * PICK_EPS, PICK_EPS_MIN);
+    let best = hits[0];
+    for (const h of hits) { if (h.distance > d0 + eps) break; if (PICK_RANK[h.kind] < PICK_RANK[best.kind]) best = h; }
+    return this._describeHit(best);
   }
   /** Where the pointer ray meets the floor (y = 0), or null. */
   floorPoint(y = 0) {
@@ -435,19 +476,15 @@ export class Interaction {
     let target = null;
     if (d.nodes.length === 1) {
       const dragged = d.nodes[0];
-      const hits = this.ray.intersectObjects(this._subMeshes().filter((m) => m.userData.sub.block !== dragged), false);
-      const sub = hits[0]?.object.userData.sub;
+      // the same depth-correct pick, without the dragged block: the nearest thing under the pointer decides
+      const hit = this.pick({ exclude: dragged });
+      const sub = hit?.kind === 'sub' ? hit.sub : null;
       const B = sub?.block.def.body3d;
       if (sub && B?.acceptsDrop?.(sub.block, sub, dragged)) target = { block: sub.block, sub, dragged };
-      if (!target) {
-        const others = this._visibleNodes().filter((n) => n !== dragged);
-        const meshes = others.flatMap((n) => [...(n.meshes ? n.meshes : [n.body, n.header]), n.face?.mesh].filter(Boolean));
-        const bh = this.ray.intersectObjects(meshes, false)[0];
-        const block = bh?.object.userData.block || bh?.object.userData.face;
-        if (block && block !== dragged) {
-          const links = dropLinkCandidates(dragged, block, this.world);
-          if (links.length) target = { block, sub: null, dragged, links, point: bh.point.clone() };
-        }
+      if (!target && hit && (hit.kind === 'sub' || hit.kind === 'face' || hit.kind === 'block')) {
+        const block = hit.target;
+        const links = dropLinkCandidates(dragged, block, this.world);
+        if (links.length) target = { block, sub: null, dragged, links, point: hit.point.clone() };
       }
     }
     const same = d.dropTarget && target && d.dropTarget.block === target.block && d.dropTarget.sub === target.sub;

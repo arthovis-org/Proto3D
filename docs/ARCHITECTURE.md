@@ -411,8 +411,10 @@ hands geometry to the definition:
 | `onSubPointer(node, ev)` / `onSubHover(node, sub)` | pointer on a child pickable | see below |
 
 **Child pickables (subs).** Any mesh registered with `h.sub` / `node.childSub` carries
-`userData.sub = { block, kind, id, ... }`. `Interaction.pick()` tests subs right after ports and
-before faces and bodies, so a card wins over the board behind it. A press on a sub is captured by
+`userData.sub = { block, kind, id, ... }`. `Interaction.pick()` is depth-correct (§9): a card wins
+over the column panel and the board body it sits on because it is nearer (and, at the same depth,
+because subs rank above faces and bodies), but a block standing in front of the board beats the
+card behind it. A press on a sub is captured by
 the owning block (the board does not start moving): the block receives `down`, then `drag` while
 the pointer moves, then `drop` or `click` on release, or `cancel` on `Esc`. `ev` carries the
 pointer `ray` (the board intersects it with its own front plane and converts to local space),
@@ -637,9 +639,22 @@ key actions (focus, frame all, views, ortho, steps, select all / none, delete, d
 gizmo modes, panel) before the fixed shortcuts. The controller ignores a press the interaction
 took (it disables `controls` while dragging a block, as before).
 
-**Picking** (`pick()`): ports on blocks that show them (pin + shell meshes) > sub pickables > faces > bodies > connections
-(the `pickTube` and the end rings; the hit carries `end: 'from' | 'to' | null` from
-`Connection3D.endNear`) > group frames. When a block is in **edit mode** (§8d) a press on it is
+**Picking** (`pick()`) is depth-correct: one raycast over everything pickable (`_pickables`: port
+pins + their hidden oversize shells and slot fills on blocks that show them, sub pickables, faces,
+body parts, the cables' hidden fat `pickTube` and end rings, group slabs / frames), sorted by
+distance; the nearest hit wins, so a Sticky note standing in front of a board is picked over the
+cards behind it. The kind order ports > subs > faces > bodies > connections > groups (`PICK_RANK`)
+only decides between hits at effectively the same depth — within `PICK_EPS` (1e-3) of the hit
+distance, at least `PICK_EPS_MIN` (0.02 units, the spacing of coplanar helper meshes) — so on one
+surface a pin beats the body it sticks out of, a card beats its column, a face beats its body.
+Cable hits are pushed back by `CABLE_PICK_BIAS` (0.16, the pick tube's radius) so the thin cable
+competes at its axis depth: a pin still wins at the cable's end, a body still wins under a cable
+that grazes it, a cable clearly in front of a block wins. Hidden body parts and faces are skipped
+(the port shells and the pick tube are hidden on purpose and stay in); `Shape3D.subMeshes()`
+already filters hidden subs (far LOD, the dragged card). The hit is `{ kind, target, point, uv,
+sub, end, mesh, distance }`; a connection hit carries `end: 'from' | 'to' | null` from
+`Connection3D.endNear`. `_updateBlockDrop` uses the same pick with the dragged block excluded
+(`pick({ exclude })`). When a block is in **edit mode** (§8d) a press on it is
 captured (`pressField`, no drag; a click on a field opens the editor) and a press anywhere else
 leaves edit mode first; outside it only an `open` field captures the press, and a double-click on a
 block enters edit mode (`onDblClick`; a double-click on a group still frames it). Otherwise faces
