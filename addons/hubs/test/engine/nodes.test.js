@@ -7,7 +7,8 @@ import { createHeadlessWorld } from '../../../sdk/testing/headless-engine.js';
 import { scanAddons } from '../../../sdk/testing/drift-guard.js';
 import manifest from '../../addon.json' with { type: 'json' };
 import { register, install, HUB_TYPES } from '../../src/index.js';
-import { faceLayout, blueprintLayout, routeLabel, rgba, hooks } from '../../src/nodes.js';
+import { blueprintLayout, routeLabel, rgba, hooks } from '../../src/nodes.js';
+import { faceLayout, cardDims, faceSize, setEmbedHeight, embedHeight, pageWidthOf, PX, CARD, DEFAULT_EMBED_HEIGHT } from '../../src/sizing.js';
 import { blueprintParams } from '../../src/clients.js';
 import { makeExamples } from '../../src/examples.js';
 
@@ -21,8 +22,8 @@ const ctxFor = (n) => ({ params: n.params, state: n.state, instance: n, palette:
 test('register() put the three hub- types into the registry with icons; install() returned the api and hooked the world', () => {
   assert.deepEqual(host.nodes.ids(), HUB_TYPES);
   assert.ok(host.icons.has('hubs') && host.icons.has('hub-page') && host.icons.has('hub-blueprint'));
-  assert.equal(host.nodes.get('hub-page').size, 'XL'); assert.equal(host.nodes.get('hub-section').size, 'M');
-  assert.deepEqual(host.nodes.get('hub-page').params.map((p) => p.key), ['url', 'title', 'section', 'audience', 'role', 'device', 'status', 'live', 'client', 'order']);
+  assert.ok(host.nodes.get('hub-page').body3d, 'hub-page is a body3d card sized per instance'); assert.deepEqual(host.nodes.get('hub-page').body3d.dims(host.nodes.get('hub-page')), { width: 8.6, height: DEFAULT_EMBED_HEIGHT, depth: 0.16, kind: 'desktop', pageW: 1280 }); assert.equal(host.nodes.get('hub-section').size, 'M');
+  assert.deepEqual(host.nodes.get('hub-page').params.map((p) => p.key), ['url', 'title', 'section', 'audience', 'role', 'device', 'status', 'live', 'client', 'order', 'height', 'aspect', 'pageWidth']);
   assert.equal(host.nodes.get('hub-blueprint').outputs.find((o) => o.key === 'tasks').subtype, 'tasks');
   assert.equal(api.examples.length, 6); assert.equal(api.live, null); assert.equal(host._rec.worldListeners.length, 1); assert.equal(host._rec.errorHandlers.length, 1);
   assert.equal(hooks.open, null); assert.equal(hooks.generate, null);
@@ -76,7 +77,8 @@ test('faces render on a stub 2D context for every device / status without throwi
   const def = host.nodes.get('hub-page'); const bdef = host.nodes.get('hub-blueprint'); const sdef = host.nodes.get('hub-section');
   for (const device of ['desktop', 'tablet', 'phone', 'none']) for (const status of ['planned', 'building', 'live']) {
     const n = hw.add('hub-page', { url: 'https://imagine-os.github.io/petrock/#/desk', title: 'Front desk', section: 'staff', role: 'front desk', device, status, client: 'petrock' });
-    const g = fakeCanvasContext(); def.face.render(g, 1013, 552, ctxFor(n));
+    const d = cardDims(n.params), f = faceSize(d);
+    const g = fakeCanvasContext(); def.face.render(g, Math.round(f.w * PX), Math.round(f.h * PX), ctxFor(n));
     assert.ok(g.calls.some((c) => c[0] === 'fillText'), `${device}/${status} drew text`);
     hw.remove(n);
   }
@@ -97,20 +99,37 @@ test('faces render on a stub 2D context for every device / status without throwi
   hw.remove(bp); hw.remove(s);
 });
 
-test('faceLayout: the live element rect is inside the frame, the phone screen keeps the 390 × 844 aspect, helpers', () => {
-  for (const d of ['desktop', 'tablet', 'phone', 'none']) {
-    const L = faceLayout(d, 1013, 552);
+test('sizing: the card is the width of the page, the iframe fills the frame at that scale, the global height resizes every card without its own', () => {
+  assert.equal(embedHeight(), DEFAULT_EMBED_HEIGHT);
+  assert.deepEqual(cardDims({ device: 'desktop' }), { width: 8.6, height: 8, depth: 0.16, kind: 'desktop', pageW: 1280 });
+  assert.deepEqual(cardDims({ device: 'tablet' }), { width: 7, height: 8, depth: 0.16, kind: 'tablet', pageW: 1024 });
+  assert.deepEqual(cardDims({ device: 'phone' }), { width: 3.4, height: 8, depth: 0.16, kind: 'phone', pageW: 390 });
+  assert.equal(cardDims({ device: 'phone', aspect: 'desktop' }).width, 8.6, 'the aspect preset wins over the device');
+  assert.deepEqual(cardDims({ aspect: 'custom', pageWidth: 1920 }), { width: 12.6, height: 8, depth: 0.16, kind: 'desktop', pageW: 1920 });
+  assert.equal(cardDims({ device: 'desktop', height: 5.5 }).height, 5.5, 'a card with its own height keeps it');
+  assert.equal(cardDims({ device: 'desktop' }, 11).height, 11);
+  assert.equal(setEmbedHeight(30), 14); assert.equal(setEmbedHeight('x'), DEFAULT_EMBED_HEIGHT); assert.equal(setEmbedHeight(6), 6);
+  assert.equal(cardDims({ device: 'desktop' }).height, 6); assert.equal(cardDims({ device: 'desktop', height: 9 }).height, 9);
+  setEmbedHeight(DEFAULT_EMBED_HEIGHT);
+  assert.equal(pageWidthOf({ aspect: 'custom', pageWidth: 100 }), 240, 'custom widths are clamped');
+  for (const params of [{ device: 'desktop' }, { device: 'tablet' }, { device: 'phone' }, { device: 'none' }, { aspect: 'custom', pageWidth: 800 }]) {
+    const d = cardDims(params), f = faceSize(d), cw = Math.round(f.w * PX), ch = Math.round(f.h * PX);
+    const L = faceLayout(params, cw, ch);
     const inside = (a, b) => a.x >= b.x - 1e-6 && a.y >= b.y - 1e-6 && a.x + a.w <= b.x + b.w + 1e-6 && a.y + a.h <= b.y + b.h + 1e-6;
-    assert.ok(inside(L.element, L.frame), `${d}: element inside frame`); assert.ok(inside(L.screen, L.element), `${d}: screen inside element`);
-    assert.ok(Math.abs(L.iframe.w * L.scale - L.screen.w) < 0.5, `${d}: iframe scaled to the screen width`);
-    assert.ok(Math.abs(L.iframe.h * L.scale - L.screen.h) < 1.5, `${d}: iframe scaled to the screen height`);
+    assert.ok(inside(L.frame, { x: 0, y: L.strip.h, w: cw, h: ch - L.strip.h }), `${d.kind}: frame under the strip`); assert.ok(inside(L.screen, L.frame), `${d.kind}: screen inside frame`);
+    assert.equal(L.element, L.screen);
+    assert.ok(Math.abs(L.iframe.w * L.scale - L.screen.w) < 1e-6, `${d.kind}: the page width fills the screen exactly`);
+    assert.ok(Math.abs(L.iframe.h * L.scale - L.screen.h) < 1, `${d.kind}: the iframe height equals the screen height at that scale (no letterbox)`);
+    assert.equal(L.iframe.w, d.pageW);
+    assert.ok(cw <= 4096 / 4 * 1.05 && ch <= 4096 / 4 * 1.05, `${d.kind}: ${cw}×${ch} logical px stays under maxSide at the 4× tier`);
   }
-  const P = faceLayout('phone', 1013, 552);
-  assert.ok(Math.abs(P.screen.w / P.screen.h - 390 / 844) < 0.01); assert.equal(P.chrome, null); assert.ok(P.bezel.w > P.screen.w);
-  assert.equal(faceLayout('desktop', 1013, 552).chrome.h, 34); assert.equal(faceLayout('none', 1013, 552).chrome, null);
-  assert.equal(faceLayout('weird', 100, 100).device, 'desktop');
+  const P = faceLayout({ device: 'phone' }, Math.round(faceSize(cardDims({ device: 'phone' })).w * PX), Math.round(faceSize(cardDims({ device: 'phone' })).h * PX));
+  assert.ok(P.bezel && P.iframe.h >= 844, `a default phone card shows the whole 390 × 844 page (${P.iframe.h})`);
+  const D = faceLayout({ device: 'desktop' }, Math.round(faceSize(cardDims({ device: 'desktop' })).w * PX), Math.round(faceSize(cardDims({ device: 'desktop' })).h * PX));
+  assert.equal(D.bezel, null); assert.ok(D.iframe.h > 1000 && D.iframe.h < 1200, `a default desktop card shows 1280 × ~1100 px (${D.iframe.h})`);
   assert.equal(routeLabel('https://imagine-os.github.io/petrock/#/desk'), '#/desk'); assert.equal(routeLabel('https://imagine-os.github.io/dorum-lifestyle/docs/plan.html'), 'docs/plan.html');
   assert.equal(rgba('#1F4E79', 0.5), 'rgba(31,78,121,0.5)');
+  assert.equal(CARD.header, 0.46);
 });
 
 test('demo scenes build in the headless world (hub part only: no PM components registered here)', () => {
@@ -131,7 +150,8 @@ test('demo scenes build in the headless world (hub part only: no PM components r
 test('settings persist under the add-on namespace', () => {
   api.setBudget(12); api.setLive(false);
   assert.deepEqual(host.storage.keys(), ['settings.v1']);
-  assert.deepEqual(host.storage.get('settings.v1'), { budget: 12, live: false, flow: 'delivery', client: null });
+  assert.deepEqual(host.storage.get('settings.v1'), { budget: 12, live: false, flow: 'delivery', client: null, embedHeight: DEFAULT_EMBED_HEIGHT });
+  assert.equal(api.setEmbedHeight(10), 10); assert.equal(embedHeight(), 10); assert.equal(host.storage.get('settings.v1').embedHeight, 10); api.setEmbedHeight(DEFAULT_EMBED_HEIGHT);
   assert.ok([...host.storage.raw.keys()].every((k) => k.startsWith('proto3d.addon.hubs.')));
   api.setBudget(8); api.setLive(true);
 });

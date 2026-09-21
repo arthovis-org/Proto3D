@@ -6,6 +6,20 @@ import { FLOWS } from './flows.js';
 import { isHubNode } from './nodes.js';
 import { clientKeyOf } from './arrange.js';
 import { clientBySlug } from './clients.js';
+import { EMBED_HEIGHT } from './sizing.js';
+
+/** A compact height slider: label · range · value. `onInput` is throttled to one apply per animation frame, `onChange` commits. */
+function heightSlider(cls, api) {
+  const wrap = document.createElement('label'); wrap.className = cls; wrap.title = 'Embed height: how tall every page card is (world units); a card with its own height keeps it';
+  const name = document.createElement('span'); name.className = 'hub-h-label'; name.textContent = 'Height';
+  const range = document.createElement('input'); range.type = 'range'; range.min = String(EMBED_HEIGHT.min); range.max = String(EMBED_HEIGHT.max); range.step = String(EMBED_HEIGHT.step); range.setAttribute('aria-label', 'Embed height');
+  const out = document.createElement('output'); out.className = 'hub-h-value';
+  let raf = 0;
+  range.addEventListener('input', () => { out.textContent = (+range.value).toFixed(1); if (!raf) raf = requestAnimationFrame(() => { raf = 0; api.setEmbedHeight(+range.value, { save: false }); }); });
+  range.addEventListener('change', () => api.setEmbedHeight(+range.value));
+  wrap.append(name, range, out);
+  return { wrap, range, out, sync(v) { range.value = String(v); out.textContent = (+v).toFixed(1); } };
+}
 
 const BUDGETS = [0, 4, 8, 12, 16];
 
@@ -22,6 +36,8 @@ export function installUI(host, api) {
   clientSel.addEventListener('change', () => { api.settings.client = clientSel.value || null; api.saveSettings(); });
   flowbar.appendChild(clientSel);
   const sep2 = document.createElement('span'); sep2.className = 'hub-sep'; flowbar.appendChild(sep2);
+  const barHeight = heightSlider('hub-height', api); flowbar.appendChild(barHeight.wrap);
+  const sep3 = document.createElement('span'); sep3.className = 'hub-sep'; flowbar.appendChild(sep3);
   const liveBtn = document.createElement('button'); liveBtn.type = 'button'; liveBtn.className = 'hub-live-toggle'; liveBtn.title = 'Live pages on / off';
   liveBtn.addEventListener('click', () => api.setLive(!api.settings.live));
   flowbar.appendChild(liveBtn);
@@ -29,8 +45,9 @@ export function installUI(host, api) {
   document.body.appendChild(flowbar);
 
   /* ---- panel section ---- */
-  let range, rangeOut, liveCheck, countsEl; const panelBtns = new Map();
+  let range, rangeOut, liveCheck, countsEl, panelHeight; const panelBtns = new Map();
   const section = host.ui.panelSection('Client Hubs', (body, h) => {
+    panelHeight = heightSlider('hub-row hub-height-row', api); panelHeight.range.id = 'hub-embed-height'; body.appendChild(panelHeight.wrap);
     const r1 = h('div', 'hub-row'); const l1 = h('label', null, 'Live frames'); liveCheck = document.createElement('input'); liveCheck.type = 'checkbox'; liveCheck.id = 'hub-live-check';
     liveCheck.addEventListener('change', () => api.setLive(liveCheck.checked)); l1.htmlFor = liveCheck.id; r1.append(l1, liveCheck); body.appendChild(r1);
     const r2 = h('div', 'hub-row'); const l2 = h('label', null, 'Budget'); range = document.createElement('input'); range.type = 'range'; range.min = '0'; range.max = '16'; range.step = '1'; range.id = 'hub-budget';
@@ -39,7 +56,7 @@ export function installUI(host, api) {
     const flows = h('div', 'hub-flows');
     for (const f of FLOWS) { const b = h('button', null, f.label); b.type = 'button'; b.title = f.hint; b.dataset.flow = f.id; b.addEventListener('click', () => api.arrange(f.id)); flows.appendChild(b); panelBtns.set(f.id, b); }
     body.appendChild(flows);
-    body.appendChild(h('div', 'hub-hint', 'Click a page face to make its live frame interactive (Done or Esc leaves). Only the nearest live pages within the budget load an iframe; the others show their card.'));
+    body.appendChild(h('div', 'hub-hint', 'Height resizes every page card at once (a card\u2019s own \u201ccard height\u201d param wins). Click a page face to make its live frame interactive (Done or Esc leaves). Only the nearest live pages within the budget load an iframe; the others show their card.'));
   }, { id: 'hubs-section' });
 
   /* ---- menu ---- */
@@ -48,6 +65,7 @@ export function installUI(host, api) {
     return [
       { label: 'Demos', items: api.examples.map((ex) => ({ label: ex.label, hint: ex.description, run: () => api.loadDemo(ex.id) })) },
       { label: 'Arrange', items: FLOWS.map((f) => ({ label: f.label, hint: f.hint, checked: api.settings.flow === f.id, radio: true, run: () => api.arrange(f.id) })) },
+      { label: 'Embed height', items: [4, 6, 8, 10, 12, 14].map((n) => ({ label: `${n} units`, checked: api.settings.embedHeight === n, radio: true, run: () => api.setEmbedHeight(n) })) },
       { label: 'Live pages', items: [
         { label: 'Show live frames', checked: !!api.settings.live, run: () => api.setLive(!api.settings.live) },
         { sep: true, label: 'Budget (nearest pages with a live frame)' },
@@ -80,6 +98,7 @@ export function installUI(host, api) {
     liveBtn.innerHTML = `<i></i>Live <b>${c.enabled ? `${c.live}/${c.eligible}` : 'off'}</b>`;
     count.textContent = `${c.pages} page${c.pages === 1 ? '' : 's'} · ${clients.length} client${clients.length === 1 ? '' : 's'}`;
     if (range) { range.value = String(c.budget); rangeOut.textContent = String(c.budget); }
+    barHeight.sync(api.settings.embedHeight); panelHeight?.sync(api.settings.embedHeight);
     if (liveCheck) liveCheck.checked = !!c.enabled;
     if (countsEl) countsEl.innerHTML = `<b>${c.pages}</b> pages · <b>${c.live}</b> live frame${c.live === 1 ? '' : 's'} of <b>${c.eligible}</b> eligible · <b>${clients.length}</b> client${clients.length === 1 ? '' : 's'}${c.interactive ? ' · <b>interactive</b>' : ''}`;
     flowbar.hidden = false;

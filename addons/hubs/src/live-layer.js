@@ -10,8 +10,8 @@
 // none so dragging, selecting and the camera keep working; a click on a page face makes that one
 // element interactive (pointer-events: auto, an accent outline, a Done button) and flies the camera
 // to face it; Done, Escape or a pointerdown on the WebGL canvas leave. Elements are hidden while
-// the face is back-facing, off-screen, far (LOD) or the node hidden, and disposed when the node is
-// gone or has been out of the budget for a while.
+// the face is back-facing, off-screen, too small on screen (< 44 px wide) or the node hidden, and
+// disposed when the node is gone, resized or out of the budget for a while.
 //
 // Limits: a DOM layer is always drawn over the WebGL scene, so a live frame is never occluded by a
 // nearer block; cross-origin pages cannot be read or styled; nothing renders while `status` is not
@@ -19,7 +19,8 @@
 // onCameraSwap}, window.__proto.world.nodes, window.__proto.sizes — see the README's `host.view` proposal.
 import * as THREE from 'three';
 import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
-import { faceLayout, routeLabel } from './nodes.js';
+import { routeLabel } from './nodes.js';
+import { faceLayout } from './sizing.js';
 import * as motion from './motion.js';
 
 const RANK_EVERY = 0.25;       // seconds between budget re-evaluations
@@ -27,6 +28,7 @@ const HYSTERESIS = 0.8;        // a page already live counts as this much closer
 const UNLOAD_AFTER = 20;       // seconds out of the budget before its iframe is dropped
 const FACING_MIN = 0.12;       // cos of the largest angle at which a face still shows its frame
 const INTERACT_FILL = 0.7;     // the face fills this much of the viewport when interacting
+const MIN_PX = 44;             // a card narrower than this on screen shows its canvas face only (no iframe)
 
 export function createLiveLayer(host, { budget = 8, enabled = true, onChange = null } = {}) {
   const proto = window.__proto;
@@ -57,16 +59,10 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
 
   /* ---- elements ---- */
   function build(node) {
-    const f = node.face; const L = faceLayout(node.params.device, f.cw, f.ch);
+    const f = node.face; const L = faceLayout(node.params, f.cw, f.ch);
     const el = document.createElement('div');
-    el.className = 'hub-live'; el.dataset.uid = node.uid; el.dataset.device = L.device;
+    el.className = 'hub-live'; el.dataset.uid = node.uid; el.dataset.device = L.kind;
     el.style.width = `${L.element.w}px`; el.style.height = `${L.element.h}px`;
-    if (L.chrome) {
-      const chrome = document.createElement('div'); chrome.className = 'hub-live-chrome'; chrome.style.height = `${L.chrome.h}px`;
-      chrome.innerHTML = '<i></i><i></i><i></i>';
-      const url = document.createElement('span'); url.className = 'hub-live-url'; url.textContent = String(node.params.url || '').replace(/^https?:\/\//, ''); chrome.appendChild(url);
-      el.appendChild(chrome);
-    }
     const screen = document.createElement('div'); screen.className = 'hub-live-screen';
     Object.assign(screen.style, { left: `${L.screen.x - L.element.x}px`, top: `${L.screen.y - L.element.y}px`, width: `${L.screen.w}px`, height: `${L.screen.h}px` });
     const iframe = document.createElement('iframe');
@@ -83,11 +79,13 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     el.style.pointerEvents = 'none';   // the CSS3DObject constructor sets `auto`; only the interactive one gets it back
     obj.visible = false;
     cssScene.add(obj);
-    return { node, el, obj, iframe, layout: L, device: L.device, url: String(node.params.url || ''), loaded: false, live: false, lastLive: performance.now() / 1000, hidden: true };
+    return { node, el, obj, iframe, layout: L, key: sizeKey(node), url: String(node.params.url || ''), loaded: false, live: false, lastLive: performance.now() / 1000, hidden: true };
   }
+  /** What the element depends on: the page width / device, the face's logical size, the url. */
+  const sizeKey = (node) => `${node.params.aspect || 'device'}|${node.params.device}|${node.params.pageWidth}|${node.face?.cw}|${node.face?.ch}|${node.params.url}`;
   function entryFor(node) {
     let e = entries.get(node);
-    if (e && (e.device !== (node.params.device || 'desktop') || e.url !== String(node.params.url || ''))) { dispose(e); e = null; }   // device or url changed: rebuild
+    if (e && e.key !== sizeKey(node)) { dispose(e); e = null; }   // size, device or url changed: rebuild
     if (!e && node.face?.mesh) { e = build(node); entries.set(node, e); }
     return e || null;
   }
@@ -108,10 +106,17 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     if (camera.isOrthographicCamera) camera.getWorldDirection(_v).negate(); else _v.copy(camera.position).sub(_pos).normalize();
     return _n.dot(_v) > FACING_MIN;
   }
+  /** Device pixels the card's width covers on screen (perspective: at its distance; orthographic: anywhere). */
+  function projectedWidth(n, camera) {
+    const Hpx = ws.renderer.domElement.height || 1;
+    const ppu = camera.isOrthographicCamera ? Hpx * (camera.zoom || 1) / Math.max(1e-6, camera.top - camera.bottom) : Hpx / (2 * Math.max(1e-3, camera.position.distanceTo(n.position)) * Math.tan(THREE.MathUtils.degToRad(camera.fov || 42) / 2));
+    return ppu * n.width * (n.scale?.x || 1);
+  }
   function place(e, camera) {
     const n = e.node, mesh = n.face?.mesh;
-    const show = state.enabled && e.live && mesh && n.visible !== false && !n.lod;
+    const show = state.enabled && e.live && mesh && n.visible !== false && (state.interactive === n || projectedWidth(n, camera) >= MIN_PX);
     if (!show) { e.obj.visible = false; return false; }
+    if (e.key !== sizeKey(n)) { e.obj.visible = false; state.rankAt = -1; return false; }   // resized this frame: the ranking pass rebuilds it
     mesh.updateWorldMatrix(true, false);
     mesh.matrixWorld.decompose(_pos, _quat, _scl);
     if (!facing(camera) || !_frustum.intersectsBox(n.getAABB(_box))) { e.obj.visible = false; return false; }
@@ -133,7 +138,7 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
       const e = entries.get(n);
       if (!state.enabled || !eligible(n) || n.visible === false) { if (e) e.live = false; continue; }
       const pinned = state.interactive === n;
-      if (!pinned && (n.lod || !_frustum.intersectsBox(n.getAABB(_box)))) { if (e) e.live = false; continue; }
+      if (!pinned && (projectedWidth(n, camera) < MIN_PX || !_frustum.intersectsBox(n.getAABB(_box)))) { if (e) e.live = false; continue; }
       let d = camera.position.distanceTo(n.position);
       if (e?.live) d *= HYSTERESIS;
       if (pinned) d = -1;
@@ -148,6 +153,7 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     });
     for (const [n, e] of [...entries]) {
       if (!world.nodes.includes(n)) dispose(e);
+      else if (e.key !== sizeKey(n)) dispose(e);   // resized / retargeted: rebuilt when it is live again
       else if (!e.live && now - e.lastLive > UNLOAD_AFTER) dispose(e);
     }
     if (state.interactive && !world.nodes.includes(state.interactive)) leave();

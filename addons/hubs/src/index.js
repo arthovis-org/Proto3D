@@ -9,13 +9,15 @@ import { registerNodes, setHooks, isHubNode, HUB_TYPES, openPage } from './nodes
 import { generate } from './generate.js';
 import { makeExamples } from './examples.js';
 import { FLOWS, FLOW_IDS } from './flows.js';
+import { setEmbedHeight, embedHeight, DEFAULT_EMBED_HEIGHT, EMBED_HEIGHT } from './sizing.js';
 
-const DEFAULTS = Object.freeze({ budget: 8, live: true, flow: 'delivery', client: null });
+const DEFAULTS = Object.freeze({ budget: 8, live: true, flow: 'delivery', client: null, embedHeight: DEFAULT_EMBED_HEIGHT });
 let registered = false;
 
 export function register(host) {
   if (registered) return;
   registered = true;
+  setEmbedHeight(host.storage.get('settings.v1', {})?.embedHeight);   // before the core restores an autosaved graph: cards build at the saved height
   registerNodes(host);
 }
 
@@ -28,12 +30,22 @@ export async function install(host, { sample = true } = {}) {
   const dom = typeof document !== 'undefined' && typeof window !== 'undefined' && !!window.__proto;
   const settings = { ...DEFAULTS, ...(host.storage.get('settings.v1', {}) || {}) };
   if (!FLOW_IDS.includes(settings.flow)) settings.flow = DEFAULTS.flow;
+  settings.embedHeight = setEmbedHeight(settings.embedHeight);
   const examples = makeExamples(host);
   const resolve = (x) => (typeof x === 'string' ? host.world.nodes().find((n) => n.uid === x) || null : x || null);
 
   const api = {
     host, settings, examples, flows: FLOWS, HUB_TYPES, live: null, ui: null,
-    saveSettings() { host.storage.set('settings.v1', { budget: settings.budget, live: settings.live, flow: settings.flow, client: settings.client }); },
+    saveSettings() { host.storage.set('settings.v1', { budget: settings.budget, live: settings.live, flow: settings.flow, client: settings.client, embedHeight: settings.embedHeight }); },
+    /** The global embed height (world units): every hub-page without its own `height` re-bakes its body and face on the next frame. Not a history entry. */
+    setEmbedHeight(h, { save = true } = {}) {
+      settings.embedHeight = setEmbedHeight(h);
+      for (const n of host.world.nodes()) if (n.typeId === 'hub-page') n.faceDirty = true;
+      if (save) api.saveSettings();
+      api.ui?.refresh();
+      return settings.embedHeight;
+    },
+    embedHeight: () => embedHeight(), EMBED_HEIGHT,
     /** Load a demo scene by id (hub-cal-tenant-law, hub-petrock, hub-hoy, hub-dorum-lifestyle, hub-compare, hub-new-client) or client slug. */
     loadDemo(id) {
       const ex = examples.find((e) => e.id === id || e.client === id); if (!ex) return null;

@@ -1,18 +1,21 @@
 // nodes.js — the three hub- components, registered through host.nodes.register in the 'hubs'
 // category:
-//   hub-page       one deliverable page (XL). The canvas face is an app-like card: brand accent
-//                  bar, section badge, title, route, audience / role chips, status dot and the
-//                  device frame (browser chrome or phone bezel). It is the fallback whenever the
-//                  live iframe (live-layer.js) is not shown, so it has to stand on its own.
+//   hub-page       one deliverable page: a body3d card sized per instance (sizing.js: the width of
+//                  the page, the global embed height or its own), a slim strip (section, audience,
+//                  route, status) and the page frame (browser frame or phone bezel) the live layer
+//                  covers with an iframe. The canvas face is the fallback whenever the iframe is
+//                  not shown, so it has to stand on its own.
 //   hub-blueprint  the "fill in a client" form (XL): client, brand, base URL, the section
 //                  checklist with page counts and the Generate / Regenerate button.
 //   hub-section    a small header card (M) used as a lane / column label by the flows.
-// `faceLayout` is shared with live-layer.js so the DOM frame lands exactly on the drawn frame.
+// `faceLayout` (sizing.js) is shared with live-layer.js so the DOM frame lands exactly on the drawn frame.
 // Browser-only behaviour (fly to a page, create nodes) is injected through `hooks` by index.js;
 // in the headless engine the nodes still evaluate, emit and render on a stub 2D context.
 import { SECTIONS, SECTION_IDS, AUDIENCES, DEVICES, STATUSES, LANGS, sectionById } from './template.js';
 import { brandOf, clientBySlug } from './clients.js';
 import { pagesFor, tasksFor, blueprintSlug } from './generate.js';
+import { cardDims, faceSize, faceLayout, embedHeight, CARD, FACE, ASPECTS } from './sizing.js';
+export { faceLayout, cardDims } from './sizing.js';
 
 export const HUB_TYPES = Object.freeze(['hub-page', 'hub-blueprint', 'hub-section']);
 export const CATEGORY = 'hubs';
@@ -43,42 +46,6 @@ export function rgba(hex, a) {
   const m = /^#?([0-9a-f]{6})$/i.exec(str(hex).trim()); if (!m) return `rgba(90,169,255,${a})`;
   const n = parseInt(m[1], 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
-const DEVICE_PX = Object.freeze({ phone: { w: 390, h: 844 }, tablet: { w: 1024, h: 768 }, desktop: { w: 1280, h: 800 }, none: { w: 1280, h: 800 } });
-
-/**
- * Where the frame sits on a hub-page face of `cw × ch` logical px, per device. Both the canvas face
- * and the CSS3D element derive from this, so they line up exactly.
- * @returns {{ frame, chrome, screen, bezel, aside, iframe: { w, h }, scale, element }}  rects are { x, y, w, h } in face px;
- *          `element` is the rect the live DOM element covers (chrome + screen, or the phone screen), `iframe` the page's CSS size.
- */
-export function faceLayout(device, cw, ch) {
-  const PAD = 28, HEADER = 104, BOTTOM = 24, CHROME = 34;
-  const frame = { x: PAD, y: HEADER, w: cw - 2 * PAD, h: ch - HEADER - BOTTOM };
-  const dev = DEVICES.includes(device) ? device : 'desktop';
-  if (dev === 'phone') {
-    const px = DEVICE_PX.phone; const margin = 12;
-    const sh = frame.h - 2 * margin, sw = Math.round(sh * px.w / px.h);
-    const sx = Math.round(frame.x + frame.w * 0.68 - sw / 2), sy = frame.y + margin;
-    const screen = { x: sx, y: sy, w: sw, h: sh };
-    const bezel = { x: sx - margin, y: sy - margin, w: sw + 2 * margin, h: sh + 2 * margin };
-    const aside = { x: frame.x, y: frame.y, w: bezel.x - frame.x - 28, h: frame.h };
-    return { device: dev, frame, chrome: null, screen, bezel, aside, iframe: { w: px.w, h: px.h }, scale: sw / px.w, element: screen };
-  }
-  if (dev === 'tablet') {
-    const px = DEVICE_PX.tablet;
-    const sh = frame.h - CHROME, sw = Math.min(frame.w, Math.round(sh * px.w / px.h));
-    const sx = Math.round(frame.x + frame.w / 2 - sw / 2);
-    const chrome = { x: sx, y: frame.y, w: sw, h: CHROME };
-    const screen = { x: sx, y: frame.y + CHROME, w: sw, h: sh };
-    const element = { x: sx, y: frame.y, w: sw, h: frame.h };
-    return { device: dev, frame, chrome, screen, bezel: null, aside: null, iframe: { w: px.w, h: Math.round(px.w * sh / sw) }, scale: sw / px.w, element };
-  }
-  const px = DEVICE_PX.desktop;
-  const chrome = dev === 'none' ? null : { x: frame.x, y: frame.y, w: frame.w, h: CHROME };
-  const screen = chrome ? { x: frame.x, y: frame.y + CHROME, w: frame.w, h: frame.h - CHROME } : { ...frame };
-  return { device: dev, frame, chrome, screen, bezel: null, aside: null, iframe: { w: px.w, h: Math.round(px.w * screen.h / screen.w) }, scale: screen.w / px.w, element: { ...frame } };
-}
-
 /* ---------- small drawing helpers on top of host.draw ---------- */
 function chip(g, text, x, y, { h = 24, bg = null, color = null, size = 13, weight = 600, padX = 10, dot = null, maxW = 260 } = {}) {
   const { roundRect, font } = host.draw;
@@ -100,50 +67,19 @@ function fillRound(g, r, radius, fill, stroke = null) {
 const statusColor = (status) => (status === 'live' ? P().faceGood : status === 'building' ? P().faceWarn : P().faceDim);
 const statusWord = (status) => (status === 'live' ? 'Live' : status === 'building' ? 'Building' : 'Planned');
 
-/** Draw the device frame (browser chrome + screen or phone bezel) with its placeholder content. */
-function drawFrame(g, L, { url, status, section, audience, role, brand, live }) {
+/** What the screen shows while no iframe covers it: status, the section's description, the url. */
+function placeholder(g, r, { status, live, section, url, compact = false }) {
   const { drawText } = host.draw; const pal = P();
   const s = sectionById(section);
-  if (L.device === 'phone') {
-    fillRound(g, L.bezel, 30, '#0d1117', pal.faceLine);
-    fillRound(g, L.screen, 20, pal.faceCard);
-    g.fillStyle = '#0d1117'; host.draw.roundRect(g, L.screen.x + L.screen.w / 2 - 34, L.screen.y + 8, 68, 14, 7); g.fill();   // the notch
-    if (L.aside && L.aside.w > 120) {
-      let y = L.aside.y + 4;
-      drawText(g, s?.description || '', L.aside.x, y, L.aside.w, 84, { size: 18, min: 13, color: pal.faceDim, align: 'left', valign: 'top', weight: 500 });
-      y += 100;
-      drawText(g, `${audience || s?.audience || ''}${role ? ` · ${role}` : ''}`, L.aside.x, y, L.aside.w, 26, { size: 15, color: pal.faceText, align: 'left', weight: 600 });
-      y += 40;
-      drawText(g, shortUrl(url), L.aside.x, y, L.aside.w, 44, { size: 13, min: 11, color: pal.faceDim, align: 'left', valign: 'top', mono: true });
-      drawText(g, status === 'live' ? (live ? 'Click to open the live app →' : 'Live frames are off') : `${statusWord(status)} · no live frame`, L.aside.x, L.aside.y + L.aside.h - 30, L.aside.w, 26, { size: 15, color: status === 'live' ? pal.faceAccent : pal.faceDim, align: 'left', weight: 600 });
-    }
-    placeholder(g, L.screen, { status, live, url, compact: true });
-    return;
-  }
-  if (L.chrome) {
-    fillRound(g, { x: L.chrome.x, y: L.chrome.y, w: L.chrome.w, h: L.chrome.h + 12 }, 12, pal.faceCard);
-    [pal.faceBad, pal.faceWarn, pal.faceGood].forEach((c, i) => { g.fillStyle = c; g.beginPath(); g.arc(L.chrome.x + 18 + i * 16, L.chrome.y + L.chrome.h / 2, 5, 0, Math.PI * 2); g.fill(); });
-    drawText(g, shortUrl(url) || '—', L.chrome.x + 72, L.chrome.y + 4, L.chrome.w - 90, L.chrome.h - 8, { size: 13, min: 11, color: pal.faceDim, align: 'left', mono: true });
-  }
-  fillRound(g, L.screen, L.chrome ? 0 : 12, pal.faceBg, pal.faceLine);
-  if (L.chrome) { g.strokeStyle = pal.faceLine; g.lineWidth = 1.5; host.draw.roundRect(g, L.chrome.x, L.chrome.y, L.chrome.w, L.chrome.h + L.screen.h, 12); g.stroke(); }
-  if (L.device === 'tablet' && L.screen.x - L.frame.x > 150) {
-    const aw = L.screen.x - L.frame.x - 24;
-    drawText(g, s?.description || '', L.frame.x, L.frame.y + 6, aw, 120, { size: 16, min: 12, color: pal.faceDim, align: 'left', valign: 'top' });
-    drawText(g, `${audience || ''}${role ? ` · ${role}` : ''}`, L.frame.x, L.frame.y + 136, aw, 26, { size: 14, color: pal.faceText, align: 'left', weight: 600 });
-  }
-  placeholder(g, L.screen, { status, live, url, brand });
-}
-/** What the screen shows while no iframe covers it. */
-function placeholder(g, r, { status, live, compact = false }) {
-  const { drawText } = host.draw; const pal = P();
   const size = compact ? 15 : 22;
   const line1 = status === 'live' ? (live ? 'Live page' : 'Live frames off') : statusWord(status);
-  const line2 = status === 'live' ? (live ? (compact ? 'loads when near' : 'appears when the camera is near · click to open') : 'showing the card only') : status === 'building' ? 'in progress' : 'not built yet';
-  const cy = r.y + r.h / 2;
-  g.fillStyle = statusColor(status); g.beginPath(); g.arc(r.x + r.w / 2, cy - size * 1.4, compact ? 6 : 9, 0, Math.PI * 2); g.fill();
-  drawText(g, line1, r.x + 12, cy - size * 0.6, r.w - 24, size * 1.5, { size, color: pal.faceText, weight: 600 });
+  const line2 = status === 'live' ? (live ? (compact ? 'loads when the camera is near' : 'appears when the camera is near · click to open') : 'showing the card only') : status === 'building' ? 'in progress' : 'not built yet';
+  const cy = r.y + r.h * 0.42;
+  g.fillStyle = statusColor(status); g.beginPath(); g.arc(r.x + r.w / 2, cy - size * 1.6, compact ? 6 : 9, 0, Math.PI * 2); g.fill();
+  drawText(g, line1, r.x + 12, cy - size * 0.7, r.w - 24, size * 1.5, { size, color: pal.faceText, weight: 600 });
   drawText(g, line2, r.x + 12, cy + size * 0.9, r.w - 24, size * 1.3, { size: Math.round(size * 0.68), min: 10, color: pal.faceDim });
+  if (s) drawText(g, s.description, r.x + Math.max(16, r.w * 0.12), cy + size * 2.6, r.w - 2 * Math.max(16, r.w * 0.12), size * 3.2, { size: Math.round(size * 0.7), min: 11, color: pal.faceDim, valign: 'top' });
+  drawText(g, shortUrl(url), r.x + 14, r.y + r.h - 34, r.w - 28, 22, { size: 12, min: 10, color: pal.faceDim, mono: true });
 }
 
 /* ---------- hub-page ---------- */
@@ -155,31 +91,76 @@ export function openPage(instance, source = 'event') {
   try { hooks.open?.(instance, source); } catch (e) { console.warn('[hubs] open hook failed:', e); }
   return true;
 }
+/** The face: a slim strip (route · section · audience / role · status) and the page frame the live layer covers. */
 function renderPage(g, w, h, { params, palette }) {
   const { clear, drawText } = host.draw; const pal = palette || P();
   const brand = brandOf(params.client, pal.faceAccent);
-  const L = faceLayout(params.device, w, h);
+  const L = faceLayout(params, w, h);
   clear(g, w, h);
-  // brand accent bar down the left edge, inside the rounded corner
-  g.fillStyle = brand; host.draw.roundRect(g, 0, 0, 26, h, 14); g.fill(); g.fillStyle = pal.faceBg; g.fillRect(10, 0, 18, h);
-  // row 1: section badge, audience / role chips; status at the right
   const s = sectionById(params.section);
-  let x = L.frame.x, y = 22;
-  x += chip(g, s?.label || params.section || 'page', x, y, { bg: rgba(brand, 0.22), color: pal.faceText, weight: 700 }) + 8;
-  if (params.audience) x += chip(g, params.audience, x, y, { bg: pal.faceCard, color: pal.faceDim }) + 8;
-  if (params.role) x += chip(g, params.role, x, y, { bg: pal.faceCard, color: pal.faceDim }) + 8;
-  if (params.device && params.device !== 'none') chip(g, params.device, x, y, { bg: pal.faceCard, color: pal.faceDim });
-  const st = statusWord(params.status); g.font = host.draw.font(13, 600); const stw = g.measureText(st).width + 34;
-  chip(g, st, L.frame.x + L.frame.w - stw, y, { bg: pal.faceCard, color: pal.faceText, dot: statusColor(params.status) });
-  // row 2: title left, route right (mono, dim)
-  const routeW = Math.round(L.frame.w * 0.34);
-  drawText(g, params.title || 'Untitled page', L.frame.x, 52, L.frame.w - routeW - 16, 42, { size: 32, min: 18, color: pal.faceText, weight: 700, align: 'left' });
-  drawText(g, routeLabel(params.url), L.frame.x + L.frame.w - routeW, 60, routeW, 26, { size: 16, min: 11, color: pal.faceDim, mono: true, align: 'right' });
-  drawFrame(g, L, { url: params.url, status: params.status, section: params.section, audience: params.audience, role: params.role, brand, live: params.live !== false });
+  // the strip
+  let x = L.strip.x + 8, y = 3; const ch = 24;
+  x += chip(g, s?.short || params.section || 'page', x, y, { h: ch, bg: rgba(brand, 0.24), color: pal.faceText, size: 12, weight: 700 }) + 6;
+  if (params.audience) x += chip(g, params.role ? `${params.audience} · ${params.role}` : params.audience, x, y, { h: ch, bg: pal.faceCard, color: pal.faceDim, size: 12 }) + 6;
+  const st = statusWord(params.status); g.font = host.draw.font(12, 600); const stw = g.measureText(st).width + 34;
+  chip(g, st, L.strip.w - 8 - stw, y, { h: ch, bg: pal.faceCard, color: pal.faceText, size: 12, dot: statusColor(params.status) });
+  const routeW = L.strip.w - 8 - stw - x - 8;
+  if (routeW > 60) drawText(g, routeLabel(params.url), x, y, routeW, ch, { size: 13, min: 10, color: pal.faceDim, mono: true, align: 'right' });
+  // the frame
+  if (L.kind === 'phone') {
+    fillRound(g, L.bezel, FACE.radius + 8, '#0d1117', pal.faceLine);
+    fillRound(g, L.screen, FACE.radius, pal.faceCard);
+    g.fillStyle = '#0d1117'; host.draw.roundRect(g, L.screen.x + L.screen.w / 2 - 30, L.screen.y + 6, 60, 12, 6); g.fill();   // the notch
+    placeholder(g, L.screen, { status: params.status, live: params.live !== false, section: params.section, url: params.url, compact: true });
+  } else {
+    fillRound(g, L.screen, 10, pal.faceCard, pal.faceLine);
+    placeholder(g, L.screen, { status: params.status, live: params.live !== false, section: params.section, url: params.url });
+  }
 }
+/** The card body: a slab sized per instance (sizing.js), a brand accent line under the title band, the face below. */
+const pageBody = {
+  dims(defOrNode) { return cardDims(defOrNode?.params, embedHeight()); },
+  titleAlign: 'left',
+  titleAt(node) { return [-node.width / 2 + 0.3, node.height / 2 - CARD.header / 2 - 0.02, CARD.depth / 2 + 0.04]; },
+  build(node, h) {
+    const { width: W, height: H } = node;
+    node._hub = { body: null, accent: null };
+    node._hub.body = h.part(h.panelGeometry(W, H, CARD.depth, { radius: CARD.radius, bevel: 0.02 }), h.materials.panel());
+    node._hub.accent = h.part(new h.THREE.BoxGeometry(1, 0.04, 0.012), h.materials.accent(brandOf(node.params.client, '#5aa9ff')), { pick: false });
+    node._hub.accent.scale.x = W - 0.6;
+    node._hub.accent.position.set(0, H / 2 - CARD.header, CARD.depth / 2 + h.faceLayer(1) + 0.004);
+    const f = faceSize(node);
+    h.face(f.w, f.h, [0, -CARD.header / 2, CARD.depth / 2 + h.faceLayer(1)]);
+    h.rim(h.outlineGeometry(W, H, CARD.depth, h.sizes.outline.grow, { radius: CARD.radius }));
+  },
+  /** Params or the global embed height changed: resize the slab, the face surface, the rim, the shadow, the ports and the title. */
+  refresh(node) {
+    const d = cardDims(node.params, embedHeight());
+    node._hub.accent.material.color.set(brandOf(node.params.client, '#5aa9ff'));
+    if (Math.abs(d.width - node.width) < 1e-6 && Math.abs(d.height - node.height) < 1e-6) return;
+    const h = node._helpers();
+    node.width = d.width; node.height = d.height;
+    const { width: W, height: H } = node;
+    node._hub.body.geometry.dispose(); node._hub.body.geometry = h.panelGeometry(W, H, CARD.depth, { radius: CARD.radius, bevel: 0.02 });
+    node._hub.accent.scale.x = W - 0.6; node._hub.accent.position.y = H / 2 - CARD.header;
+    const old = node.face;
+    if (old?.mesh) { node.remove(old.mesh); old.mesh.geometry.dispose(); old.mesh.material.dispose(); old.texture.dispose(); }
+    const f = faceSize(node);
+    h.face(f.w, f.h, [0, -CARD.header / 2, CARD.depth / 2 + h.faceLayer(1)]);
+    node.face.lastDrawAt = -1e9;
+    node.rim.geometry.dispose(); node.rim.geometry = h.outlineGeometry(W, H, CARD.depth, h.sizes.outline.grow, { radius: CARD.radius });
+    node.shadow.geometry.dispose(); node.shadow.geometry = new h.THREE.PlaneGeometry(W * 1.4, Math.max(CARD.depth, 0.5) * 3.2);
+    node.layoutPorts();
+    const at = pageBody.titleAt(node);
+    node.titleLabel.position.set(at[0] + (node.titleLabel.userData?.worldW || 0) / 2, at[1], at[2]);
+    node._titleX = node.titleLabel.position.x; node._titleY = at[1]; node._titleZ = at[2];
+    node.faceDirty = true;
+    node.world?.bumpLayout();
+  },
+};
 const pageDef = {
-  id: 'hub-page', category: CATEGORY, label: 'Hub page', size: 'XL', icon: ICONS['hub-page'],
-  description: 'One deliverable page of a client hub; shows the real page live when the camera is near',
+  id: 'hub-page', category: CATEGORY, label: 'Hub page', icon: ICONS['hub-page'],
+  description: 'One deliverable page of a client hub, the width of the page; shows the real page live when the camera is near',
   inputs: [{ key: 'open', label: 'open', type: 'event', optional: true }],
   outputs: [{ key: 'page', label: 'page', type: 'data' }, { key: 'opened', label: 'opened', type: 'event' }],
   params: [
@@ -193,7 +174,11 @@ const pageDef = {
     { key: 'live', label: 'live frame', type: 'boolean', default: true },
     { key: 'client', label: 'client slug', type: 'text', default: '' },
     { key: 'order', label: 'order', type: 'number', default: 0, min: 0, max: 999, step: 1 },
+    { key: 'height', label: 'card height (0 = global)', type: 'number', default: 0, min: 0, max: CARD.maxHeight, step: 0.5 },
+    { key: 'aspect', label: 'page width', type: 'select', options: [...ASPECTS], default: 'device' },
+    { key: 'pageWidth', label: 'custom width (px)', type: 'number', default: 1280, min: 240, max: 2560, step: 10 },
   ],
+  body3d: pageBody,
   onEvent(ctx, key) { if (key === 'open') openPage(ctx.instance, 'event'); },
   evaluate({ params }) { return { page: descriptorOf(params) }; },
   footer: ({ params }) => `${sectionById(params.section)?.short || params.section} · ${statusWord(params.status).toLowerCase()} · ${params.device}`,

@@ -34,11 +34,16 @@ body.rail-hidden.panel-hidden #hub-flowbar { left: 50%; }
 #hub-flowbar .hub-live-toggle i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); margin-right: 6px; vertical-align: 1px; }
 #hub-flowbar .hub-live-toggle.is-on i { background: var(--ok, #34c99a); }
 #hub-flowbar .hub-count { color: var(--dim); padding: 0 8px; white-space: nowrap; }
+#hub-flowbar .hub-height { display: inline-flex; align-items: center; gap: 6px; padding: 0 6px; color: var(--dim); white-space: nowrap; }
+#hub-flowbar .hub-height input[type="range"] { width: 90px; height: 18px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+#hub-flowbar .hub-height .hub-h-value { min-width: 26px; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 
 /* ---- panel section ---- */
 .hubs-sec .hub-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; color: var(--text); }
 .hubs-sec .hub-row label { color: var(--dim); min-width: 78px; }
 .hubs-sec .hub-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+.hubs-sec .hub-height-row .hub-h-label { color: var(--dim); min-width: 78px; }
+.hubs-sec .hub-height-row .hub-h-value { min-width: 28px; text-align: right; font-variant-numeric: tabular-nums; }
 .hubs-sec .hub-row output { min-width: 22px; text-align: right; font-variant-numeric: tabular-nums; }
 .hubs-sec .hub-counts { font-size: 11px; color: var(--dim); line-height: 1.5; margin: 6px 0 8px; }
 .hubs-sec .hub-counts b { color: var(--text); font-weight: 600; }
