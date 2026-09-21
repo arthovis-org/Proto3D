@@ -1,0 +1,10 @@
+{
+  "id": "hubs",
+  "name": "Client Hubs",
+  "version": "0.1.0",
+  "prefix": "hub",
+  "sdk": 1,
+  "entry": "./src/index.js",
+  "description": "A client deliverable hub on the 3D canvas: blueprint → pages → tasks. The real hub pages (website, customer app, staff desks, manual, docs, dev tools) are embedded live as nodes and the canvas re-arranges into delivery, audience, site-map, compare and device flows.",
+  "styles": ["./src/hubs.css"]
+}

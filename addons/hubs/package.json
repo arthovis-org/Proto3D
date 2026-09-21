@@ -1,0 +1,10 @@
+{
+  "name": "@proto3d/addon-hubs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/unit/*.test.js\" \"test/engine/*.test.js\"",
+    "test:browser": "node --test \"test/browser/*.test.js\""
+  }
+}
