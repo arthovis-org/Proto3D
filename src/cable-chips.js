@@ -6,6 +6,9 @@
 // While the cable is hovered (or selected) a second, dimmer line names the endpoints
 // ("Prompt.prompt → Generate Text.prompt").
 //
+// A bundle trunk (bundles.js) gets a chip of its own — "3 cables", the member paths on hover — while
+// any of its members would show one; a bundled cable's own chip sits near its destination fan-out.
+//
 // Chips are canvas sprites in the Inter stack that face the camera. They show for the hovered
 // cable, the selected cable and every cable of a selected block (the union for a multi-select),
 // never at the far LOD, and at most `max` at once (nearest to the camera first). Every chip owns
@@ -137,6 +140,7 @@ export class CableChips {
   /** Which cables get a chip: hovered, selected, or touching a selected block (not dimmed while something is selected); never far, never hidden. */
   _wants(c, hovered, anySelected) {
     if (!c.visible || !c.complete || c.far) return false;
+    if (c.kind === 'bundle') return c.hovered || c.members.some((m) => this._wants(m, hovered, anySelected));
     return c === hovered || c.hovered || c.selected || (anySelected && !c.dimSelect);
   }
   /** CSS pixels one world unit covers at distance `d` for this camera (perspective) or anywhere (orthographic). */
@@ -153,7 +157,8 @@ export class CableChips {
   update(world, camera, { hovered = null, anySelected = false, time = 0, dt = 0.016, renderer = null } = {}) {
     const cam = camera.position;
     const cands = [];
-    for (const c of world.connections) if (this._wants(c, hovered, anySelected)) { c.midpoint(_mid); cands.push([c, cam.distanceToSquared(_mid)]); }
+    for (const c of world.connections) if (this._wants(c, hovered, anySelected)) { c.chipPoint(_mid); cands.push([c, cam.distanceToSquared(_mid)]); }
+    for (const b of world.bundles || []) if (this._wants(b, hovered, anySelected)) { b.chipPoint(_mid); cands.push([b, cam.distanceToSquared(_mid)]); }
     cands.sort((a, b) => a[1] - b[1]);
     if (cands.length > this.max) cands.length = this.max;
     const live = new Set(cands.map((x) => x[0]));
@@ -162,25 +167,36 @@ export class CableChips {
     const theme = getTheme();
     for (const [c] of cands) {
       let chip = this.byConn.get(c);
-      if (!chip) { chip = this.pool.find((x) => !x.conn) || this._make(); chip.conn = c; chip.sig = ''; chip.alpha = 0; chip.flashUntil = -1; chip.seenPulse = c.from.lastPulseAt ?? -1; chip.changedAt = NaN; this.byConn.set(c, chip); }
-      // text: recomputed only when the source port changed (or pulsed), not every frame
-      const src = c.from, changedAt = Math.max(src.changedAt ?? -1, src.lastPulseAt ?? -1);
-      if (changedAt !== chip.changedAt || chip.sig === '') { chip.changedAt = changedAt; chip.text = chipText(c.compat === 'coerce' ? c.value : src.value, c.type, c.subtype); }
-      if (c.type === 'event' && (src.lastPulseAt ?? -1) > chip.seenPulse) { chip.seenPulse = src.lastPulseAt; chip.flashUntil = time + FLASH; }
-      const flash = chip.flashUntil > time;
-      const detail = c === hovered || c.hovered || c.selected;
-      const sub = detail ? chipPath(c) : '';
-      const color = hex(c.valid ? (c.compat === 'coerce' && c.to ? portColorFor(c.to.type, c.to.subtype) : portColorFor(c.type, c.subtype)) : 0xff4d5e);
+      const bundle = c.kind === 'bundle';
+      if (!chip) { chip = this.pool.find((x) => !x.conn) || this._make(); chip.conn = c; chip.sig = ''; chip.alpha = 0; chip.flashUntil = -1; chip.seenPulse = bundle ? -1 : (c.from.lastPulseAt ?? -1); chip.changedAt = NaN; this.byConn.set(c, chip); }
+      let sub, color, flash = false;
+      if (bundle) {
+        // the trunk: how many cables run in it; the member paths while it is hovered
+        chip.text = `${c.members.length} cables`;
+        sub = c.hovered ? c.members.slice(0, 3).map((m) => chipPath(m)).join(' · ') + (c.members.length > 3 ? ` · +${c.members.length - 3}` : '') : '';
+        color = hex(palette.cableTrunk);
+      } else {
+        // text: recomputed only when the source port changed (or pulsed), not every frame
+        const src = c.from, changedAt = Math.max(src.changedAt ?? -1, src.lastPulseAt ?? -1);
+        if (changedAt !== chip.changedAt || chip.sig === '') { chip.changedAt = changedAt; chip.text = chipText(c.compat === 'coerce' ? c.value : src.value, c.type, c.subtype); }
+        if (c.type === 'event' && (src.lastPulseAt ?? -1) > chip.seenPulse) { chip.seenPulse = src.lastPulseAt; chip.flashUntil = time + FLASH; }
+        flash = chip.flashUntil > time;
+        const detail = c === hovered || c.hovered || c.selected;
+        sub = detail ? chipPath(c) : '';
+        color = hex(c.valid ? (c.compat === 'coerce' && c.to ? portColorFor(c.to.type, c.to.subtype) : portColorFor(c.type, c.subtype)) : 0xff4d5e);
+      }
+      const detail = bundle ? c.hovered : (c === hovered || c.hovered || c.selected);
       const sig = `${chip.text}|${sub}|${color}|${flash ? 1 : 0}|${theme}`;
       if (sig !== chip.sig) {
         chip.sig = sig; chip.sub = sub;
-        chip.painted = paint(chip.canvas, { text: chip.text, sub, color, event: c.type === 'event', flash });
+        chip.painted = paint(chip.canvas, { text: chip.text, sub, color, event: !bundle && c.type === 'event', flash });
         chip.tex.needsUpdate = true;
       }
-      // place: bottom-centre anchored a little above the midpoint, a small bump while flashing; the
-      // text line is kept between TEXT_PX on screen (world-sized in between, so chips shrink with
-      // distance but never below legibility and never dwarf the block they sit beside)
-      c.midpoint(_mid);
+      // place: bottom-centre anchored a little above the chip point (the midpoint; near the far
+      // fan-out of a bundled cable), a small bump while flashing; the text line is kept between
+      // TEXT_PX on screen (world-sized in between, so chips shrink with distance but never below
+      // legibility and never dwarf the block they sit beside)
+      c.chipPoint(_mid);
       const textPx = 0.2 * this._pxPerUnit(camera, renderer, cam.distanceTo(_mid));
       const k = textPx < TEXT_PX[0] ? TEXT_PX[0] / textPx : textPx > TEXT_PX[1] ? TEXT_PX[1] / textPx : 1;
       _mid.y += LIFT * k;

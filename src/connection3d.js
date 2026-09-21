@@ -11,12 +11,21 @@
 // dragged (from an output forwards, or from an input backwards). Both ends of a real link are
 // grab handles: the tube within `sizes.connection.grabReach` of an end (and the end ring) picks
 // as a "connection end" so the interaction layer can detach and re-route it.
+//
+// Routing (routing.js, cables.js): the path follows the global style (smooth / orthogonal /
+// straight) and passes through the cable's `route` — RouteNodes (waypoints) the user placed by
+// dragging the cable body; a node shared by several cables pins them together. Each waypoint is a
+// small round handle in the cable's colour, shown while the cable is hovered or selected, while
+// either end block is selected, while it is being dragged, or always (cables.showWaypoints). A
+// cable may belong to a Bundle (bundles.js): it then runs along the bundle's trunk between the fan
+// regions, its own curve (`ownCurve`) being what the bundler averages.
 import * as THREE from 'three';
 import { portTypes, states, sizes, onThemeChange, portColorFor } from './theme.js';
 import { compatiblePorts } from './core/types.js';
 import { cableVisibleFor } from './wiring.js';
-import { isPlanOn } from './plan.js';
-import { routeCurve, laneInfo } from './routing.js';
+import { isPlanOn, PLAN_CABLE_Y } from './plan.js';
+import { routePath, laneInfo } from './routing.js';
+import { cables } from './cables.js';
 
 let flowEnabled = true;
 let flowSpeed = 1;
@@ -58,6 +67,8 @@ const FRAG = /* glsl */`
 const _a = new THREE.Vector3(), _b = new THREE.Vector3();
 const ringGeo = new THREE.TorusGeometry(1, 0.22, 8, 24);
 const burstGeo = new THREE.SphereGeometry(1, 12, 10);
+const handleGeo = new THREE.SphereGeometry(1, 14, 10);
+const _boxA = new THREE.Box3(), _boxB = new THREE.Box3();
 const MAX_BURSTS = 6;
 const isPort = (x) => !!(x && x.kind === 'port');
 
@@ -133,6 +144,18 @@ export class Connection3D extends THREE.Group {
     this._p0 = new THREE.Vector3(); this._p3 = new THREE.Vector3();
     this._radius = 0;
     this._layoutVersion = -1;
+    // routing: waypoints (RouteNode, shared or private), the bundle this cable rides in, the handles
+    this.route = [];
+    this.routeVersion = 0;
+    this.bundle = null;
+    this.handles = [];
+    this.endsSelected = false;    // a block at either end is selected: handles show
+    this.hotHandle = -1;          // the handle being dragged
+    this.hoveredHandle = -1;
+    this.ownCurve = null;         // the cable's own path (what a bundle averages)
+    this._hash = [...this.uid].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 1000003, 7);   // lane jitter for the orthogonal style
+    this._builtCurve = null;
+    this._cablesVersion = -1;
     this.rebuild(true);
     this._applyLook();
     this._offTheme = onThemeChange(() => this.refreshTheme());
@@ -192,26 +215,51 @@ export class Connection3D extends THREE.Group {
     return d0 <= d3 ? 'from' : 'to';
   }
 
-  /** Rebuild the tube when endpoints moved, the world layout changed or when forced. */
-  rebuild(force = false) {
+  /* ---------- routing ---------- */
+  /** The waypoints' positions in order. */
+  waypoints() { return this.route.map((n) => n.position); }
+  /** Something about the route changed (a node moved, was added or removed): re-route on the next update. */
+  routeChanged() { this.routeVersion += 1; }
+  /** Replace the whole route (load, undo). */
+  setRoute(nodes) { this.route.forEach((n) => n.conns.delete(this)); this.route = [...nodes]; this.route.forEach((n) => n.conns.add(this)); this.routeChanged(); }
+  /** The end blocks' boxes for the orthogonal detour (null for a free end or a collapsed group's proxy). */
+  _endBoxes() {
+    const box = (port, b) => (port && !port.proxy && port.owner?.getAABB && port.owner.kind !== 'group' ? port.owner.getAABB(b) : null);
+    return { fromBox: box(this.from, _boxA), toBox: box(this.to, _boxB) };
+  }
+  /**
+   * Compute this cable's own path (without any bundle) when its inputs changed: the endpoints, the
+   * world layout, the radius, the plan, the cable settings or the route. Returns true when it did.
+   */
+  _computeOwn(force = false) {
     const [p0, p3] = this._endpoints();
     const lv = this.world ? this.world.layoutVersion : 0;
     const r = this._targetRadius();
     const planar = isPlanOn();
-    if (!force && lv === this._layoutVersion && Math.abs(r - this._radius) < 1e-6 && planar === this._planar
-      && p0.distanceToSquared(this._p0) < 1e-8 && p3.distanceToSquared(this._p3) < 1e-8) return;
-    this._p0.copy(p0); this._p3.copy(p3); this._layoutVersion = lv; this._radius = r; this._planar = planar;
-
+    const cv = cables.version;
+    if (!force && this.ownCurve && lv === this._layoutVersion && Math.abs(r - this._radius) < 1e-6 && planar === this._planar && cv === this._cablesVersion && this.routeVersion === this._routeBuilt
+      && p0.distanceToSquared(this._p0) < 1e-8 && p3.distanceToSquared(this._p3) < 1e-8) return false;
+    this._p0.copy(p0); this._p3.copy(p3); this._layoutVersion = lv; this._radius = r; this._planar = planar; this._cablesVersion = cv; this._routeBuilt = this.routeVersion;
     const world = this.world;
     const skip = new Set([this.from?.owner, this.to?.owner].filter(Boolean));
-    const curve = routeCurve(p0, p3, {
+    this.ownCurve = routePath(p0, p3, {
+      style: cables.style, cornerRadius: cables.cornerRadius,
       lanes: world && this.complete ? laneInfo(this, world.connections) : null,
       obstacles: world ? world.nodes : [],
-      skip, planar,
+      skip, planar, waypoints: this.waypoints(), hash: this._hash, ...this._endBoxes(),
     });
+    return true;
+  }
+  /** Rebuild the tube when endpoints moved, the world layout changed, the style or route changed, or when forced. */
+  rebuild(force = false) {
+    const changed = this._computeOwn(force);
+    const curve = this.bundle ? this.bundle.memberCurve(this) : this.ownCurve;
+    if (!force && !changed && curve === this._builtCurve) return;
+    this._builtCurve = curve;
     this.curve = curve;
-    const dist = p0.distanceTo(p3);
-    const segs = Math.max(24, Math.min(110, Math.round(dist * 4)));
+    const r = this._radius;
+    const dist = Math.max(curve.getLength?.() || 0, this._p0.distanceTo(this._p3));
+    const segs = Math.max(24, Math.min(160, Math.round(dist * (cables.style === 'orthogonal' ? 6 : 4))));
     this.tube.geometry.dispose();
     this.tube.geometry = new THREE.TubeGeometry(curve, segs, r, 8, false);
     this.pickTube.geometry.dispose();
@@ -221,9 +269,49 @@ export class Connection3D extends THREE.Group {
     this.uniforms.tubeLen.value = curve.getLength();
 
     const z = new THREE.Vector3(0, 0, 1);
-    this.rings[0].position.copy(p0); this.rings[0].quaternion.setFromUnitVectors(z, curve.getTangent(0));
-    this.rings[1].position.copy(p3); this.rings[1].quaternion.setFromUnitVectors(z, curve.getTangent(1));
+    this.rings[0].position.copy(this._p0); this.rings[0].quaternion.setFromUnitVectors(z, curve.getTangent(0));
+    this.rings[1].position.copy(this._p3); this.rings[1].quaternion.setFromUnitVectors(z, curve.getTangent(1));
     this._scaleRings();
+    this._syncHandles();
+  }
+  /* ---------- waypoint handles ---------- */
+  get handlesVisible() { return this.hotHandle >= 0 || this.hovered || this.selected || this.endsSelected || cables.showWaypoints; }
+  /** One small sphere per waypoint, in the cable's colour (a shared node a touch larger and lighter); hidden unless the cable is emphasised. */
+  _syncHandles() {
+    while (this.handles.length > this.route.length) { const h = this.handles.pop(); this.remove(h); h.material.dispose(); }
+    while (this.handles.length < this.route.length) {
+      const h = new THREE.Mesh(handleGeo, new THREE.MeshBasicMaterial({ color: this.color, transparent: true, opacity: 0.95, depthWrite: false }));
+      h.renderOrder = 2; h.userData.connection = this; h.userData.waypoint = this.handles.length;
+      this.add(h); this.handles.push(h);
+    }
+    const show = this.visible && this.handlesVisible;
+    const planar = this._planar;
+    this.route.forEach((n, i) => {
+      const h = this.handles[i];
+      h.userData.waypoint = i;
+      h.position.copy(n.position); if (planar) h.position.y = PLAN_CABLE_Y; else if (this.curve?.routeY !== undefined) h.position.y = this.curve.routeY;   // on the path: the plan level, or the orthogonal routing height
+      const shared = n.sharedIn(this.world);
+      const k = (this.hoveredHandle === i || this.hotHandle === i ? 1.45 : 1) * (shared ? 1.3 : 1);
+      h.scale.setScalar(Math.max(this._radius, sizes.connection.radius.idle) * sizes.connection.handle * k);
+      h.material.color.copy(this.color); if (shared) h.material.color.lerp(new THREE.Color(0xffffff), 0.35);
+      h.material.opacity = 0.95 * Math.max(0.35, this.uniforms.dim.value);
+      h.visible = show;
+    });
+  }
+  /** Pointer over a handle (index, or -1). */
+  setHandleHover(i) { if (this.hoveredHandle !== i) { this.hoveredHandle = i; this._syncHandles(); } }
+  /** A handle is being dragged (index, or -1): handles stay visible meanwhile. */
+  setHandleHot(i) { if (this.hotHandle !== i) { this.hotHandle = i; this._syncHandles(); } }
+  /** A block at either end is selected: the handles show. */
+  setEndsSelected(on) { on = !!on; if (this.endsSelected !== on) { this.endsSelected = on; this._syncHandles(); } }
+  /** The world point the value chip sits over: the midpoint, or near the destination fan-out of a bundled cable. */
+  chipPoint(target = new THREE.Vector3()) { return this.curve ? this.curve.getPoint(this.bundle ? 0.9 : 0.5, target) : target.copy(this._p0).lerp(this._p3, 0.5); }
+  /** Curve parameter (0..1) of the point on the path nearest to `p` (sampled). */
+  nearestT(p, samples = 48) {
+    if (!this.curve) return 0.5;
+    let best = 0, bd = Infinity;
+    for (let i = 0; i <= samples; i++) { const t = i / samples; this.curve.getPoint(t, _a); const d = _a.distanceToSquared(p); if (d < bd) { bd = d; best = t; } }
+    return best;
   }
   _scaleRings() {
     const rs = this._radius * sizes.connection.ringScale;
@@ -237,7 +325,7 @@ export class Connection3D extends THREE.Group {
     const r = sizes.connection.radius;
     let v = this.selected ? r.selected : this.derivedState === 'active' ? r.active : this.derivedState === 'inactive' ? r.inactive : r.idle;
     if (this.far) v *= 0.8;
-    return v;
+    return v * cables.thicknessScale;
   }
 
   /** Engine writes the derived state: inactive | idle | active | invalid. */
@@ -248,8 +336,8 @@ export class Connection3D extends THREE.Group {
     this.velocity = s === 'active' ? 1.2 + Math.min(this.from?.rate || 0, 10) * 0.45 : s === 'idle' ? 1.2 : 0.3;
     this._applyLook();
   }
-  setSelected(on) { this.selected = on; this._applyLook(); }
-  setHover(on) { this.hovered = on; if (!on) this.hoveredEnd = null; this._applyLook(); this._scaleRings(); }
+  setSelected(on) { this.selected = on; this._applyLook(); this._syncHandles(); }
+  setHover(on) { this.hovered = on; if (!on) { this.hoveredEnd = null; this.hoveredHandle = -1; } this._applyLook(); this._scaleRings(); this._syncHandles(); }
   /** Pointer over a grab handle: enlarge that end's ring. */
   setEndHover(end) { if (this.hoveredEnd !== end) { this.hoveredEnd = end; this._scaleRings(); this._applyLook(); } }
   /** Hover isolation: other connections drop to ~25 % (legacy signature kept). */
@@ -267,6 +355,7 @@ export class Connection3D extends THREE.Group {
   _setDim(dim) {
     this.uniforms.dim.value = dim;
     this.rings.forEach((rg) => { rg.material.opacity = (this.derivedState === 'inactive' ? 0.4 : 0.9) * (dim >= 0.999 ? 1 : dim * 0.9); });
+    this.handles.forEach((h) => { h.material.opacity = 0.95 * Math.max(0.35, dim); });
   }
   setFar(on) { if (this.far !== on) { this.far = on; } }
 
@@ -328,8 +417,11 @@ export class Connection3D extends THREE.Group {
     this.bursts.push({ k: 0, core, halo });
   }
 
+  /** The link record; `route` lists its waypoints — `[x, y, z]` for a private one, `{ node: id }` for a node shared with other cables (listed in the document's `routeNodes`). */
   serialize() {
-    return { uid: this.uid, from: this.from ? { node: this.from.owner.uid, port: this.from.key } : null, to: this.to ? { node: this.to.owner.uid, port: this.to.key } : null };
+    const rec = { uid: this.uid, from: this.from ? { node: this.from.owner.uid, port: this.from.key } : null, to: this.to ? { node: this.to.owner.uid, port: this.to.key } : null };
+    if (this.route.length) rec.route = this.route.map((n) => (n.sharedIn(this.world) ? { node: n.id } : n.position.toArray().map((v) => +v.toFixed(3))));
+    return rec;
   }
 
   dispose() {
@@ -338,5 +430,7 @@ export class Connection3D extends THREE.Group {
     this.tube.geometry.dispose(); this.outline.geometry.dispose(); this.pickTube.geometry.dispose();
     this.material.dispose(); this.outline.material.dispose(); this.pickTube.material.dispose();
     this.rings.forEach((r) => r.material.dispose());
+    this.handles.forEach((h) => h.material.dispose()); this.handles = [];
+    this.route.forEach((n) => n.conns.delete(this));
   }
 }

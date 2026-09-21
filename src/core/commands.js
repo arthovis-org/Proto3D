@@ -2,6 +2,7 @@
 // a { label, do(), undo() } command for History.execute. Composite commands bundle several.
 import * as THREE from 'three';
 import { clone } from './component.js';
+import { RouteNode } from '../routing.js';
 
 export const composite = (label, cmds) => ({ label, do: () => cmds.forEach((c) => c.do()), undo: () => [...cmds].reverse().forEach((c) => c.undo()) });
 
@@ -56,10 +57,67 @@ export function reroute(world, conn, from, to) {
   };
 }
 
-/** Move (and optionally rotate / scale) a set of nodes: before/after snapshots. */
-export function transform(world, nodes, before, after) {
-  const apply = (snaps) => { nodes.forEach((n, i) => { const s = snaps[i]; n.position.fromArray(s.p); n.rotation.y = s.r; n.scale.setScalar(s.s); }); world.bumpLayout(); world.changed('move'); };
-  return { label: `Move ${nodes.length}`, do: () => apply(after), undo: () => apply(before) };
+/**
+ * Move (and optionally rotate / scale) a set of nodes: before/after snapshots. `routes` carries the
+ * cable waypoints that travel with the set — `[{ node: RouteNode, before: [x,y,z], after: [x,y,z] }]`.
+ */
+export function transform(world, nodes, before, after, routes = null) {
+  const apply = (snaps, which) => {
+    nodes.forEach((n, i) => { const s = snaps[i]; n.position.fromArray(s.p); n.rotation.y = s.r; n.scale.setScalar(s.s); });
+    if (routes) for (const r of routes) { r.node.position.fromArray(r[which]); r.node.conns.forEach((c) => c.routeChanged()); }
+    world.bumpLayout(); world.changed('move');
+  };
+  return { label: `Move ${nodes.length}`, do: () => apply(after, 'after'), undo: () => apply(before, 'before') };
+}
+
+/* ---------- cable routes (waypoints) ---------- */
+const routeTouched = (world, conns) => { conns.forEach((c) => c.routeChanged()); world.bumpLayout(); world.changed('route'); };
+/** Insert a waypoint into a cable's route at `index`: a new private node at `point`, or an existing (shared) RouteNode. */
+export function addWaypoint(world, conn, index, pointOrNode) {
+  const node = pointOrNode instanceof RouteNode ? pointOrNode : new RouteNode(pointOrNode);
+  return {
+    label: 'Add waypoint', node,
+    do() { conn.route.splice(Math.min(index, conn.route.length), 0, node); node.conns.add(conn); routeTouched(world, [conn]); },
+    undo() { const i = conn.route.indexOf(node); if (i >= 0) conn.route.splice(i, 1); node.conns.delete(conn); routeTouched(world, [conn]); },
+  };
+}
+/** Remove the waypoint at `index` from a cable (a shared node stays with its other cables). */
+export function removeWaypoint(world, conn, index) {
+  const node = conn.route[index];
+  return {
+    label: 'Remove waypoint',
+    do() { const i = conn.route.indexOf(node); if (i >= 0) conn.route.splice(i, 1); node.conns.delete(conn); routeTouched(world, [conn]); },
+    undo() { conn.route.splice(Math.min(index, conn.route.length), 0, node); node.conns.add(conn); routeTouched(world, [conn]); },
+  };
+}
+/** Move a waypoint (every cable through it follows). */
+export function moveWaypoint(world, node, before, after) {
+  const apply = (p) => { node.position.fromArray(p); routeTouched(world, [...node.conns]); };
+  return { label: 'Move waypoint', do: () => apply(after), undo: () => apply(before) };
+}
+/** Back to automatic routing: drop every waypoint of a cable. */
+export function resetRoute(world, conn) {
+  const prev = [...conn.route];
+  return { label: 'Reset cable route', do: () => { conn.setRoute([]); routeTouched(world, [conn]); }, undo: () => { conn.setRoute(prev); routeTouched(world, [conn]); } };
+}
+/** Pin a cable's waypoint to another node (the two cables then share it and bundle through it). */
+export function pinWaypoint(world, conn, index, target) {
+  const prev = conn.route[index];
+  return {
+    label: 'Share waypoint',
+    do() { if (conn.route.includes(target)) { const i = conn.route.indexOf(prev); if (i >= 0) conn.route.splice(i, 1); } else conn.route[conn.route.indexOf(prev)] = target; prev.conns.delete(conn); target.conns.add(conn); routeTouched(world, [conn, ...target.conns]); },
+    undo() { const i = conn.route.indexOf(target); if (i >= 0) conn.route[i] = prev; else conn.route.splice(Math.min(index, conn.route.length), 0, prev); target.conns.delete(conn); prev.conns.add(conn); routeTouched(world, [conn, ...target.conns]); },
+  };
+}
+/** Unpin a cable from a shared node: it gets its own waypoint at the same place. */
+export function unpinWaypoint(world, conn, index) {
+  const shared = conn.route[index];
+  const own = new RouteNode(shared.position);
+  return {
+    label: 'Unpin waypoint',
+    do() { conn.route[conn.route.indexOf(shared)] = own; shared.conns.delete(conn); own.conns.add(conn); routeTouched(world, [conn, ...shared.conns]); },
+    undo() { conn.route[conn.route.indexOf(own)] = shared; own.conns.delete(conn); shared.conns.add(conn); routeTouched(world, [conn, ...shared.conns]); },
+  };
 }
 export const snapshot = (n) => ({ p: n.position.toArray(), r: n.rotation.y, s: n.scale.x });
 
@@ -120,15 +178,17 @@ export function duplicate(world, nodes, createInstance, offset = new THREE.Vecto
     return c;
   });
   const positions = src.map((n) => n.position.clone().add(offset).toArray());
+  const nodeMap = new Map();   // a shared waypoint stays shared among the copies
+  const copyNode = (n) => { if (!nodeMap.has(n)) nodeMap.set(n, new RouteNode(n.position.clone().add(offset))); return nodeMap.get(n); };
   const links = world.connections.filter((c) => src.includes(c.from.owner) && c.to && src.includes(c.to.owner))
-    .map((c) => ({ a: src.indexOf(c.from.owner), ak: c.from.key, b: src.indexOf(c.to.owner), bk: c.to.key }));
+    .map((c) => ({ a: src.indexOf(c.from.owner), ak: c.from.key, b: src.indexOf(c.to.owner), bk: c.to.key, route: c.route.map(copyNode) }));
   let made = [];
   const cmd = {
     label: `Duplicate ${src.length}`,
     copies,
     do() {
       copies.forEach((c, i) => world.addNode(c, positions[i]));
-      made = links.map((l) => world.addConnection(copies[l.a].getPort(l.ak, 'out'), copies[l.b].getPort(l.bk, 'in'))).filter(Boolean);
+      made = links.map((l) => { const c = world.addConnection(copies[l.a].getPort(l.ak, 'out'), copies[l.b].getPort(l.bk, 'in')); if (c && l.route.length && !c.route.length) c.setRoute(l.route); return c; }).filter(Boolean);
     },
     undo() { copies.forEach((c) => world.removeNode(c)); made = []; },
   };

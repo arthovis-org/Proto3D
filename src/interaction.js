@@ -11,6 +11,13 @@
 //   cable ends: the tube near either end (and the end ring) is a grab handle — drag it to
 //          re-route the link onto another compatible port, drop on empty space to disconnect,
 //          Esc to put it back; a connected single input picks up its existing cable the same way
+//   cable body: press and drag the middle of a cable to add a waypoint there and move it (the
+//          cable then passes through it: routing.js); drag a waypoint handle to move it (snapping
+//          to the grid and to other waypoints per the Snap settings), drop it on another cable's
+//          handle or on a bundle trunk to share it (a manual bundle: one node, several cables),
+//          Alt+click a handle to remove it (or to unpin this cable from a shared node),
+//          double-click a handle to reset the cable to automatic routing; a cable's waypoints
+//          travel with the blocks when both of its ends are moved together
 //   selection: a selected block brightens its cables (others dim to 25 %, their flow slows) and labels their far
 //          ends; a selected cable makes both ports pulse
 //   sub pickables (cards, tiles, handles owned by a Shape3D body) beat the surface they sit on, but
@@ -42,6 +49,7 @@ import { hex, sizes } from './theme.js';
 import { describeLink, dropLinkCandidates } from './pm/relations.js';
 import { nav } from './controls/navigation.js';
 import { isPlanOn, snap } from './plan.js';
+import { RouteNode } from './routing.js';
 
 /** True when the key event comes from a text field (panel) — ignore shortcuts then. */
 export const isTyping = (e) => {
@@ -57,7 +65,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 const portName = (p) => `${p.owner.title}.${p.label}`;
 const FADE = 0.28;
 /** Picking: kinds in priority order — decides only between hits at (nearly) the same depth. */
-const PICK_RANK = { port: 0, sub: 1, face: 2, block: 3, connection: 4, group: 5 };
+const PICK_RANK = { port: 0, sub: 1, face: 2, block: 3, connection: 4, bundle: 5, group: 6 };
 const PICK_EPS = 1e-3;      // "same depth": within this fraction of the hit distance …
 const PICK_EPS_MIN = 0.02;  // … or this many world units (coplanar helper meshes sit 0.01–0.02 apart)
 const CABLE_PICK_BIAS = 0.16;   // the fat invisible pick tube / end rings compete at the depth of the thin cable axis, not their inflated surface
@@ -69,9 +77,12 @@ export class Interaction {
     this.pointer = new THREE.Vector2();
     this.hovered = null;
     this.hoveredEnd = null;  // 'from' | 'to' while over a cable's grab handle
+    this.hoveredWaypoint = null; // index of the waypoint handle under the pointer
     this.drag = null;        // { nodes, plane, offsets, before, moved }
     this.connect = null;     // cable drag: { need, fixed, side, preview, plane, detached, origin, snapped, reject }
     this.pendingDetach = null; // { conn, end } pressed but not yet moved
+    this.pendingWaypoint = null; // { conn, point } the cable body pressed: the first movement adds a waypoint there
+    this.wpDrag = null;      // { conn, node, index, plane, offset, before, moved, target } a waypoint handle being dragged
     this.marquee = null;     // { x0, y0, el }
     this.faceDrag = null;    // { block, mesh }
     this.pressFace = null;   // { block, u, v } for click detection
@@ -132,7 +143,8 @@ export class Interaction {
   _faceMeshes(nodes = this._visibleNodes()) { return nodes.filter((n) => n.face?.mesh && n.face.mesh.visible !== false).map((n) => n.face.mesh); }
   _subMeshes(nodes = this._visibleNodes()) { return nodes.flatMap((n) => (n.subMeshes ? n.subMeshes() : [])); }
   _bodyMeshes(nodes = this._visibleNodes()) { return nodes.flatMap((n) => (n.meshes ? n.meshes.filter((m) => m !== n.face?.mesh) : [n.body, n.header]).filter((m) => m && m.visible !== false)); }
-  _tubeMeshes() { return this.world.connections.filter((c) => c.visible).flatMap((c) => [c.pickTube, ...c.rings]); }
+  _tubeMeshes() { return this.world.connections.filter((c) => c.visible).flatMap((c) => [c.pickTube, ...c.rings, ...(c.handlesVisible ? c.handles : [])]); }
+  _bundleMeshes() { return (this.world.bundles || []).filter((b) => b.visible).map((b) => b.pickTube); }
   _groupMeshes() { return this.world.groups.flatMap((g) => (g.collapsed && g.slab ? [g.slab.body, g.slab.header] : [g.fill, g.edge])); }
   /**
    * Everything the pointer can hit, tagged by kind: port pins (+ their hidden oversize shells and
@@ -142,15 +154,16 @@ export class Interaction {
    * two kinds keeps the higher-priority one (a device screen is both its face and a body part).
    * `exclude` leaves one block out (the block being dragged in `_updateBlockDrop`).
    */
-  _pickables({ exclude = null } = {}) {
+  _pickables({ exclude = null, excludeMeshes = null } = {}) {
     const nodes = exclude ? this._visibleNodes().filter((n) => n !== exclude) : this._visibleNodes();
     const meshes = [], kinds = new Map();
-    const push = (list, kind) => { for (const m of list) if (m && !kinds.has(m)) { kinds.set(m, kind); meshes.push(m); } };
+    const push = (list, kind) => { for (const m of list) if (m && !kinds.has(m) && !(excludeMeshes && excludeMeshes.has(m))) { kinds.set(m, kind); meshes.push(m); } };
     push(this._portMeshes(nodes), 'port');
     push(this._subMeshes(nodes), 'sub');
     push(this._faceMeshes(nodes), 'face');
     push(this._bodyMeshes(nodes), 'block');
     push(this._tubeMeshes(), 'connection');
+    push(this._bundleMeshes(), 'bundle');
     push(this._groupMeshes(), 'group');
     return { meshes, kinds };
   }
@@ -162,7 +175,8 @@ export class Interaction {
       case 'sub': { const sub = o.userData.sub; return { kind: 'sub', target: sub.block, sub, point: h.point, mesh: o, distance: h.distance }; }
       case 'face': return { kind: 'face', target: o.userData.block, point: h.point, uv: h.uv, mesh: o, distance: h.distance };
       case 'block': return { kind: 'block', target: o.userData.block, point: h.point, distance: h.distance };
-      case 'connection': { const c = o.userData.connection; return { kind: 'connection', target: c, point: h.point, end: o.userData.end || c.endNear(h.point), distance: h.distance }; }
+      case 'connection': { const c = o.userData.connection; const wp = o.userData.waypoint; return wp !== undefined ? { kind: 'connection', target: c, point: h.point, end: null, waypoint: wp, distance: h.distance } : { kind: 'connection', target: c, point: h.point, end: o.userData.end || c.endNear(h.point), waypoint: null, distance: h.distance }; }
+      case 'bundle': return { kind: 'bundle', target: o.userData.bundle, point: h.point, distance: h.distance };
       case 'group': return { kind: 'group', target: o.userData.group, point: h.point, distance: h.distance };
     }
     return null;
@@ -182,7 +196,7 @@ export class Interaction {
     const { meshes, kinds } = this._pickables(opts);
     const hits = this.ray.intersectObjects(meshes, false);
     if (!hits.length) return null;
-    for (const h of hits) { h.kind = kinds.get(h.object); if (h.kind === 'connection') h.distance += CABLE_PICK_BIAS; }
+    for (const h of hits) { h.kind = kinds.get(h.object); if ((h.kind === 'connection' && h.object.userData.waypoint === undefined) || h.kind === 'bundle') h.distance += CABLE_PICK_BIAS; }
     hits.sort((a, b) => a.distance - b.distance);
     const d0 = hits[0].distance, eps = Math.max(d0 * PICK_EPS, PICK_EPS_MIN);
     let best = hits[0];
@@ -208,21 +222,31 @@ export class Interaction {
   }
 
   /* ---------- hover ---------- */
-  _setHover(item, end = null) {
-    if (this.hovered === item && this.hoveredEnd === end) return;
+  _setHover(item, end = null, waypoint = null) {
+    if (this.hovered === item && this.hoveredEnd === end && this.hoveredWaypoint === waypoint) return;
     if (this.hovered) {
       this.hovered.setHover(false);
-      if (this.hovered.kind === 'connection') { this.world.connections.forEach((c) => c.setDim(false)); this.onHoverConnection(null); }
+      if (this.hovered.kind === 'connection') { this.hovered.setHandleHover(-1); this.world.connections.forEach((c) => c.setDim(false)); this.onHoverConnection(null); }
+      if (this.hovered.kind === 'bundle') this.hovered.members.forEach((m) => m.setHighlight(false));
     }
-    this.hovered = item; this.hoveredEnd = end;
+    this.hovered = item; this.hoveredEnd = end; this.hoveredWaypoint = waypoint;
     this.overlays?.hideTip();
     if (item) {
       item.setHover(true);
       if (item.kind === 'connection') {
         this.world.connections.forEach((c) => c.setDim(c !== item));
         item.setEndHover(end);
+        item.setHandleHover(waypoint ?? -1);
         if (end) this.overlays?.tip('<b>Cable end</b><span class="d">drag to re-route · drop on empty space to disconnect</span>', { anchor: item.endPosition(end), offset: [16, -34] });
-        this.onHoverConnection(end ? null : item);
+        else if (waypoint !== null) {
+          const node = item.route[waypoint]; const n = node ? node.liveConns(this.world).length : 1;
+          this.overlays?.tip(n > 1 ? `<b>Shared waypoint</b><span class="t">${n} cables</span><span class="d">drag moves them all · Alt+click unpins this cable · double-click resets its route</span>` : '<b>Waypoint</b><span class="d">drag to move · drop on another handle or a bundle to share it · Alt+click removes · double-click resets the cable</span>', { anchor: node ? node.position.clone() : item.midpoint(), offset: [16, -34] });
+        } else this.overlays?.tip('<b>Cable</b><span class="d">drag to add a waypoint here · grab an end to re-route</span>', { anchor: item.midpoint(), offset: [16, -34], delay: 600 });
+        this.onHoverConnection(end || waypoint !== null ? null : item);
+      } else if (item.kind === 'bundle') {
+        item.members.forEach((m) => m.setHighlight(true));
+        const names = item.members.slice(0, 6).map((m) => `<span class="c">${esc(portName(m.from))} → ${esc(portName(m.to))}</span>`).join('') + (item.members.length > 6 ? `<span class="c">… ${item.members.length - 6} more</span>` : '');
+        this.overlays?.tip(`<b>Bundle</b><span class="t">${item.members.length} cables run together</span>${names}<span class="d">click selects them · drop a waypoint handle on it to join</span>`, { anchor: item.midpoint(), offset: [16, -34] });
       } else if (item.kind === 'port') this._tipPort(item);
       else if (item.kind === 'node' || item.kind === 'device') this._tipBlock(item);
     }
@@ -232,7 +256,8 @@ export class Interaction {
   _hoverCursor(item, end) {
     if (!item) return this.hoveredSub ? 'pointer' : '';
     if (item.kind === 'port') return 'crosshair';
-    if (item.kind === 'connection') return end ? 'grab' : 'pointer';
+    if (item.kind === 'connection') return end || this.hoveredWaypoint !== null ? 'grab' : 'pointer';
+    if (item.kind === 'bundle') return 'pointer';
     if (item.kind === 'group') return 'grab';
     return 'grab';
   }
@@ -303,6 +328,7 @@ export class Interaction {
     for (const c of this.world.connections) {
       if (!c.complete) continue;
       const a = S.has(c.from.owner), b = S.has(c.to.owner);
+      c.setEndsSelected(a || b);
       let dim = false;
       if (S.size) {
         dim = !(a || b);
@@ -351,18 +377,21 @@ export class Interaction {
         if (vertical) { raw.forEach((p, i) => { p.x = d.nodes[i].position.x; p.z = d.nodes[i].position.z; d.baseY[i] = Math.max(d.nodes[i].kind === 'device' ? 0 : 0.2, p.y); }); }
         else { raw.forEach((p, i) => { p.y = d.baseY[i]; }); this._applySnap(d, raw, e); }   // the height the drag started at (a port snap may lift the block while it applies)
         d.nodes.forEach((n, i) => { const p = raw[i]; p.y = Math.max(n.kind === 'device' ? 0 : 0.2, p.y); n.position.copy(p); });
+        this._moveRoutes(d);
         this.world.bumpLayout();
       }
       this._updateBlockDrop();
       this._cursor('grabbing');
       return;
     }
+    if (this.wpDrag) { this._updateWaypointDrag(e); return; }
+    if (this.pendingWaypoint && Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4) { this._beginAddWaypoint(); return; }
     if (this.pendingDetach && Math.hypot(e.clientX - this.downPos.x, e.clientY - this.downPos.y) > 4) this._beginDetach(this.pendingDetach);
     if (this.connect) { this._updateConnect(e); return; }
     if (this.gizmo && this.gizmo.hot) { this._setHover(null); this._setHoverSub(null); this._cursor('move'); return; }
     const hit = this.pick();
     this._setHoverSub(hit && hit.kind === 'sub' ? hit.sub : null);
-    this._setHover(hit && hit.kind !== 'sub' ? hit.target : null, hit?.kind === 'connection' ? hit.end : null);
+    this._setHover(hit && hit.kind !== 'sub' ? hit.target : null, hit?.kind === 'connection' ? hit.end : null, hit?.kind === 'connection' ? hit.waypoint : null);
     if (hit?.kind === 'face' && hit.target.def.face?.onPointer) this._cursor('pointer');
     // edit mode: a text cursor over the block's fields, a plain one over the rest of it (nothing shows outside edit mode)
     const EB = this.editBlock;
@@ -388,7 +417,7 @@ export class Interaction {
     this.add = nav.isAddModifier(e);
     this._setPointer(e);
     this.downPos.set(e.clientX, e.clientY);
-    this.pressFace = null; this.pendingDetach = null;
+    this.pressFace = null; this.pendingDetach = null; this.pendingWaypoint = null;
     const hit = this.pick();
     const onBody = hit && (hit.kind === 'face' || hit.kind === 'block' || hit.kind === 'sub');
     const EB = this.editBlock;
@@ -454,9 +483,20 @@ export class Interaction {
       return;
     }
     if (hit.kind === 'connection') {
-      this.select(hit.target, { toggle: this.add });
-      if (hit.end && hit.target.complete) { this.pendingDetach = { conn: hit.target, end: hit.end }; this.controls.enabled = false; }
+      const c = hit.target;
+      if (hit.waypoint !== null && c.complete) {
+        // a waypoint handle: Alt removes it (unpins a shared one), otherwise drag it
+        if (e.altKey) { this._removeWaypoint(c, hit.waypoint); return; }
+        if (!this.selection.has(c)) this.select(c, { toggle: this.add });
+        this._beginWaypointDrag(c, hit.waypoint);
+        return;
+      }
+      this.select(c, { toggle: this.add });
+      if (hit.end && c.complete) { this.pendingDetach = { conn: c, end: hit.end }; this.controls.enabled = false; }
+      else if (c.complete && !this.add) { this.pendingWaypoint = { conn: c, point: hit.point.clone() }; this.controls.enabled = false; }   // the first movement adds a waypoint here
+      return;
     }
+    if (hit.kind === 'bundle') { const b = hit.target; if (this.add) b.members.forEach((m) => this.selection.toggle(m)); else this.selection.set(b.members); }
   }
   _beginBlockDrag(block, point, e) {
     if (block.subSelection) { block.subSelection = null; block.faceDirty = true; if (this.selection.has(block)) this.selection.refresh(); }
@@ -519,10 +559,26 @@ export class Interaction {
     if (!this.ray.ray.intersectPlane(plane, planeHit)) planeHit.copy(point);
     const offsets = nodes.map((n) => n.position.clone().sub(planeHit));
     nodes.forEach((n) => { n.dragging = true; });
-    this.drag = { nodes, plane, offsets, before: nodes.map(cmd.snapshot), baseY: nodes.map((n) => n.position.y), moved: false };
+    this.drag = { nodes, plane, offsets, before: nodes.map(cmd.snapshot), baseY: nodes.map((n) => n.position.y), moved: false, routes: this._routesTravelling(nodes) };
     this.controls.enabled = false;
     this.overlays?.hideTip();
     this._cursor('grabbing');
+  }
+  /** The waypoints that move with a set of blocks: nodes whose every cable has both ends in the set. */
+  _routesTravelling(nodes) {
+    const set = new Set(nodes), out = [], seen = new Set();
+    for (const c of this.world.connections) {
+      if (!c.complete || !set.has(c.from.owner) || !set.has(c.to.owner)) continue;
+      for (const n of c.route) if (!seen.has(n) && n.liveConns(this.world).every((x) => set.has(x.from.owner) && set.has(x.to.owner))) { seen.add(n); out.push({ node: n, before: n.position.toArray(), after: n.position.toArray() }); }
+    }
+    return out;
+  }
+  /** Translate the travelling waypoints by the anchor block's displacement. */
+  _moveRoutes(d) {
+    if (!d.routes?.length) return;
+    const i = d.nodes.length - 1, n = d.nodes[i];
+    const dx = n.position.x - d.before[i].p[0], dy = n.position.y - d.before[i].p[1], dz = n.position.z - d.before[i].p[2];
+    for (const r of d.routes) { r.node.position.set(r.before[0] + dx, r.before[1] + dy, r.before[2] + dz); r.after = r.node.position.toArray(); r.node.conns.forEach((c) => c.routeChanged()); }
   }
 
   /* ---------- snapping ---------- */
@@ -725,13 +781,15 @@ export class Interaction {
     if (this.gizmo && this.gizmo.dragging) return;
     if (e.button !== 0 && !this.keyDrag) return;
     this.controls.enabled = true;
-    this.pendingDetach = null;
+    this.pendingDetach = null; this.pendingWaypoint = null;
+    if (this.wpDrag) { this._endWaypointDrag(e); return; }
     if (this.keyDrag && this.drag) {
       // Shift+D: the copies followed the pointer; this click drops them
       const d = this.drag; this.drag = null; this.keyDrag = false;
       this.guides?.clear();
       d.nodes.forEach((n) => { n.dragging = false; });
-      this.history.execute(cmd.transform(this.world, d.nodes, d.before, d.nodes.map(cmd.snapshot)));
+      this._moveRoutes(d);
+      this.history.execute(cmd.transform(this.world, d.nodes, d.before, d.nodes.map(cmd.snapshot), d.routes));
       this._cursor('');
       return;
     }
@@ -761,11 +819,11 @@ export class Interaction {
         // dropped on a card (assign) or on a block (link): the dragged block springs back and the target acts
         const { block, sub, dragged, links } = d.dropTarget;
         block.setSubHover?.(null); block.setDropTarget(false); this.overlays?.dragLabel(null);
-        d.nodes.forEach((n, i) => { n.position.fromArray(d.before[i].p); }); this.world.bumpLayout();
+        d.nodes.forEach((n, i) => { n.position.fromArray(d.before[i].p); }); this._moveRoutes(d); this.world.bumpLayout();
         if (sub) block.def.body3d.onDropBlock?.(block, sub, dragged, { history: this.history, selection: this.selection, overlays: this.overlays });
         else if (links?.length === 1) this._linkByDrop(links[0], dragged);
         else if (links?.length > 1) this.overlays?.chooser(links.map((l) => ({ label: l.sentence, value: l })), { x: e.clientX, y: e.clientY, title: `Link ${dragged.title} to ${block.title}` }, (l) => { if (l) this._linkByDrop(l, dragged); });
-      } else if (d.moved && moved) this.history.execute(cmd.transform(this.world, d.nodes, d.before, d.nodes.map(cmd.snapshot)));
+      } else if (d.moved && moved) this.history.execute(cmd.transform(this.world, d.nodes, d.before, d.nodes.map(cmd.snapshot), d.routes));
       else if (this.pressFace && !moved) this.pressFace.block.onFacePointer({ type: 'click', u: this.pressFace.u, v: this.pressFace.v, button: 0 });
       this.pressFace = null;
       this._cursor(this._hoverCursor(this.hovered, this.hoveredEnd));
@@ -779,6 +837,14 @@ export class Interaction {
   onDblClick(e) {
     this._setPointer(e);
     const hit = this.pick();
+    if (hit?.kind === 'connection' && hit.waypoint !== null && hit.target.route.length) {
+      // a waypoint handle: back to automatic routing
+      this.pendingWaypoint = null; this.wpDrag = null;
+      this.history.execute(cmd.resetRoute(this.world, hit.target));
+      this.overlays?.toast('Cable back to automatic routing · Ctrl+Z restores the waypoints', 1800);
+      this._setHover(null);
+      return;
+    }
     if (hit && (hit.kind === 'block' || hit.kind === 'face' || hit.kind === 'sub') && this.fieldEditor) {
       if (!this.fieldEditor.editable(hit.target)) return;
       this.fieldEditor.enterEdit(hit.target, { field: this._fieldAt(hit) });
@@ -799,6 +865,116 @@ export class Interaction {
         if (f.k >= 1) { this.world.scene.remove(f.preview); f.preview.dispose(); this.fading.splice(this.fading.indexOf(f), 1); }
       }
     }
+  }
+
+  /* ---------- waypoints ---------- */
+  /** The cable body was pressed and the pointer moved: add a waypoint where it was pressed (undoable) and start dragging it. */
+  _beginAddWaypoint() {
+    const { conn, point } = this.pendingWaypoint; this.pendingWaypoint = null;
+    if (!this.world.connections.includes(conn) || !conn.complete) return;
+    const p = point.clone();
+    if (this.controls.planMode) p.y = ((conn.from.owner.position.y || 0) + (conn.to.owner.position.y || 0)) / 2;   // the plan shows the route at PLAN_CABLE_Y; keep a sensible 3D height
+    // insertion index: after every waypoint that comes earlier along the path
+    const t = conn.nearestT(point);
+    const index = conn.route.filter((n) => conn.nearestT(n.position) < t).length;
+    const c = cmd.addWaypoint(this.world, conn, index, p);
+    this.history.execute(c);
+    this._beginWaypointDrag(conn, conn.route.indexOf(c.node), { added: true });
+  }
+  /** Start dragging a waypoint handle on the plane facing the camera through it (horizontal in the plan). */
+  _beginWaypointDrag(conn, index, { added = false } = {}) {
+    const node = conn.route[index]; if (!node) return;
+    // the plane facing the camera through the handle; flat (horizontal) where the cable runs at one height — the plan and the orthogonal style
+    const handle = conn.handles[index]; const at = handle ? handle.position.clone() : node.position.clone();
+    const flat = this.controls.planMode || conn.curve?.routeY !== undefined;
+    const plane = flat ? new THREE.Plane(new THREE.Vector3(0, 1, 0), -at.y) : this._cameraPlaneAt(at);
+    const hit = new THREE.Vector3(); if (!this.ray.ray.intersectPlane(plane, hit)) hit.copy(at);
+    this.wpDrag = { conn, node, index, plane, flat, offset: new THREE.Vector3(node.position.x - hit.x, 0, node.position.z - hit.z), before: node.position.toArray(), moved: false, target: null, added };
+    conn.setHandleHot(index);
+    this.controls.enabled = false;
+    this.overlays?.hideTip();
+    this._setHover(null);
+    this._cursor('grabbing');
+  }
+  _updateWaypointDrag(e) {
+    const W = this.wpDrag, node = W.node;
+    const p = new THREE.Vector3();
+    if (!this.ray.ray.intersectPlane(W.plane, p)) return;
+    p.add(W.offset);
+    if (W.flat) p.y = node.position.y;   // the plan and the orthogonal style move a waypoint in x / z only
+    this._snapWaypoint(p, node, e);
+    W.moved = true;
+    node.position.copy(p);
+    node.conns.forEach((c) => c.routeChanged());
+    this.world.bumpLayout();
+    // drop target: another cable's handle (share the node) or a bundle trunk (join it)
+    const own = new Set(W.conn.handles);
+    const hit = this.pick({ excludeMeshes: own });
+    let target = null;
+    if (hit?.kind === 'connection' && hit.waypoint !== null) { const other = hit.target.route[hit.waypoint]; if (other && other !== node) target = { node: other, conn: hit.target }; }
+    else if (hit?.kind === 'bundle' && !hit.target.members.includes(W.conn)) target = { bundle: hit.target, point: hit.point.clone() };
+    this._setDropNode(target);
+    if (target?.node) this.overlays?.dragLabel(`<b>Share waypoint</b><span class="d">${target.node.liveConns(this.world).length + 1} cables through one point · drag it to move them together</span>`, e.clientX, e.clientY);
+    else if (target?.bundle) this.overlays?.dragLabel(`<b>Join bundle</b><span class="d">${target.bundle.members.length} cables · this one runs with them from here</span>`, e.clientX, e.clientY);
+    else this.overlays?.dragLabel(`<b>Waypoint</b><span class="d">${W.conn.route.length > 1 ? `${W.conn.route.length} on this cable · ` : ''}drop on another handle or a bundle to share it</span>`, e.clientX, e.clientY);
+    this._cursor('grabbing');
+  }
+  /** Light the handle (or trunk) a dragged waypoint would join. */
+  _setDropNode(target) {
+    const W = this.wpDrag, prev = W?.target;
+    if (prev?.conn && prev.conn !== target?.conn) prev.conn.setHandleHover(-1);
+    if (prev?.bundle && prev.bundle !== target?.bundle) prev.bundle.members.forEach((m) => m.setHighlight(false));
+    if (!W) return;
+    W.target = target;
+    if (target?.conn) target.conn.setHandleHover(target.conn.route.indexOf(target.node));
+    if (target?.bundle) target.bundle.members.forEach((m) => m.setHighlight(true));
+  }
+  /** Snap a dragged waypoint: the grid (x / z, and y standing in 3D; Ctrl halves the pitch) and the coordinates of other waypoints (objects). Shift skips. */
+  _snapWaypoint(p, node, e) {
+    if (this.shift) return;
+    const thr = this._snapThreshold(p), fine = !!(e.ctrlKey || e.metaKey);
+    if (snap.active('objects')) {
+      for (const c of this.world.connections) for (const n of c.route) {
+        if (n === node) continue;
+        for (const a of ['x', 'z']) if (Math.abs(n.position[a] - p[a]) < thr) p[a] = n.position[a];
+        if (!this.controls.planMode && Math.abs(n.position.y - p.y) < thr) p.y = n.position.y;
+      }
+    }
+    if (snap.active('grid')) { p.x = snap.value(p.x, fine); p.z = snap.value(p.z, fine); if (!this.controls.planMode && !this.wpDrag?.flat) p.y = Math.max(0.2, snap.value(p.y, fine)); }
+  }
+  _endWaypointDrag(e) {
+    const W = this.wpDrag; this.wpDrag = null;
+    const { conn, node, before, target } = W;
+    this._setDropNode(null);
+    conn.setHandleHot(-1);
+    this.overlays?.dragLabel(null);
+    const after = node.position.toArray();
+    if (target?.node && this.world.connections.includes(target.conn)) {
+      // share: this cable's waypoint becomes the other cable's node
+      this.history.execute(cmd.pinWaypoint(this.world, conn, conn.route.indexOf(node), target.node));
+      this.overlays?.toast(`Waypoint shared · ${target.node.liveConns(this.world).length} cables run through it · Alt+click unpins one`, 2200);
+    } else if (target?.bundle) {
+      // join a bundle: one shared node on the trunk, inserted into every member and into this cable
+      const B = target.bundle, at = B.nearestPoint(target.point);
+      const shared = new RouteNode(at);
+      const cmds = [];
+      for (const m of B.members) { const t = m.nearestT(at); cmds.push(cmd.addWaypoint(this.world, m, m.route.filter((n) => m.nearestT(n.position) < t).length, shared)); }
+      cmds.push(cmd.pinWaypoint(this.world, conn, conn.route.indexOf(node), shared));
+      this.history.execute(cmd.composite('Join bundle', cmds));
+      this.overlays?.toast(`Joined the bundle · ${B.members.length + 1} cables share this waypoint`, 2000);
+    } else if (W.moved && before.some((v, i) => Math.abs(v - after[i]) > 1e-6)) {
+      if (W.added) { node.position.fromArray(after); node.conns.forEach((c) => c.routeChanged()); this.world.bumpLayout(); this.world.changed('route'); }   // the add already recorded the waypoint; its final place is what the add restores on redo
+      else this.history.execute(cmd.moveWaypoint(this.world, node, before, after));
+    }
+    this._recomputeEmphasis();
+    this._cursor(this._hoverCursor(this.hovered, this.hoveredEnd));
+  }
+  /** Alt+click: drop a waypoint, or unpin this cable from a shared one. */
+  _removeWaypoint(conn, index) {
+    const node = conn.route[index]; if (!node) return;
+    if (node.sharedIn(this.world)) { this.history.execute(cmd.unpinWaypoint(this.world, conn, index)); this.overlays?.toast('Cable unpinned from the shared waypoint', 1600); }
+    else { this.history.execute(cmd.removeWaypoint(this.world, conn, index)); this.overlays?.toast(conn.route.length ? 'Waypoint removed' : 'Waypoint removed · cable back to automatic routing', 1600); }
+    this._setHover(null);
   }
 
   /* ---------- marquee ---------- */
@@ -862,7 +1038,7 @@ export class Interaction {
     if (!this.ray.ray.intersectPlane(plane, hit)) hit.copy(anchor.position);
     const offsets = nodes.map((n) => n.position.clone().sub(hit));
     nodes.forEach((n) => { n.dragging = true; });
-    this.drag = { nodes, plane, offsets, before: nodes.map(cmd.snapshot), baseY: nodes.map((n) => n.position.y), moved: true };
+    this.drag = { nodes, plane, offsets, before: nodes.map(cmd.snapshot), baseY: nodes.map((n) => n.position.y), moved: true, routes: this._routesTravelling(nodes) };
     this.keyDrag = true;
     this.controls.enabled = false;
     this._cursor('grabbing');
@@ -907,7 +1083,9 @@ export class Interaction {
       this.overlays?.dragLabel(null);
       this._recomputeEmphasis();
     }
-    if (this.drag) { this.drag.dropTarget?.block.setSubHover?.(null); this.drag.dropTarget?.block.setDropTarget(false); this.overlays?.dragLabel(null); this.drag.nodes.forEach((n, i) => { n.dragging = false; n.position.fromArray(this.drag.before[i].p); }); this.drag = null; this.keyDrag = false; }
+    if (this.drag) { this.drag.dropTarget?.block.setSubHover?.(null); this.drag.dropTarget?.block.setDropTarget(false); this.overlays?.dragLabel(null); this.drag.nodes.forEach((n, i) => { n.dragging = false; n.position.fromArray(this.drag.before[i].p); }); this._moveRoutes(this.drag); this.world.bumpLayout(); this.drag = null; this.keyDrag = false; }
+    this.pendingWaypoint = null;
+    if (this.wpDrag) { const W = this.wpDrag; this.wpDrag = null; W.node.position.fromArray(W.before); W.node.conns.forEach((c) => c.routeChanged()); W.conn.setHandleHot(-1); this._setDropNode(null); this.overlays?.dragLabel(null); this.world.bumpLayout(); }
     this.guides?.clear();
     if (this.marquee) { this.marquee = null; if (this.marqueeEl) this.marqueeEl.hidden = true; }
     if (this.subDrag) { this.subDrag.block.onSubPointer(this._subEvent('cancel')); this.subDrag = null; }

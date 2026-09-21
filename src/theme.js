@@ -36,6 +36,7 @@ export const palettes = {
     deviceFrame: 0x2a3446,
     keyboard: 0x141a26,
     portStem: 0x3a465c,
+    cableTrunk: 0x56637c,     // a bundle's neutral trunk (the members ride on it as coloured stripes)
     skyLight: 0xb8c7e0,
     groundLight: 0x141a26,
     shadowAlpha: 0.9,
@@ -90,6 +91,7 @@ export const palettes = {
     deviceFrame: 0x5f6673,
     keyboard: 0x7f8692,
     portStem: 0x8b919c,
+    cableTrunk: 0x8a94a6,
     skyLight: 0xffffff,
     groundLight: 0x9a9da4,
     shadowAlpha: 0.62,
@@ -198,6 +200,9 @@ export const sizes = {
     tangentMin: 1.5,
     wavelength: 7,       // world units per brightness crest of the flow sheen
     lane: 0.2,           // vertical fan-out per lane for connections sharing a port
+    stub: 0.9,           // orthogonal style: the straight run leaving / entering a pin before the first turn
+    fan: 2.0,            // bundles: members join the trunk this far (units) after leaving their pins and split off this far before the ends
+    handle: 2.6,         // route handle radius as a multiple of the cable radius
   },
   label: { title: 0.4, small: 0.2, port: 0.16, caption: 0.15 },
   /** Layout rule: pitch between node origins on the loose grid. */

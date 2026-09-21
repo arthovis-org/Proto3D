@@ -7,7 +7,8 @@
 // its own scene, history and view), autosave into IndexedDB with its indicator, version history, recent projects,
 // the Start panel (blank project, three starter templates with a hint bar, recent projects, open a file),
 // the 2D editing mode (plan view, key 2) with grid snapping and Auto-layout (L), inline editing of
-// face fields (double-click text on a face), the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
+// face fields (double-click text on a face), cable management (styles, waypoints, bundles: View →
+// Cables), the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
 import * as THREE from 'three';
 import { createWorkspace } from './workspace.js';
 import { registry } from './components/index.js';
@@ -39,6 +40,8 @@ import { CableChips } from './cable-chips.js';
 import { Guides } from './ui/guides.js';
 import { FieldEditor, glideSetting } from './ui/field-editor.js';
 import { isPlanOn, setPlan, snap, GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale } from './plan.js';
+import { cables, CABLE_STYLES, THICKNESSES, CORNER_RADII, BUNDLE_DISTANCES } from './cables.js';
+import { BundleManager } from './bundles.js';
 import { layoutPlan, layoutCommand, updateTweens, tweening } from './layout.js';
 import { examples, templates, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { StartPanel, startOnLaunch } from './ui/start-panel.js';
@@ -79,6 +82,7 @@ const connLabel = $('conn-label');
 let hoveredConnection = null;
 const overlays = new Overlays({ camera: ws.camera, renderer: ws.renderer, world, els: { tip: $('tip'), dragLabel: $('drag-label'), toast: $('toast'), endLabels: $('cable-labels'), emptyHint: $('empty-hint') } });
 const chips = new CableChips(ws.scene);   // value chips at cable midpoints (hovered / selected cables, cables of a selected block)
+const bundles = new BundleManager(world, ws.scene);   // cable management: parallel cables merge into neutral trunks (cables.js `bundle`)
 const guides = new Guides({ el: $('guides'), ws });   // snap / alignment guides while a block is dragged
 world.overlays = overlays;    // components may toast ("Assigned to Maya")
 const interaction = new Interaction({
@@ -103,6 +107,7 @@ const panel = new Panel({
   flow: { isEnabled: isFlowEnabled, setEnabled: (v) => { setFlowEnabled(v); syncToolbar(); }, getSpeed: getFlowSpeed, setSpeed: setFlowSpeed },
   wiring: { isOn: isWiringOn, set: (v) => setWiring(v) },
   plan: { isOn: isPlanOn, set: (v) => setPlanView(v), snap, setSnapOption: (k, v) => setSnapOption(k, v), toggleSnap: () => toggleSnap(), GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
+  cables: { cables, setOption: (k, v) => setCableOption(k, v), CABLE_STYLES, THICKNESSES },
   onGizmoToggle: () => syncToolbar(),
 });
 
@@ -461,6 +466,7 @@ tb['btn-gizmo'].addEventListener('click', () => setGizmo(!gizmo.enabled));
 tb['btn-plan'].addEventListener('click', () => setPlanView(!isPlanOn()));
 tb['btn-snap'].addEventListener('click', () => toggleSnap());
 snap.onChange(() => { syncToolbar(); panel.refresh(); });
+cables.onChange(() => panel.refresh());
 tb['btn-panel'].addEventListener('click', () => togglePanel());
 tb['btn-frame'].addEventListener('click', () => frameAll());
 tb['btn-help'].addEventListener('click', () => toggleHelp());
@@ -508,6 +514,15 @@ async function askSnapStep(key) {
 function setSnapOption(key, v) {
   snap.setOption(key, v);
   overlays.toast(snap.summary(), 1400);
+}
+/** View → Cables ▸ / the panel: one cable setting (cables.js clamps and persists it); every cable re-routes on the next frame. */
+function setCableOption(key, v) {
+  const before = cables.state;
+  cables.setOption(key, v);
+  const S = cables.state;
+  if (key === 'style' && before.style !== S.style) overlays.toast(`${cables.styleLabel} cables${S.style === 'orthogonal' ? ` · corners ${S.cornerRadius}` : ''} · View → Cables`, 1600);
+  else if (key === 'bundle' && before.bundle !== S.bundle) overlays.toast(S.bundle ? `Parallel cables bundle within ${S.bundleDistance} units · drop a waypoint on a trunk to join it` : 'Cables run on their own', 1800);
+  else if (before[key] !== S[key]) overlays.toast(cables.summary(), 1400);
 }
 /** Edit → Auto-layout: arrange the selected blocks (two or more) or every block, one undoable animated command. */
 function autoLayoutSelection(nodes = null) {
@@ -657,6 +672,22 @@ const menubar = new MenuBar({
         ];
       } },
       { label: 'Flow animation', hint: 'on cables', checked: isFlowEnabled(), run: () => { setFlowEnabled(!isFlowEnabled()); syncToolbar(); panel.refresh(); } },
+      { label: 'Cables', hint: cables.summary().replace(/^Cables · /, ''), items: () => [
+        { label: 'Style', hint: cables.styleLabel, items: () => CABLE_STYLES.map(([id, l, d]) => ({ label: l, hint: d, radio: true, checked: cables.style === id, run: () => setCableOption('style', id) })) },
+        { label: 'Corner rounding', hint: cables.style === 'orthogonal' ? `${cables.cornerRadius} units` : 'orthogonal style only', items: () => [
+          ...CORNER_RADII.map((r) => ({ label: r === 0 ? 'Sharp (0)' : `${r} units`, radio: true, checked: cables.cornerRadius === r, run: () => setCableOption('cornerRadius', r) })),
+          ...(CORNER_RADII.includes(cables.cornerRadius) ? [] : [{ label: `${cables.cornerRadius} units`, radio: true, checked: true, hint: 'set in the panel', run: () => {} }]),
+        ] },
+        { label: 'Thickness', hint: THICKNESSES.find(([id]) => id === cables.thickness)?.[1], items: () => THICKNESSES.map(([id, l]) => ({ label: l, radio: true, checked: cables.thickness === id, run: () => setCableOption('thickness', id) })) },
+        { sep: true },
+        { label: 'Bundle parallel cables', hint: `cables running within ${cables.bundleDistance} units merge into one trunk`, checked: cables.bundle, run: () => setCableOption('bundle', !cables.bundle) },
+        { label: 'Bundle distance', hint: `${cables.bundleDistance} units`, disabled: !cables.bundle, items: () => [
+          ...BUNDLE_DISTANCES.map((d) => ({ label: `${d} units`, radio: true, checked: cables.bundleDistance === d, run: () => setCableOption('bundleDistance', d) })),
+          ...(BUNDLE_DISTANCES.includes(cables.bundleDistance) ? [] : [{ label: `${cables.bundleDistance} units`, radio: true, checked: true, hint: 'set in the panel', run: () => {} }]),
+        ] },
+        { sep: true },
+        { label: 'Show waypoints', hint: 'always show the route handles · else on hover and selection', checked: cables.showWaypoints, run: () => setCableOption('showWaypoints', !cables.showWaypoints) },
+      ] },
       { sep: true },
       { label: '2D editing mode', hint: 'top-down plan: box-select, snap, wire and arrange', shortcut: '2', checked: isPlanOn(), run: () => setPlanView(!isPlanOn()) },
       { label: 'Snap', hint: snap.summary().replace(/^Snap( ·)? ?/, '') || undefined, items: () => [
@@ -791,6 +822,7 @@ function frame() {
   world.nodes.forEach((b) => b.update(t, dt));
   world.groups.forEach((g) => g.update(dt));
   updateLOD(world, ws.camera, dt, ws.renderer);
+  bundles.update(dt);        // regroup parallel cables when due; trunks follow the layout
   world.connections.forEach((c) => c.update(dt));
   chips.update(world, ws.camera, { hovered: hoveredConnection, anySelected: selection.size > 0, time: engine.time, dt, renderer: ws.renderer });
   interaction.update(t, dt);
@@ -815,6 +847,7 @@ window.__proto = {
   ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, glideSetting, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
   plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
+  cables, setCableOption, bundles,
   layout: { arrange: autoLayoutSelection, plan: (nodes) => layoutPlan(world, nodes), tweening },
   newProject, closeTab, renameProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },

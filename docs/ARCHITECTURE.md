@@ -18,7 +18,8 @@ document describes the layers, the invariants each one keeps and how they fit to
 │             main.js (boot + render loop)                                     │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Scene       block3d.js → node3d.js / device3d.js / shape3d.js   connection3d.js  cable-chips.js │
-│             routing.js  groups.js  faces.js  face-canvas.js  workspace.js  theme.js  layers.js (depth layering) │
+│             routing.js (styles, waypoints)  bundles.js (cable trunks)  cables.js (cable settings)  │
+│             groups.js  faces.js  face-canvas.js  workspace.js  theme.js  layers.js (depth layering) │
 │             geometry.js (panelGeometry)  wiring.js (the Wiring switch)       │
 │ Persistence tabs.js (open projects, autosave, snapshots)  project-store.js (IndexedDB)  serialize.js │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -191,7 +192,9 @@ re-route). Undoable behaviour lives one layer up.
 
 Every edit is a `{ label, do(), undo() }`: `addNode, removeNodes, connect, disconnect, reroute,
 transform, setParam, setTitle, setEnabled, setShowPorts, addGroup, removeGroup, setCollapsed,
-setGroupTitle, duplicate` and `composite`. `setShowPorts(world, nodes, true | false | null)` is
+setGroupTitle, duplicate`, the cable-route commands `addWaypoint, removeWaypoint, moveWaypoint,
+resetRoute, pinWaypoint, unpinWaypoint` (§8e) and `composite`. `transform(world, nodes, before,
+after, routes?)` also carries the waypoints that travel with a moved set of blocks. `setShowPorts(world, nodes, true | false | null)` is
 the per-block ports override (§7c) — the panel eye, *View → Ports on selection* and the mini
 toolbar all go through it, so it undoes. `disconnect.do` tolerates a link the interaction layer already lifted
 off the world (a cable end being dragged); `reroute(world, conn, from, to)` removes `conn` (if
@@ -391,7 +394,9 @@ pixels that flip: only depth ties can): the Timeline close-up went from 80 537 f
   plus `hovered` / `selected` (full); `update(dt)` eases `uniforms.dim` towards it over ~0.15 s
   and scales the flow speed with it (a dimmed cable's sheen slows to a crawl), so the emphasised
   paths are the ones that move. `setEndHover(end)` enlarges the grabbed ring. Rebuilt only when
-  an endpoint moved, the world `layoutVersion` changed or the radius changed.
+  an endpoint moved, the world `layoutVersion` changed, the radius changed, the cable settings
+  (`cables.version`) or the cable's route (`routeVersion`) changed, or its bundle handed it a new
+  curve. The path itself — style, waypoints, bundles — is §8e.
 - **`CableChips`** (`cable-chips.js`): value chips at cable midpoints. A chip is a fixed-size
   canvas `THREE.Sprite` (faces the camera, `depthTest` off, Inter, theme tokens): a type glyph in
   the cable's colour (dot for values, chevron for events) and `chipText(value, type, subtype)` —
@@ -642,6 +647,92 @@ that adds an item), Kanban board (card titles and column titles; the "+" tile ty
 card's title), Timeline (its own bars' labels), Milestone (title, date) and the flow shapes
 (their label = title). Body fields (`local`) get the editor and the frame but no canvas marker.
 
+## 8e. Cable routing: styles, waypoints and bundles (`routing.js`, `cables.js`, `bundles.js`)
+
+**Settings** (`cables.js`, `localStorage["proto3d.cables.v1"]`, global like the theme — never in a
+document): `style` smooth | orthogonal | straight, `cornerRadius` 0..1 (orthogonal corners),
+`thickness` thin | normal | thick (a radius multiplier), `bundle` (on by default), `bundleDistance`
+(1.2 units) and `showWaypoints`. *View → Cables ▸*, the *Cables* section of the Workspace panel and
+the palette all call `main.js → setCableOption`; `cables.version` bumps on every change and each
+`Connection3D._computeOwn` compares it, so every cable — in 3D, in the plan, the trunks and the
+preview while wiring — re-routes on the next frame.
+
+**Styles** (`routePath(p0, p3, { style, cornerRadius, lanes, obstacles, skip, planar, waypoints,
+fromBox, toBox, hash })` → a `THREE.Curve`). Every style leaves an out pin towards +X and enters an
+in pin from −X, passes through the waypoints in order and, in the plan, runs at `PLAN_CABLE_Y`:
+
+- *smooth* — the cubic Bezier of old (`routeCurve`: lanes, lift, obstacle avoidance); with
+  waypoints a centripetal Catmull-Rom through them whose phantom points a stub past each pin keep
+  the tangents horizontal;
+- *orthogonal* — `orthoPolyline`, a cable tray: a straight stub (`sizes.connection.stub` 0.9,
+  shorter between close neighbours) out of each pin, a short drop beside the pin to the cable's
+  **one routing height**, horizontal runs in x and z at that height, a short rise beside the far
+  pin. The height is the pins' height when they match, else the lower pin's; a run longer than 24
+  units, or one whose horizontal runs would pass through another block (`crossesBlocks`), goes
+  down to the shared tray just above the floor (`TRAY_Y` 0.3); the plan runs at `PLAN_CABLE_Y`
+  and a bundle trunk forces `height`. Nothing rises above the higher pin and no middle segment has
+  a y component (the harness asserts both). A forward link turns at a **mid column** whose x is
+  staggered per lane (`laneInfo` adds `pairIndex / pairCount`, the cable's index among the cables
+  between the same two blocks, plus a small per-cable `hash` jitter) so parallel cables never
+  share a run; a backward link goes around the end blocks horizontally — **between the rows** (a
+  run at the z midway) when they stand in different rows, past their front edge in z otherwise.
+  Legs between waypoints (visited at the routing height; their own y is ignored in this style) use
+  `manhattanLeg(from, to, prevDir, nextDir)`, which picks the axis order so a leg never doubles
+  back on the segment before or after it — every turn is 90°. `polyCurve(points, radius)` turns
+  the polyline into a `CurvePath` of lines with a quadratic arc at each corner (`radius` clamped
+  to half of each adjacent segment; 0 = sharp), records the corners on `curve.polyline` and the
+  height on `curve.routeY` (where the handles sit and the plane a handle drag moves on);
+- *straight* — direct segments pin → waypoints → pin (in the plan with a short dip to the cable
+  level at each end).
+
+**Waypoints.** A cable's `route` is an ordered list of `RouteNode`s (`routing.js`: `id`,
+`position`, `conns` = the cables through it; `sharedIn(world)` = two or more live cables). Press
+and drag the middle of a cable (not within `grabReach` of an end) and `Interaction._beginAddWaypoint`
+records `cmd.addWaypoint` at the press point (index = after every waypoint earlier along the path,
+`Connection3D.nearestT`) and starts dragging the new node; a handle drag moves on the plane facing
+the camera through the node (horizontal in the plan, where y is kept), snapping to the grid and to
+other waypoints' coordinates per the Snap settings (`_snapWaypoint`; Shift skips) and ends in
+`cmd.moveWaypoint`; Alt+click a handle removes it (`removeWaypoint`) or, on a shared node, unpins
+that cable (`unpinWaypoint`: its own node at the same place); a double-click on a handle resets the
+cable (`resetRoute`). Handles are small spheres in the cable's colour (`Connection3D.handles`,
+radius = `sizes.connection.handle` × the cable radius, a shared node 1.3× and lighter), picked as
+kind `connection` with `waypoint: i`, visible while the cable is hovered or selected, while a block
+at either end is selected (`setEndsSelected`, from `applySelectionEmphasis`), while one is dragged
+(`setHandleHot`) or always (`showWaypoints`). When a set of blocks is dragged, every node whose
+cables all have both ends in the set travels with it (`_routesTravelling` → `transform(…,
+routes)`), so undo moves blocks and waypoints together. `duplicate` copies routes (shared nodes stay
+shared among the copies), `disconnect` / `removeNodes` undo bring the same instance back with its
+route, `reroute` to another port starts a fresh route.
+
+**Bundles** (`bundles.js`). `BundleManager.update(dt)` runs each frame before the connections:
+when the layout, the world, the settings or any route changed it regroups 0.15 s after the last
+change. Candidates are complete, visible cables whose every waypoint is shared (a cable with a
+private waypoint routes itself). Each is sampled 16 times along its own curve; two cables join a
+group (union-find) when ≥ 40 % of each one's samples lie within `bundleDistance` of the other with
+tangents pointing the same way (dot > 0.6), or when they share a `RouteNode` (a **manual bundle**,
+whatever the distance). A group of two or more whose mean span is ≥ 5 units becomes a `Bundle`
+(kept when its member set is unchanged): the trunk is routed like a cable in the current style from
+the mean of the members' start points to the mean of their end points, through the members' shared
+nodes, with the union of their end boxes, and trimmed by `sizes.connection.fan` (2 units) at both
+ends (an orthogonal trunk at the lowest of its members' pin heights, the members side by side in
+the tray); its radius is `radius.idle × thickness × min(2.6, 0.9 + 0.75 √n)`, its material the neutral
+`palette.cableTrunk` token, its opacity following the most emphasised member (`dimTarget`). Each
+member's drawn curve (`Bundle.memberCurve`) leaves its own pin, joins the trunk in the fan region
+(a Catmull-Rom for smooth, `manhattanLeg` for orthogonal, lines for straight), rides on the trunk's
+surface at its own angle (constant offsets around the trunk; across its width in the plan) and
+fans out to its pin at the far end — so the members read as thin coloured stripes on the trunk and
+keep their flow sheen, pick tube, end grabbing and dimming. `Connection3D.rebuild` asks
+`bundle.memberCurve(this)` (which computes every member's `ownCurve` first) and rebuilds its
+geometry when the curve object changed. The trunk's hidden `pickTube` picks as kind `bundle`
+(rank between connections and groups): hover lists the cables and brightens them, a click selects
+them, and a dragged waypoint handle dropped on it joins the bundle (`Join bundle`: one new shared
+node at the nearest trunk point, `addWaypoint` into every member + `pinWaypoint` for the dropped
+cable, as one composite). Dropping a handle on another cable's handle runs `pinWaypoint` (the two
+cables share the node). Chips: `CableChips` gives the trunk a chip — "N cables", the member paths
+while it is hovered — whenever a member would show one, and a bundled cable's own chip sits at
+`chipPoint` (t = 0.9, its destination fan-out) instead of the midpoint. `world.bundles` is the live
+list (tests, chips); *View → Cables → Bundle parallel cables* off clears it.
+
 ## 9. Interaction model (`interaction.js`, `ui/overlays.js`, `ui/tour.js`, `selection.js`, `gizmo.js`, `lod.js`)
 
 **Navigation** (`controls/`): `Navigator` replaces OrbitControls with the same surface (`target`,
@@ -747,6 +838,12 @@ input end. The backdrop does not capture pointer events. Seen state is
 Start panel, so the tour starts after the first template they open (`main.js → loadExample`)
 rather than over an empty room.
 
+**Cable routing gestures** (§8e): a press-and-drag on the cable body (`pendingWaypoint` → the
+first movement past 4 px) adds a waypoint and drags it; `wpDrag` moves a handle with the drop
+target under the pointer (`pick({ excludeMeshes })` leaves the cable's own handles out): another
+cable's handle (*Share waypoint*) or a bundle trunk (*Join bundle*); Alt+click removes / unpins,
+double-click resets. A plain click on the cable body still only selects it.
+
 `Selection` holds nodes, groups and connections and notifies the panel, the gizmo and the
 interaction layer. `lod.js` computes camera distance per node / connection / group with
 hysteresis; the blocks animate the crossfade.
@@ -799,6 +896,8 @@ What the menus add beyond the older controls, all in `main.js` and `serialize.js
   (with a selection), `Shift+?` for the shortcut sheet, `I` for the performance stats, `Ctrl+K`
   for the command palette (§9d; a capture-phase listener, so it also works from a panel field),
   `2` for the 2D editing mode, `L` for Auto-layout and `M` for the snap master switch (§9f).
+  *View → Cables ▸* holds the cable style, corner rounding, thickness, bundling and the waypoint
+  handles (§8e).
   `Enter` with one block selected enters edit mode on it and opens its first face field; in edit
   mode `Tab` / `Shift+Tab` walk the fields and `Esc` leaves (§8d).
 - **Help pages** (`ui/help-dialogs.js`, on the Connections modal shell): the keyboard shortcut
@@ -1031,7 +1130,12 @@ thumbnail pair and a row in this table.
 ```
 
 `showPorts` is written only when a block overrides the wiring switch; `wiring` is the switch
-itself and is applied on load (an autosaved world keeps its setting). The 2D editing mode is not
+itself and is applied on load (an autosaved world keeps its setting). A link's `route` (§8e) is
+written only when it has waypoints: a private waypoint inline as `[x, y, z]`, a waypoint shared with
+other cables as `{ node: id }` referring to `routeNodes` (present only when there is a shared node;
+`serializeSelection` keeps the nodes shared among the exported links). Links without `route` load
+exactly as before; an unknown node id is skipped. `project-store.canonical` counts routes and route
+nodes as content (a moved waypoint makes the tab dirty and a snapshot's diff says "cable changed"). The 2D editing mode is not
 saved: a document written while it is on carries the remembered 3D camera (`pose` in
 `serializeWorld`), and loading a document while it is on keeps the plan (`main.js →
 afterLoadInPlan`).
@@ -1151,6 +1255,9 @@ captured element in the DOM would drop its capture), ← → move focus, Delete 
 - **An undoable operation**: a command in `core/commands.js` built from `World` mutations.
 - **A 2D-mode behaviour**: subscribe with `onPlanChange` (`plan.js`) or read `isPlanOn()`; a body
   that should pivot differently when flat overrides `planPivot()` (§9f).
+- **A cable style**: a row in `CABLE_STYLES` (`cables.js`) and a branch in `routePath` (`routing.js`)
+  that returns a `THREE.Curve` through the waypoints (set `curve.polyline` when it is a polyline);
+  `bundles.js → Bundle._ensureTrunk` needs a matching member-curve branch (§8e).
 
 ## 11b. AI generation (`ai/`, `components/generate/`)
 

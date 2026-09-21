@@ -121,7 +121,10 @@ src/
   faces.js      2D drawing helpers for faces and screens (text, JSON, media, grids)
   connection3d.js + routing.js   typed tubes with flow sheen; lanes, lift, obstacle avoidance
   groups.js     Group3D: frame on the floor, collapse to a slab with proxy ports
-  interaction.js  pointer model: hover guidance, cable drags (forward / backward), cable-end re-route, selection emphasis
+  interaction.js  pointer model: hover guidance, cable drags (forward / backward), cable-end re-route, waypoint drags, selection emphasis
+  routing.js    cable paths: smooth / orthogonal / straight, waypoints (RouteNode), lanes
+  bundles.js    cable management: parallel cables merge into neutral trunks
+  cables.js     the global cable settings (style, corner rounding, thickness, bundling, waypoints)
   selection.js, lod.js, serialize.js, gizmo.js, panel.js, workspace.js, theme.js
   ui/           menubar.js (File · Edit · View · Add · Help + the quick toggles), toolbar-left.js (Add toolbar), overlays.js (tooltips, drag label, toast, end labels, empty hint), tour.js, help-dialogs.js (shortcuts, About), stats.js (performance readout)
                 start-panel.js (first run: blank / templates / recent / open), hint-bar.js (the template's one-line hint)
@@ -404,6 +407,8 @@ Everything else is the same in every preset:
 | Link | **drop a component onto another** (a sentence shows what it will mean; a chooser appears when several links fit) · with wiring on: drag from an **OUT** pin to a lit **IN** pin (or backwards from an empty input); the cable snaps within ~1.2 units |
 | Wiring | `P` or the **Wiring** button shows / hides every pin and cable · the eye icon in a block's panel header overrides it for that block |
 | Re-route | grab a cable near either end (hand cursor) and drop it on another compatible pin · drop on empty space to **disconnect** · `Esc` puts it back |
+| Route | **drag the middle of a cable** to add a waypoint there and move it (the cable passes through it) · drag a handle to move it (snaps to the grid and to other waypoints) · drop it on another cable's handle or on a bundle trunk to **share** it (the cables run together through it) · `Alt`+click a handle removes it (unpins a shared one) · double-click a handle resets the cable · handles show on hover and selection, always with *View → Cables → Show waypoints* |
+| Cables | *View → Cables ▸* (also the panel's *Cables* section, remembered like the theme): **Style** Smooth / Orthogonal (90° turns, *Corner rounding* 0–1) / Straight · **Thickness** · **Bundle parallel cables** with a *Bundle distance* (cables running side by side merge into one neutral trunk and split near the pins; hover the trunk to list them, click it to select them) |
 | Inspect | hover a pin: tooltip with name, type, value and links; compatible pins glow, others dim · hover a block: label + description · click a block: its cables stay bright with far-end labels · click a cable: midpoint label, both pins pulse, panel shows from → to |
 | Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the menu bar's quick toggles have undo / redo |
 | Group | `Ctrl+G` group the selection · `C` collapse / expand · `Ctrl+Shift+G` ungroup · drag the frame to move the whole group · rename in the panel |
@@ -411,7 +416,7 @@ Everything else is the same in every preset:
 | File | menu bar **File** → New project (`Alt+N`, a new tab) · Open… (`Ctrl+O`) · Open recent (thumbnails, last opened) · Save (`Ctrl+S`, downloads JSON) · Save as… · Rename project… · Version history… · Close tab (`Alt+W`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave into the browser 1.5 s after every change |
 | Tabs | one tab per open project under the menu bar · click / `Ctrl+Tab` (`Alt+]` where the browser keeps it) switch · `+` new · drag to reorder · middle-click or × closes (a dirty tab asks Save / Discard / Cancel) · double-click renames · dot = unsaved changes · the indicator at the right end shows Saved · just now / Saving… / Unsaved changes and offers Save now, Download JSON, Version history |
 | Edit | menu bar **Edit** → Undo / Redo · Cut / Copy / Paste (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`, also between tabs) · Duplicate · Delete · Select all · Deselect · Auto-layout (`L`) · Group / Ungroup · Collapse |
-| View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · 2D editing mode (`2`) · Snap ▸ (`M`, grid size, objects, ports, rotation, scale) · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
+| View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · Cables ▸ (style, corner rounding, thickness, bundling, waypoints) · 2D editing mode (`2`) · Snap ▸ (`M`, grid size, objects, ports, rotation, scale) · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
 | Help | menu bar **Help** → Start panel · tour · keyboard shortcuts (`Shift+?`) · help & legend (`H`) · documentation · About |
 
 Shortcuts are ignored while typing in a panel field.
@@ -443,13 +448,34 @@ much of the browser's storage quota this site uses, with a warning near the limi
 recent** lists every project in the browser with a thumbnail and when it was last opened; open
 ones come to the front.
 
+## Cable management
+
+Cables route themselves, and you can take over. **Drag the middle of a cable** to add a waypoint
+where you grabbed it and pull the cable through it; drag the small round handle to move it (it
+snaps to the grid and lines up with other waypoints under the Snap settings), `Alt`+click to remove
+it, double-click to send the cable back to automatic routing. Drop a handle on **another cable's
+handle** and the two cables share that point — one node, dragged together — or drop it on a
+**bundle trunk** to join the bundle. Waypoints are saved with the project (`route` on the link,
+shared nodes in `routeNodes`), undo like everything else and travel with the blocks when both ends
+of the cable move together. Cables that run roughly parallel and close (within *Bundle distance*,
+1.2 units by default, over at least 40 % of their length) merge into one thicker neutral **trunk**
+on which they ride as thin coloured stripes and from which they fan out near the pins; hover the
+trunk to see which cables are in it, click it to select them, turn it off under *View → Cables →
+Bundle parallel cables*. The **style** is global and remembered: **Smooth** curves, **Orthogonal**
+runs with 90° turns for a schematic feel — like cable trays: a short drop beside each pin, then
+horizontal runs at one height (the lower pin's, or just above the floor for long runs), a forward
+link turning at a staggered mid column, a backward one going around the blocks between the rows
+(*Corner rounding* 0 for sharp corners up to 1 unit) — or **Straight** segments — for every cable, in 3D and 2D, for the trunks and for the cable
+you are dragging. Thickness is a setting too.
+
 ## 2D editing mode
 
 3D shows the system; 2D is faster for wiring. Press **`2`** (or the menu bar toggle) and the camera
 flies (0.35 s) to a top-down orthographic plan framing the scene or the selection. Every block lies
 flat as a card showing its live face, title and pins — inputs on the left, outputs on the right —
 so wiring works exactly as in 3D: drag from a pin, drop a block onto another, pick up a cable end
-to re-route or disconnect. Cables become flat splines running under the cards; the value chips,
+to re-route or disconnect. Cables become flat splines running under the cards (flat Manhattan runs
+in the Orthogonal style; waypoints and bundles work here too); the value chips,
 dimming and end labels stay. Orbit is off: left-drag on empty space box-selects in every preset,
 middle-drag or `Space`+drag pans, the wheel zooms about the cursor. Moving a block snaps by the
 kinds turned on under *View → Snap* (`M`): the grid (0.25–2 units; `Ctrl` halves it), the edges

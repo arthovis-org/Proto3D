@@ -20,10 +20,10 @@ export const AUTO_SNAPSHOT_LIMIT = 50;
 export const newId = (prefix = 'p') => `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
 /* ---------- document identity ---------- */
-/** The part of a document that is content: nodes, connections and groups (not the camera, the name, the time or the wiring switch). */
+/** The part of a document that is content: nodes, connections (with their routes), shared route nodes and groups (not the camera, the name, the time or the wiring switch). */
 export function canonical(doc) {
   if (!doc) return '';
-  return JSON.stringify({ n: doc.nodes || [], c: doc.connections || [], g: doc.groups || [] });
+  return JSON.stringify({ n: doc.nodes || [], c: doc.connections || [], g: doc.groups || [], ...(doc.routeNodes?.length ? { r: doc.routeNodes } : {}) });
 }
 /** FNV-1a over a string, as 8 hex digits. */
 export function hashString(s) {
@@ -47,7 +47,7 @@ export function formatBytes(n) {
 }
 
 /* ---------- diff summary ---------- */
-const connKey = (c) => `${c.from?.node}:${c.from?.port}>${c.to?.node}:${c.to?.port}`;
+const connKey = (c) => `${c.from?.node}:${c.from?.port}>${c.to?.node}:${c.to?.port}${c.route ? `|${JSON.stringify(c.route)}` : ''}`;
 /**
  * What changed from `prev` to `next`: counts and a one-line text such as
  * "+2 components · −1 · 1 renamed · 3 cables · 4 params". `prev` null means the first version.

@@ -185,6 +185,7 @@ export class Panel {
     this._check(s, 'flow animation', () => flow.isEnabled(), (v) => flow.setEnabled(v));
     this._num(s, 'flow speed', () => flow.getSpeed(), (v) => flow.setSpeed(v), { step: 0.1, min: 0, max: 5 });
     this._num(s, 'LOD distance', () => sizes.lod.far, (v) => { sizes.lod.far = Math.max(10, v); }, { step: 2, min: 10, max: 200 });
+    if (this.cables) this._buildCables();
     if (this.plan) this._buildSnap();
     this._buildControls();
     const g = this._section('Gizmo');
@@ -202,6 +203,19 @@ export class Panel {
     registry.categories().forEach((c) => this._readonly(reg, c.label, () => c.components.map((d) => d.label).join(', ')));
   }
 
+  /** Cable settings (cables.js): style, corner rounding, thickness, bundling and the route handles; global and persisted, the same state the View → Cables menu shows. */
+  _buildCables() {
+    const C = this.cables, S = C.cables;
+    const set = (k) => (v) => (C.setOption ? C.setOption(k, v) : S.setOption(k, v));
+    const s = this._section('Cables');
+    this._buttons(s, 'style', (C.CABLE_STYLES || []).map(([id, l, d]) => [id, l, d]), () => S.style, set('style'));
+    this._num(s, 'corner rounding', () => S.cornerRadius, set('cornerRadius'), { step: 0.05, min: 0, max: 1, attr: 'cableCorner' });
+    this._buttons(s, 'thickness', (C.THICKNESSES || []).map(([id, l]) => [id, l, `${l} cables`]), () => S.thickness, set('thickness'));
+    this._check(s, 'bundle parallel cables', () => S.bundle, set('bundle'), 'cableBundle');
+    this._num(s, 'bundle distance', () => S.bundleDistance, set('bundleDistance'), { step: 0.1, min: 0.2, max: 4, attr: 'cableBundleDistance' });
+    this._check(s, 'show waypoints', () => S.showWaypoints, set('showWaypoints'), 'cableWaypoints');
+    s.appendChild(this._h('div', 'panel-note', 'Drag the middle of a cable to add a waypoint and route it by hand; drag a handle to move it, drop it on another handle or on a bundle to share it, Alt+click removes it, double-click resets the cable. Cables running side by side within the bundle distance merge into one trunk and split near the pins. Orthogonal cables turn at 90°; corner rounding is their radius (0 = sharp).'));
+  }
   /** Snap settings (plan.js): the master switch and one toggle per kind, persisted; the menu, the magnet toggle and this section never disagree. */
   _buildSnap() {
     const P = this.plan, S = P.snap;
