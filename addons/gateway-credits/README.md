@@ -1,6 +1,6 @@
 # Gateway Credits — a Proto3D add-on
 
-**Add-on page:** `addons/gateway-credits/` (on Pages: `…/proto3d/addons/gateway-credits/`)
+**Add-on page:** `addons/gateway-credits/` (on Pages: `…/Proto3D/addons/gateway-credits/`)
 **Core app (unchanged):** the repository root
 
 A shared, prepaid **credit balance** that provider-calling nodes can spend instead of each holding its own API key, delivered as an add-on *beside* Proto3D rather than inside it. It brings four new components (Model call, Tool call, Budget, Credits meter), a metering ledger (estimate → hold → settle / refund, idempotent), a routing policy (capability tiers, cheapest-capable, fallback on provider error, per-workflow budgets) and an admin panel — without editing a single core file. It is built on the add-on SDK in `addons/sdk/` (see `addons/README.md`) and is tested at three levels: pure units, the real core engine in Node, and the real page in Chromium.
@@ -139,7 +139,7 @@ How this runs for real against the node system, with the same add-on code and th
 Serve the **repo root** with any static server (paths are relative and the import map points at unpkg) and open the add-on folder:
 
 ```
-cd proto3d
+cd Proto3D
 python3 -m http.server 8000      # or: npx serve .
 # → http://localhost:8000/addons/gateway-credits/   (core app: http://localhost:8000/)
 ```
