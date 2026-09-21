@@ -54,20 +54,24 @@ export function clientExample(client, has = () => false) {
 export function compareExample() {
   return {
     id: 'hub-compare', label: 'All four clients · compare',
-    description: 'The four blueprints with their pages in the Compare flow: the same section of every client lines up in a column',
-    focus: (named) => [...(named.bps || []).slice(0, 1), ...(named.pages || []).filter((n) => ['hub', 'site', 'app'].includes(n.params.section)).slice(0, 8)],
+    description: 'The four clients as levels with their pages in the Compare flow: a column reads top-to-bottom as the same section across clients',
+    focus: (named) => [...(named.bps || []), ...(named.labels || []), ...(named.pages || [])],   // the whole grid: four levels, every column
     build(api) {
       const all = CLIENTS.map((c) => blueprintParams(c));
       const items = [];
-      all.forEach((params, ci) => { items.push({ uid: `bp${ci}`, type: 'hub-blueprint', params }); pagesFor(params).forEach((d, i) => items.push({ uid: `p${ci}-${i}`, type: 'hub-page', params: pageParams(d), title: d.title })); });
+      all.forEach((params, ci) => {
+        items.push({ uid: `bp${ci}`, type: 'hub-blueprint', params });
+        items.push({ uid: `lbl${ci}`, type: 'hub-section', params: { section: 'hub', client: params.slug, label: params.client }, title: params.client });   // the level's label card
+        pagesFor(params).forEach((d, i) => items.push({ uid: `p${ci}-${i}`, type: 'hub-page', params: pageParams(d), title: d.title }));
+      });
       const pos = layoutFlow('compare', items);
-      const bps = [], pages = [];
+      const bps = [], pages = [], labels = [];
       for (const it of items) {
         const p = pos.get(it.uid);
         const n = placeAt(api.add(it.type, [p.x, null, p.z], { title: it.type === 'hub-blueprint' ? it.params.client : it.title, params: it.params }), p);
-        (it.type === 'hub-blueprint' ? bps : pages).push(n);
+        (it.type === 'hub-blueprint' ? bps : it.type === 'hub-section' ? labels : pages).push(n);
       }
-      return { bps, pages };
+      return { bps, pages, labels };
     },
   };
 }

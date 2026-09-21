@@ -50,11 +50,14 @@ export async function install(host, { sample = true } = {}) {
     loadDemo(id) {
       const ex = examples.find((e) => e.id === id || e.client === id); if (!ex) return null;
       api.live?.reset();
-      const named = host.examples.build(ex, { name: ex.label });
+      const named = host.examples.build(ex, { name: ex.label, frame: ex.id !== 'hub-compare' });
       settings.flow = ex.id === 'hub-compare' ? 'compare' : 'delivery'; settings.client = null; api.saveSettings();
+      if (ex.id === 'hub-compare' && dom) import('./arrange.js').then(({ frameFrom }) => frameFrom(host, host.world.nodes().filter(isHubNode), { duration: 0 }));   // the stacked grid from its higher pose
       api.ui?.refresh();
       return named;
     },
+    /** Frame every hub node for the current flow (stacked flows from a higher elevation). */
+    async frame(flowId = settings.flow) { if (!dom) return null; const { frameFlow } = await import('./arrange.js'); return frameFlow(host, flowId, host.world.nodes().filter(isHubNode)); },
     /** Arrange the hub nodes (optionally one client) into a flow; undoable. */
     async arrange(flowId, opts = {}) {
       if (!dom) return null;

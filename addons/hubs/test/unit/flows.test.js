@@ -44,15 +44,20 @@ test('delivery: a climbing arc per client facing its centre, blueprint front-cen
   const pages = sortPages(items.filter((i) => i.type === 'hub-page')).map((i) => ({ i, p: map.get(i.uid) }));
   const bp = map.get('bp-petrock');
   assert.equal(bp.x, 0); assert.equal(bp.ry, 0); assert.equal(bp.y, 0);
-  const mid = pages[Math.floor(pages.length / 2)];
+  // one arc slot per section: the first page of a section on the ground arc, the others rising above it at the same angle
+  const ground = pages.filter(({ i }, k) => k === 0 || pages[k - 1].i.params.section !== i.params.section);
+  const mid = ground[Math.floor(ground.length / 2)];
   assert.ok(bp.z > mid.p.z + 5, 'the blueprint stands in front of the arc\'s middle, inside the horseshoe');
-  for (let k = 1; k < pages.length; k++) { assert.ok(pages[k].p.x > pages[k - 1].p.x, 'left to right'); assert.ok(pages[k].p.y >= pages[k - 1].p.y, 'climbing'); }
-  assert.ok(pages.at(-1).p.y > pages[0].p.y + 2, 'later phases sit higher');
+  for (let k = 1; k < ground.length; k++) { assert.ok(ground[k].p.x > ground[k - 1].p.x, 'sections left to right'); assert.ok(ground[k].p.y >= ground[k - 1].p.y, 'climbing'); }
+  assert.ok(ground.at(-1).p.y > ground[0].p.y + 2, 'later phases sit higher');
+  for (const { i, p } of pages) { const first = ground.find((g) => g.i.params.section === i.params.section); assert.ok(Math.abs(p.ry - first.p.ry) < 1e-9, `${i.uid} keeps its section's angle`); if (first.i !== i) assert.ok(p.y >= first.p.y + dimsOf(first.i).height + GAP.level - 1e-6, `${i.uid} rises above its section's first page`); }
   // cards face the arc's centre: x < 0 turns right (positive ry), the middle faces straight
-  assert.ok(Math.abs(mid.p.ry) < 0.3); assert.ok(pages[0].p.ry > 0.3 && pages.at(-1).p.ry < -0.3);
-  assert.ok(pages[0].p.z > mid.p.z && pages.at(-1).p.z > mid.p.z, 'the ends come forward');
+  assert.ok(Math.abs(mid.p.ry) < 0.3); assert.ok(ground[0].p.ry > 0.3 && ground.at(-1).p.ry < -0.3);
+  assert.ok(ground[0].p.z > mid.p.z && ground.at(-1).p.z > mid.p.z, 'the ends come forward');
   const arc = arcPlace(items.filter((i) => i.type === 'hub-page'));
   assert.ok(arc.theta <= GAP.maxArc + 1e-9 && arc.R >= GAP.minRadius);
+  const b = layoutBounds(layoutFlow('delivery', itemsFor(['cal-tenant-law'])));
+  assert.ok(b.maxX - b.minX < 80 && b.maxZ - b.minZ < 30, `a 21-page arc stays compact (${(b.maxX - b.minX).toFixed(0)} × ${(b.maxZ - b.minZ).toFixed(0)}) so its framing stays under the LOD distance`);
   // two clients → two levels: the second clears the first's tallest card plus the margin
   const two = layoutFlow('delivery', itemsFor(['petrock', 'hoy']));
   assert.equal(two.get('bp-petrock').y, 0);
@@ -62,22 +67,30 @@ test('delivery: a climbing arc per client facing its centre, blueprint front-cen
 
 test('compare: clients are levels stepped up and back, the same section of every client shares a column, blueprints lead each level', () => {
   const items = itemsFor(CLIENTS.map((c) => c.slug));
+  for (const c of CLIENTS) items.push({ uid: `lbl-${c.slug}`, type: 'hub-section', params: { section: 'hub', client: c.slug, label: c.name } });
   const map = layoutFlow('compare', items);
   const levels = CLIENTS.map((c) => map.get(`bp-${c.slug}`));
   assert.equal(levels[0].y, 0);
-  for (let i = 1; i < levels.length; i++) { assert.ok(levels[i].y > levels[i - 1].y + 8, `level ${i} above ${i - 1}`); assert.ok(levels[i].z < levels[i - 1].z, `level ${i} stepped back`); }
+  const H = cardDims({ device: 'desktop' }).height;
+  for (let i = 1; i < levels.length; i++) { assert.ok(levels[i].y >= levels[i - 1].y + 2 * H + GAP.level - 1e-6, `level ${i} leaves a card height of air above level ${i - 1} (${levels[i].y - levels[i - 1].y})`); assert.ok(levels[i].z < levels[i - 1].z, `level ${i} stepped back`); }
+  // the label card sits at the left end of its level, left of every page, right of the blueprint
+  for (const c of CLIENTS) { const l = map.get(`lbl-${c.slug}`), bp = map.get(`bp-${c.slug}`); assert.equal(l.y, bp.y, `${c.slug} label on its level`); assert.ok(l.x > bp.x && l.x < 0, `${c.slug} label between the blueprint and the columns`); }
+  // eleven columns are too wide for one row: a front and a back bank, the back one stepped back and slightly up
+  const banks = new Set([...map].filter(([uid]) => uid.startsWith('cal-tenant-law-')).map(([, p]) => p.z));
+  assert.equal(banks.size, 2, 'two banks'); const [zFront, zBack] = [...banks].sort((a, b) => b - a); assert.ok(zFront - zBack >= GAP.bankBack - 1e-6);
+  const bounds = layoutBounds(map); assert.ok(bounds.maxX - bounds.minX < 130, `the grid is ${(bounds.maxX - bounds.minX).toFixed(0)} wide`);
   const colX = new Map();   // section → x of its first page, must agree across clients
   for (const c of CLIENTS) {
     const pages = sortPages(items.filter((x) => x.type === 'hub-page' && x.params.client === c.slug));
-    for (const p of pages) { const q = map.get(p.uid); assert.equal(q.y, map.get(`bp-${c.slug}`).y, `${p.uid} on its client's level`); assert.equal(q.ry, 0); }
+    for (const p of pages) { const q = map.get(p.uid); assert.ok(q.y === map.get(`bp-${c.slug}`).y || q.y === map.get(`bp-${c.slug}`).y + GAP.bankUp, `${p.uid} on its client's level (or its back bank)`); assert.equal(q.ry, 0); }
     for (const s of new Set(pages.map((p) => p.params.section))) {
       const first = pages.find((p) => p.params.section === s);
       const x = map.get(first.uid).x - dimsOf(first).width / 2;   // the cell's left edge
       if (colX.has(s)) assert.equal(x, colX.get(s), `${c.slug}: section ${s} column`); else colX.set(s, x);
     }
   }
-  const cols = [...colX].sort((a, b) => a[1] - b[1]).map(([s]) => sectionById(s).phase);
-  assert.deepEqual(cols, [...cols].sort((a, b) => a - b), 'columns follow phase order left → right');
+  const front = [...colX].filter(([s]) => sectionById(s).phase <= 5).sort((a, b) => a[1] - b[1]).map(([s]) => sectionById(s).phase);
+  assert.deepEqual(front, [...front].sort((a, b) => a - b), 'the front bank follows phase order left → right');
   assert.ok(CLIENTS.every((c) => map.get(`bp-${c.slug}`).x < Math.min(...colX.values())));
 });
 

@@ -4,10 +4,12 @@
 // height / 2 + the floor gap), ry the rotation about y in radians (0 = facing +z, the default camera).
 // Height is an organising axis: flows stack levels (floors) whose spacing clears the tallest card
 // in the level plus a margin, so a stack reads as floors from the framing camera.
-//   delivery  one climbing arc per client (a level each), cards facing the arc's centre, blueprint front-centre, headers above their section
+//   delivery  one climbing arc per client (a level each) with one slot per section: the header or first page on the ground
+//             arc, the section's other pages rising above it; cards face the arc's centre, blueprint front-centre
 //   audience  floors per audience (customers at the ground, then everyone, staff, owner, developers, machine), each floor a row stepped back a little
 //   sitemap   the hub page at the base, the sections as a semicircular ring one level up, pages rising above their section
-//   compare   clients as floors, sections as columns: a column reads top-to-bottom as the same section across clients
+//   compare   clients as floors with a full card height of air between them, a client label card at the left end of each,
+//             sections as columns (split into a front and a back bank when too wide): a column reads top-to-bottom as one section across clients
 //   devices   phone / tablet / desktop as three arcs, one level each
 // Footprints are the real card sizes (items carry width / height; hub-page cards default to
 // sizing.cardDims), so tall cards get taller floors. Deterministic in the items' order.
@@ -25,7 +27,7 @@ export const FLOW_IDS = Object.freeze(FLOWS.map((f) => f.id));
 export const flowById = (id) => FLOWS.find((f) => f.id === id) || null;
 
 /** Spacing in world units. */
-export const GAP = Object.freeze({ x: 1.4, section: 2.2, level: 1.6, floor: 0.4, stepBack: 3.2, front: 6, minRadius: 12, maxArc: 2.4 });
+export const GAP = Object.freeze({ x: 1.4, section: 2.2, level: 1.6, floor: 0.4, stepBack: 3.2, front: 6, minRadius: 12, maxArc: 2.4, bankMax: 120, bankBack: 14, bankUp: 2 });
 /** Default footprints of the non-page hub nodes (Node3D XL / M with a face). */
 export const NODE_DIMS = Object.freeze({ 'hub-blueprint': { width: 9, height: 6.06 }, 'hub-section': { width: 4.6, height: 3.86 } });
 
@@ -86,11 +88,14 @@ function rowPlace(list, cx, gap = GAP.x) {
   return { placed: out, width: L };
 }
 /** Base elevations of stacked levels: each clears the tallest card below it plus the margin. */
-export function levelBases(levelHeights) {
+export function levelBases(levelHeights, gap = GAP.level) {
   const bases = []; let y = 0;
-  for (const h of levelHeights) { bases.push(r3(y)); y += h + GAP.level; }
+  for (const h of levelHeights) { bases.push(r3(y)); y += h + (typeof gap === 'function' ? gap(h) : gap); }
   return bases;
 }
+/** A hub-section carrying a `label` is a level label (a client's name), not a section header. */
+const isLabel = (it) => isHeader(it) && str(it.params.label).trim() !== '';
+const isSectionHeader = (it) => isHeader(it) && !isLabel(it);
 
 export function layoutFlow(flowId, items, { origin = [0, 0] } = {}) {
   const fn = LAYOUTS[flowId] || LAYOUTS.delivery;
@@ -111,24 +116,26 @@ const LAYOUTS = {
     const pages = groupBy(sortPages(items.filter(isPage)), (p) => str(p.params.client).trim());
     const bps = groupBy(items.filter(isBlueprint), (b) => str(b.params.slug).trim());
     const heads = groupBy(items.filter(isHeader), (h) => str(h.params.client).trim());
-    // one level per client: the level clears its tallest page, its header row above and its climb
-    const levelH = clients.map((c) => { const ps = pages.get(c) || []; const hs = heads.get(c) || []; const climb = ps.length > 1 ? Math.min(6, 0.3 * ps.length) : 0; return maxH(ps) + climb + (hs.length ? maxH(hs) + 0.6 : 0) + (ps.length ? 0 : maxH(bps.get(c) || [])); });
+    // one arc slot per section: the header (or the first page) on the ground arc, the section's other pages rising above it
+    const columnsOf = (c) => {
+      const bySection = groupBy(pages.get(c) || [], (p) => p.params.section);
+      const hs = groupBy(heads.get(c) || [], (h) => h.params.section);
+      return PHASES.filter((s) => bySection.has(s.id) || hs.has(s.id)).map((s) => [...(hs.get(s.id) || []), ...(bySection.get(s.id) || [])]);
+    };
+    const colH = (col) => col.reduce((sum, it) => sum + Hh(it), 0) + GAP.level * Math.max(0, col.length - 1);
+    const climbOf = (n) => (n > 1 ? Math.min(4, 0.35 * n) : 0);
+    const levelH = clients.map((c) => { const cols = columnsOf(c); return cols.length ? Math.max(...cols.map(colH)) + climbOf(cols.length) : maxH(bps.get(c) || []); });
     const bases = levelBases(levelH);
     clients.forEach((c, li) => {
-      const base = bases[li]; const ps = pages.get(c) || [];
-      const climb = ps.length > 1 ? Math.min(6, 0.3 * ps.length) : 0;
-      const arc = arcPlace(ps, { cx: ox, cz: oz, climb });
-      const bySection = new Map();
-      for (const p of arc.placed) { put(p.it, p.x, base + p.dy, p.z, p.ry); if (!bySection.has(p.it.params.section)) bySection.set(p.it.params.section, p); }
+      const base = bases[li]; const cols = columnsOf(c);
+      const slots = cols.map((col) => ({ uid: `slot`, type: 'hub-page', params: {}, width: Math.max(...col.map(W)), height: 1 }));
+      const arc = arcPlace(slots, { cx: ox, cz: oz, climb: climbOf(cols.length) });
+      arc.placed.forEach((slot, i) => {
+        let y = base + slot.dy;
+        cols[i].forEach((it, k) => { const r = arc.R + k * 1.2, a = -slot.ry; put(it, ox + r * Math.sin(a), y, oz + arc.R - r * Math.cos(a), slot.ry); y += Hh(it) + GAP.level; });
+      });
       const front = oz + Math.min(arc.R * 0.5, arc.R * (1 - Math.cos(arc.theta / 2)) + GAP.front);
-      (bps.get(c) || []).forEach((b, k) => put(b, ox + k * (W(b) + GAP.x), base, front + (ps.length ? 0 : 0), 0));
-      const rowH = maxH(ps);
-      let spare = 0;
-      for (const h of heads.get(c) || []) {   // a header floats above the first page of its section; sections without pages trail the arc
-        const p = bySection.get(h.params.section);
-        if (p) put(h, p.x, base + p.dy + rowH + 0.6, p.z, p.ry);
-        else put(h, ox - arc.R - 8, base, oz + (spare++) * 5, 0);
-      }
+      (bps.get(c) || []).forEach((b, k) => put(b, ox + k * (W(b) + GAP.x), base, front, 0));
     });
   },
   audience(items, put, ox, oz) {
@@ -189,25 +196,32 @@ const LAYOUTS = {
   compare(items, put, ox, oz) {
     const clients = clientOrder(items);
     const pages = sortPages(items.filter(isPage));
-    const heads = groupBy(items.filter(isHeader), (h) => h.params.section);
+    const heads = groupBy(items.filter(isSectionHeader), (h) => h.params.section);
+    const labels = groupBy(items.filter(isLabel), (h) => str(h.params.client).trim());
     const sections = PHASES.filter((s) => pages.some((p) => p.params.section === s.id) || heads.has(s.id));
     const cell = new Map();   // `${client}|${section}` → pages
     for (const p of pages) { const k = `${str(p.params.client).trim()}|${p.params.section}`; if (!cell.has(k)) cell.set(k, []); cell.get(k).push(p); }
     const cellW = (c, s) => { const ps = cell.get(`${c}|${s.id}`) || []; return ps.reduce((sum, p) => sum + W(p), 0) + GAP.x * Math.max(0, ps.length - 1); };
-    // columns as wide as the busiest cell of that section (or its header)
-    const colX = new Map(); let x = ox;
-    for (const s of sections) { const hs = heads.get(s.id) || []; const width = Math.max(...clients.map((c) => cellW(c, s)), hs.reduce((sum, h) => sum + W(h), 0) + GAP.x * Math.max(0, hs.length - 1), 1); colX.set(s.id, { x, width }); x += width + GAP.section; }
+    // columns as wide as the busiest cell of that section (or its headers); too wide a grid splits into a front and a back bank
+    const colW = new Map(sections.map((s) => { const hs = heads.get(s.id) || []; return [s.id, Math.max(...clients.map((c) => cellW(c, s)), hs.reduce((sum, h) => sum + W(h), 0) + GAP.x * Math.max(0, hs.length - 1), 1)]; }));
+    const total = sections.reduce((sum, s) => sum + colW.get(s.id), 0) + GAP.section * Math.max(0, sections.length - 1);
+    const banks = total > GAP.bankMax && sections.length > 1 ? [sections.slice(0, Math.ceil(sections.length / 2)), sections.slice(Math.ceil(sections.length / 2))] : [sections];
+    const colX = new Map();
+    banks.forEach((bank, bi) => { let x = ox; for (const s of bank) { colX.set(s.id, { x, bank: bi }); x += colW.get(s.id) + GAP.section; } });
     const bps = groupBy(items.filter(isBlueprint), (b) => str(b.params.slug).trim());
-    const bases = levelBases(clients.map((c) => Math.max(maxH(pages.filter((p) => str(p.params.client).trim() === c)), maxH(bps.get(c) || []))));
+    const levelHeights = clients.map((c) => Math.max(maxH(pages.filter((p) => str(p.params.client).trim() === c)), maxH(bps.get(c) || []), maxH(labels.get(c) || [])) + (banks.length > 1 ? GAP.bankUp : 0));
+    const bases = levelBases(levelHeights, (h) => h + GAP.level);   // a clear gap of one card height plus the margin between client levels
     clients.forEach((c, li) => {
       const base = bases[li], z = oz - li * GAP.stepBack;
-      let bx = ox - GAP.section;
-      for (const b of bps.get(c) || []) { bx -= W(b) / 2; put(b, bx, base, z, 0); bx -= W(b) / 2 + GAP.x; }
-      for (const s of sections) { let cx = colX.get(s.id).x; for (const p of cell.get(`${c}|${s.id}`) || []) { put(p, cx + W(p) / 2, base, z, 0); cx += W(p) + GAP.x; } }
+      let lx = ox - GAP.section;
+      for (const l of labels.get(c) || []) { lx -= W(l) / 2; put(l, lx, base, z, 0); lx -= W(l) / 2 + GAP.x; }   // the level's label at its left end
+      for (const b of bps.get(c) || []) { lx -= W(b) / 2; put(b, lx, base, z, 0); lx -= W(b) / 2 + GAP.x; }
+      for (const s of sections) { const col = colX.get(s.id); let cx = col.x; for (const p of cell.get(`${c}|${s.id}`) || []) { put(p, cx + W(p) / 2, base + col.bank * GAP.bankUp, z - col.bank * GAP.bankBack, 0); cx += W(p) + GAP.x; } }
     });
-    // section headers: a label row on the ground in front of the first floor
-    for (const s of sections) { let cx = colX.get(s.id).x; for (const h of heads.get(s.id) || []) { put(h, cx + W(h) / 2, 0, oz + GAP.front + 2, 0); cx += W(h) + GAP.x; } }
+    // section headers: a label row on the ground in front of the first floor (the back bank's behind it)
+    for (const s of sections) { const col = colX.get(s.id); let cx = col.x; for (const h of heads.get(s.id) || []) { put(h, cx + W(h) / 2, 0, oz + GAP.front + 2 - col.bank * GAP.bankBack, 0); cx += W(h) + GAP.x; } }
     for (const [sid, list] of heads) if (!sections.some((x) => x.id === sid)) list.forEach((h, k) => put(h, ox - 30, 0, oz - k * 5, 0));
+    for (const [c, list] of labels) if (!clients.includes(c)) list.forEach((h, k) => put(h, ox - 34, 0, oz - k * 5, 0));
   },
   devices(items, put, ox, oz) {
     const pages = sortPages(items.filter(isPage));

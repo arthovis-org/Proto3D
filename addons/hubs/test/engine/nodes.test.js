@@ -96,6 +96,10 @@ test('faces render on a stub 2D context for every device / status without throwi
   const s = hw.add('hub-section', { section: 'manual', client: 'hoy' });
   const g2 = fakeCanvasContext(); sdef.face.render(g2, 485, 288, ctxFor(s)); hw.tick();
   assert.equal(s.out.section.label, 'Ops manual'); assert.equal(s.footerText, 'staff');
+  const lbl = hw.add('hub-section', { section: 'hub', client: 'petrock', label: 'Petrock' });
+  const g3 = fakeCanvasContext(); sdef.face.render(g3, 485, 288, ctxFor(lbl)); hw.tick();
+  assert.equal(lbl.out.section.label, 'Petrock'); assert.equal(lbl.out.section.level, true); assert.equal(lbl.footerText, 'petrock'); assert.ok(g3.calls.some((c) => c[0] === 'fillText' && c[1] === 'petrock'), 'the client chip is drawn (drawText is a no-op in the fake host)');
+  hw.remove(lbl);
   hw.remove(bp); hw.remove(s);
 });
 

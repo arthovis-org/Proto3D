@@ -7,7 +7,8 @@
 //                  not shown, so it has to stand on its own.
 //   hub-blueprint  the "fill in a client" form (XL): client, brand, base URL, the section
 //                  checklist with page counts and the Generate / Regenerate button.
-//   hub-section    a small header card (M) used as a lane / column label by the flows.
+//   hub-section    a small header card (M) used as a lane / column label by the flows; with a `label`
+//                  it is a level label (a client's name in its brand colour) in the Compare flow.
 // `faceLayout` (sizing.js) is shared with live-layer.js so the DOM frame lands exactly on the drawn frame.
 // Browser-only behaviour (fly to a page, create nodes) is injected through `hooks` by index.js;
 // in the headless engine the nodes still evaluate, emit and render on a stub 2D context.
@@ -314,8 +315,19 @@ function renderSection(g, w, h, { params, palette }) {
   const { clear, drawText } = host.draw; const pal = palette || P();
   const s = sectionById(params.section) || SECTIONS[0];
   const brand = brandOf(params.client, pal.faceAccent);
+  const label = str(params.label).trim();
   clear(g, w, h);
   g.fillStyle = brand; host.draw.roundRect(g, 0, 0, 22, h, 14); g.fill(); g.fillStyle = pal.faceBg; g.fillRect(8, 0, 16, h);
+  if (label) {   // a level label: the client's name in its brand colour
+    const c = clientBySlug(params.client);
+    fillRound(g, { x: 26, y: 20, w: 36, h: 36 }, 10, brand);
+    drawText(g, label, 72, 16, w - 98, 44, { size: 30, min: 16, color: pal.faceText, weight: 700, align: 'left' });
+    let x = 26;
+    if (params.client) x += chip(g, params.client, x, 70, { bg: rgba(brand, 0.22), color: pal.faceText, size: 12 }) + 6;
+    if (c) chip(g, c.lang.toUpperCase(), x, 70, { bg: pal.faceCard, color: pal.faceDim, size: 12 });
+    drawText(g, c ? `${c.industry} · ${c.pages.length} pages` : 'client level', 26, 108, w - 52, h - 126, { size: 16, min: 12, color: pal.faceDim, align: 'left', valign: 'top' });
+    return;
+  }
   drawText(g, s.label, 26, 18, w - 52, 40, { size: 28, min: 16, color: pal.faceText, weight: 700, align: 'left' });
   let x = 26;
   x += chip(g, s.audience, x, 66, { bg: rgba(brand, 0.22), color: pal.faceText, size: 12 }) + 6;
@@ -330,9 +342,10 @@ const sectionDef = {
   params: [
     { key: 'section', label: 'section', type: 'select', options: [...SECTION_IDS], default: 'site' },
     { key: 'client', label: 'client slug', type: 'text', default: '' },
+    { key: 'label', label: 'level label (client name; empty = section header)', type: 'text', default: '' },
   ],
-  evaluate({ params }) { const s = sectionById(params.section); return { section: s ? { id: s.id, label: s.label, audience: s.audience, phase: s.phase, client: str(params.client) } : null }; },
-  footer: ({ params }) => sectionById(params.section)?.audience || '',
+  evaluate({ params }) { const s = sectionById(params.section); return { section: s ? { id: s.id, label: str(params.label).trim() || s.label, audience: s.audience, phase: s.phase, client: str(params.client), level: !!str(params.label).trim() } : null }; },
+  footer: ({ params }) => (str(params.label).trim() ? str(params.client) || 'level' : sectionById(params.section)?.audience || ''),
   face: { render: renderSection },
 };
 
