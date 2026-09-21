@@ -1,8 +1,10 @@
 // ui/help-dialogs.js — two small pages behind the Help menu, built on the modal shell the
 // Connections page uses: the keyboard shortcut sheet (the workspace's fixed keys plus the active
-// navigation preset's mouse / wheel / key bindings, regenerated each time it opens) and About.
+// navigation preset's mouse / wheel / key bindings, regenerated each time it opens, plus a Touch
+// section when a coarse pointer is present or a finger has touched the canvas) and About.
 import * as THREE from 'three';
 import { nav } from '../controls/navigation.js';
+import { TOUCH_GESTURES } from '../controls/presets.js';
 import { registry } from '../core/registry.js';
 import { FORMAT_VERSION } from '../serialize.js';
 import { icons } from '../icons.js';
@@ -43,8 +45,12 @@ class Dialog {
   }
 }
 
+/** A touchscreen is at hand: the primary pointer is coarse, or a touch pointer reached the canvas. */
+export const touchPresent = (controls = null) => { try { if (window.matchMedia?.('(pointer: coarse)').matches) return true; } catch (_) { /* ignore */ } return !!controls?.touchSeen; };
+
 export class ShortcutsSheet extends Dialog {
-  constructor() { super('shortcuts'); }
+  /** @param {object} o { controls?: Navigator } (its `touchSeen` adds the Touch section) */
+  constructor({ controls = null } = {}) { super('shortcuts'); this.controls = controls; }
   render() {
     const blocks = GLOBAL_SHORTCUTS.map((g) => `<section><h3>${esc(g.group)}</h3><dl>${g.rows.map(([l, k]) => `<dt>${esc(l)}</dt><dd>${keys(k)}</dd>`).join('')}</dl></section>`);
     const sheet = nav.sheet();
@@ -53,6 +59,7 @@ export class ShortcutsSheet extends Dialog {
       if (!rows.length) continue;
       blocks.push(`<section><h3>${group === 'Keys' ? `${esc(nav.preset.label)} keys` : `${esc(nav.preset.label)} ${group.toLowerCase()}`}</h3><dl>${rows.map((r) => `<dt>${esc(r.label)}</dt><dd>${group === 'Keys' ? r.binding.split(' · ').map((b) => keys(b)).join(' <i>/</i> ') : esc(r.binding)}</dd>`).join('')}</dl></section>`);
     }
+    if (touchPresent(this.controls)) blocks.push(`<section><h3>Touch</h3><dl>${TOUCH_GESTURES.map((g) => `<dt>${esc(g.action)}</dt><dd>${esc(g.gesture)}</dd>`).join('')}</dl></section>`);
     this._shell(icons.keyboard, 'Keyboard shortcuts', `Shortcuts are ignored while typing in a field. Mouse and key bindings follow the <b>${esc(nav.preset.label)}</b> navigation preset — change it under View → Navigation.`, `<div class="sheet-grid">${blocks.join('')}</div>`);
   }
 }

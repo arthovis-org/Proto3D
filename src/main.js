@@ -342,7 +342,7 @@ setUIHooks({
   focusBlock: (uid) => { const n = world.nodeByUid(uid); if (!n) return false; selection.set([n]); ws.frameBlocks([n], { fill: 0.6 }); return true; },
   toast: (text, ms) => { overlays.toast(text, ms); return true; },
 });
-const shortcutsSheet = new ShortcutsSheet();
+const shortcutsSheet = new ShortcutsSheet({ controls: ws.controls });
 const aboutDialog = new AboutDialog();
 const versions = new VersionHistory({ tabs, toast: (t, ms) => overlays.toast(t, ms) });
 const stats = new StatsOverlay({ el: $('stats'), ws, world });
