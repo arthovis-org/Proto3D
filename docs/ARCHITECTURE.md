@@ -12,9 +12,9 @@ document describes the layers, the invariants each one keeps and how they fit to
 │             ui/mini-toolbar.js (above the selection)  ui/command-palette.js (Ctrl+K)          │
 │             ui/tab-strip.js (project tabs + autosave indicator)  ui/version-history.js  ui/confirm.js │
 │             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
-│             ui/start-panel.js (first run, File → New, Help → Start panel)  ui/hint-bar.js       │
+│             ui/start-panel.js (first run, File → New, Help → Start panel)  ui/hint-bar.js  ui/nav-hint.js │
 │             ui/guides.js (snap guides)  layout.js (Auto-layout)  plan.js (2D mode + snap settings) │
-│             controls/presets.js + controls/navigation.js (camera + bindings) │
+│             controls/presets.js + controls/navigation.js (camera + bindings, trackpad + touch) │
 │             main.js (boot + render loop)                                     │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Scene       block3d.js → node3d.js / device3d.js / shape3d.js   connection3d.js  cable-chips.js │
@@ -760,6 +760,42 @@ plain left-drag; Simple: Shift+left-drag), the add modifier decides toggling, `c
 key actions (focus, frame all, views, ortho, steps, select all / none, delete, duplicate + move,
 gizmo modes, panel) before the fixed shortcuts. The controller ignores a press the interaction
 took (it disables `controls` while dragging a block, as before).
+
+**Trackpad and touch** (`controls/navigation.js`, `ui/nav-hint.js`). A wheel event whose
+`ctrlKey` is set while no physical Control key is down (`ctrlHeld`, tracked on `ControlLeft` /
+`ControlRight`, cleared on blur) is a **pinch** — every browser reports a trackpad pinch that
+way — and dollies towards the cursor in every preset, scaled by its magnitude (`e^(deltaY ×
+0.01)`, capped); a real Ctrl+wheel keeps the preset's binding. Safari's `gesturestart /
+gesturechange / gestureend` (`scale`) do the same and suppress the Ctrl-wheel path while they
+run. Wheel deltas are normalised by `deltaMode` (lines → 16 px, pages → the canvas height) and
+clamped to 80 px per axis per event for the two-axis wheel actions `orbit` (deltaX turns, deltaY
+tilts, π/1000 rad per px so a swipe across a trackpad is about half a turn, honouring
+`invertOrbit` / `orbitSpeed`) and `pan`, which the **Trackpad** preset (`PRESETS.trackpad`, fifth
+in the list) binds to the plain and the Shift wheel; in 2D the plain scroll pans. The preset's
+mouse rows are Alt+left orbit, Alt+Shift+left pan, right-drag (two-finger click) pan, left-drag
+marquee, Shift+left marqueeAdd; `wheelLabel` / `wheelFirst` make the sheet read "Two-finger
+scroll" and `bindingFor` prefer the wheel ("Pinch" for `dolly`). Every sheet gets a "Pinch →
+Zoom" row. Trackpad-like wheel events (a pinch, deltaX without Shift, small fractional deltas;
+never an integer mouse notch) are counted and the fourth dispatches one `'trackpad'` event;
+`NavHint` shows "Looks like a trackpad. Switch to Trackpad controls?" with a Switch button only
+while `nav.chosen` (set by `nav.setPreset` from any UI) and `nav.asked` (× on the suggestion) are
+both false — both flags live in `proto3d.nav.v1`. **Touch** ignores the preset's mouse rows in
+every preset: the Navigator tracks fingers by `pointerId` in `touches`; one finger orbits (pans in
+2D) unless the interaction layer takes the press and disables the controller (a block, port,
+card or cable under the finger — `pickTouch` casts up to 16 extra rays on 11 / 22 px rings so a
+port or cable end within a finger's reach wins over the body behind it); a second finger
+dispatches `'multitouch'`, on which the interaction layer runs `cancel({ editor: false })` (a
+dragged block springs back with no history, a marquee vanishes) and the pair pans by the centroid
+delta while zooming towards the centroid by the distance ratio. A long-press (500 ms, < 8 px,
+`touchPress` in `interaction.js`) on empty space starts a marquee, on a block / group / cable it
+becomes select + properties. The canvas has `touch-action: none`; a `@media (pointer: coarse)`
+block makes the menu bar, tabs, rail, mini toolbar, panel rows and hint buttons at least 40 px;
+the gizmo is drawn larger for coarse pointers. The **first-run navigation hint** (`NavHint`, once
+per browser in `proto3d.navhint.v1`, 1.5 s after boot, hidden while the tour runs, gone on × or
+after six camera moves) reads the device: coarse pointer or a first touch (`touchSeen`) → the touch
+gestures; a detected trackpad or the Trackpad preset → its summary; else the preset's bindings via
+the tour's `navHint()`. The shortcut sheet adds a *Touch* section (`TOUCH_GESTURES`) under the
+same condition.
 
 **Picking** (`pick()`) is depth-correct: one raycast over everything pickable (`_pickables`: port
 pins + their hidden oversize shells and slot fills on blocks that show them, sub pickables, faces,

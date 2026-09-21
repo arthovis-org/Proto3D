@@ -16,7 +16,8 @@ Person onto the board, the Board onto the Timeline); the workspace says what the
 you can undo it. Turn **Wiring** on (`P`) and every block shows its typed pins and every cable
 appears, for the people who want to see or edit the graph (see [Wiring is optional](#wiring-is-optional)).
 Navigation follows **Blender by default** (middle-drag orbits, Shift pans, numpad views) with
-**Unreal**, **Maya** and **Simple** presets under **? → Controls** (see [Controls](#controls)).
+**Unreal**, **Maya**, **Simple** and **Trackpad** presets under **? → Controls**; a pinch zooms in
+every preset and touchscreens work everywhere (see [Controls](#controls)).
 
 **Generate content with AI.** A **Generate** category adds a Prompt editor with `{variables}` and
 Generate Text / Image / Video / Audio components that call **OpenRouter** (language models),
@@ -112,7 +113,7 @@ src/
   components/   one file per component type, grouped by category; index.js registers them all
   geometry.js   panelGeometry: the one body shape — extruded rounded rectangle with a tiny bevel, exact front-face UVs
   wiring.js     the global Wiring switch (ports and cables optional), per-block overrides
-  controls/     presets.js (Blender / Unreal / Maya / Simple bindings as data) + navigation.js (the camera controller)
+  controls/     presets.js (Blender / Unreal / Maya / Simple / Trackpad bindings as data) + navigation.js (the camera controller: mouse, trackpad, touch)
   block3d.js    Block3D: what nodes and devices share (typed port pins, rim, shadow, face, LOD, serialize, portsVisible)
   node3d.js     Node3D: thin extruded card with an accent line, title, face, footer; ports stacked beside the content on the left / right edges
   device3d.js   Device3D: phone / tablet / laptop / monitor whose screen is the component face
@@ -392,6 +393,17 @@ zoom to cursor, fly speed — live in the same panel section and persist per pre
 | **Unreal** | `Alt`+left | middle-drag | wheel | click · `Ctrl`+click adds · left-drag box-selects | right-drag **looks around**; right-drag + `W A S D` / `Q E` **flies** (wheel changes fly speed); `F` focus |
 | **Maya** | `Alt`+left | `Alt`+middle | `Alt`+right · wheel | click · `Shift`+click adds · left-drag box-selects · right-click properties | `F` focus, `A` frame all |
 | **Simple** | left-drag on empty space | right-drag | middle-drag · wheel | click · `Shift`+click adds · `Shift`+left-drag box-selects | the previous scheme |
+| **Trackpad** | two-finger scroll · `Alt`+left | `Shift`+two-finger scroll · right-drag (two-finger click) · `Alt`+`Shift`+left | pinch · `Ctrl`+scroll | click · `Shift`+click adds · left-drag on the floor box-selects | Simple's keys plus Blender's numpad views; in 2D the plain scroll pans |
+
+**Trackpads.** A pinch zooms towards the cursor in every preset (the browser reports it as a
+Ctrl+wheel; Proto3D tells it from a real Ctrl+wheel by watching the Control key). If you scroll
+with a trackpad while the default preset is on and you have never picked a preset, a small pill
+offers to switch to Trackpad controls once; × makes it never ask again. **Touchscreens** work in
+every preset: one finger on empty space orbits (pans in 2D), two fingers pan and pinch-zoom at the
+same time, a tap selects a block and a one-finger drag moves it (or connects, from a pin), a
+long-press on empty space box-selects and a long-press on a block opens its properties. Pins and
+cable ends have finger-sized hit areas; buttons grow to 40 px on coarse pointers. A one-line
+hint at the bottom of the viewport explains the gestures for your device the first time.
 
 Everything else is the same in every preset:
 
