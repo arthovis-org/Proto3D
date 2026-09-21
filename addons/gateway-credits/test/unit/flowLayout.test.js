@@ -45,7 +45,7 @@ test('three levels: the chain left → right at eye level, slot children on the 
   const gapAgentDraft = (X(m, 'draft') - DEFAULT_SIZE.M.w / 2) - (X(m, 'agent') + DEFAULT_SIZE.L.w / 2);
   const gapDraftLog = (X(m, 'log') - DEFAULT_SIZE.M.w / 2) - (X(m, 'draft') + DEFAULT_SIZE.M.w / 2);
   near(gapDraftLog, FLOW.colGap, 'column gap');
-  assert.ok(gapAgentDraft >= FLOW.colGap - 1e-6, 'the agent column is as wide as its row of slot children');
+  near(gapAgentDraft, FLOW.colGap, 'the floor row is on another level, so it does not widen the agent column: the draft follows at one column gap');
   // level 0: the children stand on the floor (bottom at the ground level), under the agent's x-centre, one step toward the camera
   for (const k of KIDS) {
     const s = sizeOf(nodes.find((n) => n.uid === k));
@@ -95,9 +95,12 @@ test('flat: the one-level plan arrangement — children one z-step behind their 
   for (const u of ['budget', 'meter']) assert.ok(Zf(u) < Zf('trigger') - DEFAULT_SIZE.S.d / 2, `${u} behind the chain`);
   near(Zf('budget'), Zf('meter'), 'one top row'); near(X(m, 'budget') - DEFAULT_SIZE.M.w / 2, X(m, 'trigger') - DEFAULT_SIZE.S.w / 2, 'left-aligned with the first column');
   assert.deepEqual(overlapping(nodes, m), []);
-  // the same x for the chain in both modes: the levels only move things vertically
+  // flat reserves the floor row's width inside the agent column (everything is on one level), so it is wider than the 3D layout
   const m3 = flowLayout(nodes, connections);
-  for (const u of [...CHAIN, ...KIDS]) near(X(m3, u), X(m, u), `${u} keeps its x across modes`);
+  const span = (mm, k) => { const xs = [...mm.entries()].map(([u, p]) => [p[0] - sizeOf(nodes.find((n) => n.uid === u)).w / 2, p[0] + sizeOf(nodes.find((n) => n.uid === u)).w / 2]); return Math.max(...xs.map((a) => a[1])) - Math.min(...xs.map((a) => a[0])); };
+  assert.ok(span(m3) < span(m) * 0.7, `3D is compact: ${span(m3)} vs flat ${span(m)}`);
+  const gapFlat = (X(m, 'draft') - DEFAULT_SIZE.M.w / 2) - (X(m, 'pdf') + DEFAULT_SIZE.M.w / 2);
+  assert.ok(gapFlat >= FLOW.colGap - 1e-6, 'flat: the draft column clears the row of children');
 });
 
 test('deterministic and pure: the same input gives the same map; the input is untouched; opts move the anchor', () => {
@@ -151,4 +154,15 @@ test('overlapping() reads boxes: blocks apart on y alone are clear in 3D, and [x
   assert.deepEqual(overlapping(nodes, new Map([['a', [0, 9, 0]], ['b', [0, 9.5, 0]]])), [['a', 'b']]);
   assert.deepEqual(overlapping(nodes, new Map([['a', [0, 0]], ['b', [1, 1]]])), [['a', 'b']]);
   assert.deepEqual(overlapping(nodes, new Map([['a', [0, 0]], ['b', [DEFAULT_SIZE.M.w, 0]]])), []);
+});
+
+test('two floor rows in neighbouring columns never collide: the second column is pushed right just enough; a row may still run under a plain neighbour', () => {
+  const nodes = [N('in', 'input', 'S'), N('a1', 'gw-agent', 'L'), N('a2', 'gw-agent', 'L'), N('t1', 'gw-tool'), N('t2', 'gw-tool'), N('t3', 'gw-tool'), N('u1', 'gw-tool'), N('u2', 'gw-tool'), N('u3', 'gw-tool')];
+  const connections = [{ from: 'in', to: 'a1', toKey: 'trigger' }, { from: 'a1', to: 'a2', toKey: 'trigger' }, ...['t1', 't2', 't3'].map((f) => ({ from: f, to: 'a1', toKey: 'tools' })), ...['u1', 'u2', 'u3'].map((f) => ({ from: f, to: 'a2', toKey: 'tools' }))];
+  const m = flowLayout(nodes, connections);
+  assert.deepEqual(overlapping(nodes, m), []);
+  const rowGap = (X(m, 'u1') - DEFAULT_SIZE.M.w / 2) - (X(m, 't3') + DEFAULT_SIZE.M.w / 2);
+  near(rowGap, FLOW.colGap, 'the two floor rows sit one column gap apart');
+  assert.ok(X(m, 't1') - DEFAULT_SIZE.M.w / 2 < X(m, 'in') + DEFAULT_SIZE.S.w / 2, 'the first row runs under the trigger (another level, no overlap)');
+  assert.ok(Y(m, 't1') + DEFAULT_SIZE.M.h / 2 < Y(m, 'in') - DEFAULT_SIZE.S.h / 2, 'clear of it vertically');
 });

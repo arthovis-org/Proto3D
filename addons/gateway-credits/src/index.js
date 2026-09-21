@@ -28,12 +28,16 @@ export function register(host) {
 export function install(host, { sample = true } = {}) {
   if (!ledger) register(host);
   const toast = (t, ms) => host.ui.toast(t, ms);
+  /** Frame the whole graph tightly (the core's frameAll leaves a quarter of the view empty; the three levels should fill it). Keeps the current azimuth, so the sample's front view stays. */
+  const FRAME_FILL = 0.94;
+  const frameFlow = (instant) => { try { host.ui.frameBlocks(host.world.nodes(), { fill: FRAME_FILL, instant }); } catch (e) { console.warn('[gateway-credits] framing skipped:', e?.message || e); } };
 
   /* ---- 1. sample graph: a fresh page (nothing restored from this page's own storage) gets the demo graph ---- */
   const canBuildSample = () => ['input', 'log'].every((id) => host.nodes.has(id));
   function loadSample() {
     if (!canBuildSample()) { toast('Sample needs the core Input / Log components'); return null; }
-    const named = host.examples.build(example, { name: example.label });
+    const named = host.examples.build(example, { name: example.label, frame: false });
+    frameFlow(true);
     try { host.ui.wiring(true); } catch (_) { /* older core: cables follow the user's switch */ }   // the flow reads by its cables (slot drop-lines under the agent), so show them
     return named;
   }
@@ -74,7 +78,8 @@ export function install(host, { sample = true } = {}) {
     if (!g.nodes.length) { toast('Nothing to lay out'); return 0; }
     const isFlat = flat ?? planOn();
     const positions = flowLayout(g.nodes, g.connections, { flat: isFlat });
-    const moved = host.layout.apply(positions, { label: isFlat ? 'Flow layout (flat)' : 'Flow layout', frame });
+    const moved = host.layout.apply(positions, { label: isFlat ? 'Flow layout (flat)' : 'Flow layout', frame: false });
+    if (moved && frame) frameFlow(false);
     if (moved) toast(isFlat ? `Flow layout (flat) · ${moved} block${moved === 1 ? '' : 's'} arranged left → right, sub-nodes behind their agent` : `Flow layout · ${moved} block${moved === 1 ? '' : 's'} on three levels: budget / meter above, the flow at eye level, sub-nodes on the floor under their agent`, 2200);
     return moved;
   }

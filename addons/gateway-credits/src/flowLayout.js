@@ -15,7 +15,10 @@
 //     a child steps down too when there is vertical room under its parent, otherwise it steps
 //     forward in z in front of it. The floor level is the block's BOTTOM (the core keeps a block's
 //     bottom ≥ 0.2), so a resource's centre is levels.ground + h / 2 — pass the measured `h`
-//     (host.layout.graph()) or rely on the per-size default;
+//     (host.layout.graph()) or rely on the per-size default. Because the row is on another level,
+//     it may run UNDER the neighbouring chain columns: a column is only as wide as its chain item,
+//     and columns are pushed apart just enough that two floor rows never collide — the graph stays
+//     compact enough for faces to read;
 //   • LEVEL 2 · governance (y = levels.top, or higher when the flow is tall): budget / meter blocks
 //     (`topTypes`) float ABOVE the workflow they govern, in a row centred over the chain's x-extent.
 //
@@ -75,16 +78,17 @@ export function flowLayout(nodes, connections, opts = {}) {
   /** Is there vertical room for `child` to stand on the floor under a parent whose centre is at `py`? */
   const fitsUnder = (parent, py, child) => py - size(parent).h / 2 - (L.ground + size(child).h) >= o.levelGap;
 
-  /* ---- footprint of an item: its own box plus its slot children (recursively) — flat: the rows hang behind it; 3D: they stand under it (only a child without room steps forward) ---- */
+  /* ---- footprint of an item: its own box plus its slot children (recursively) — flat: the rows hang behind it, widening it; 3D: they stand under it on the floor
+          (`floor` = the row's width on that level, kept apart from the item's own `w`; only a child without room steps forward) ---- */
   const footprint = (uid, py = L.flow, depth = 0) => {
     const s = size(uid); const ch = kids.get(uid) || [];
-    if (!ch.length || depth > 6) return { w: s.w, d: s.d };
+    if (!ch.length || depth > 6) return { w: s.w, d: s.d, floor: 0 };
     const rows = ch.map((c) => footprint(c, groundY(c), depth + 1));
-    const rowW = rows.reduce((a, r) => a + r.w, 0) + o.slotGap * (rows.length - 1);
+    const rowW = rows.reduce((a, r) => a + Math.max(r.w, r.floor), 0) + o.slotGap * (rows.length - 1);
     const rowD = Math.max(...rows.map((r) => r.d));
-    if (o.flat) return { w: Math.max(s.w, rowW), d: s.d + o.slotDrop + rowD };
+    if (o.flat) return { w: Math.max(s.w, rowW), d: s.d + o.slotDrop + rowD, floor: 0 };
     const under = ch.every((c) => fitsUnder(uid, py, c));
-    return { w: Math.max(s.w, rowW), d: under ? Math.max(s.d, 2 * (o.slotForward + o.slotStagger) + rowD) : s.d + o.slotDrop + rowD };
+    return { w: s.w, floor: rowW, d: under ? Math.max(s.d, 2 * (o.slotForward + o.slotStagger) + rowD) : s.d + o.slotDrop + rowD };
   };
 
   /* ---- ranks: longest path from the sources over main (non-slot) edges; cycles fall back to input order ---- */
@@ -116,11 +120,19 @@ export function flowLayout(nodes, connections, opts = {}) {
     list.forEach((u, i) => row.set(u, i));
   });
 
-  /* ---- columns: x by cumulative width, z stacked and centred on the chain; the chain sits at the flow level ---- */
+  /* ---- columns: x by cumulative chain width, z stacked and centred on the chain; the chain sits at the flow level.
+          3D: a floor row may overhang into the neighbouring columns (another level), so a column is pushed right only as far as
+          the chain items before it, or the floor rows before it, demand ---- */
   const fp = new Map(main.map((u) => [u, footprint(u)]));
-  let x = o.anchor.x;
   const colX = [];
-  cols.forEach((list) => { const w = Math.max(0, ...list.map((u) => fp.get(u).w)); colX.push(x + w / 2); x += w + o.colGap; });
+  let chainRight = o.anchor.x, floorRight = -Infinity;
+  cols.forEach((list, r) => {
+    const half = Math.max(0, ...list.map((u) => fp.get(u).w)) / 2, floorHalf = Math.max(0, ...list.map((u) => fp.get(u).floor)) / 2;
+    let cx = chainRight + (r ? o.colGap : 0) + half;
+    if (floorHalf > 0 && floorRight > -Infinity) cx = Math.max(cx, floorRight + o.colGap + floorHalf);
+    if (!r) cx = o.anchor.x + Math.max(half, floorHalf);
+    colX.push(cx); chainRight = cx + half; if (floorHalf > 0) floorRight = Math.max(floorRight, cx + floorHalf);
+  });
   cols.forEach((list, r) => {
     // stack the footprints (own box + children) along z, then shift the column so the mean of the
     // items' OWN centres sits on the chain row: a lone item lands exactly on it; two branches straddle it
@@ -134,14 +146,14 @@ export function flowLayout(nodes, connections, opts = {}) {
   const hang = (parent, depth = 0) => {
     const ch = kids.get(parent) || []; if (!ch.length || depth > 6 || !out.has(parent)) return;
     const [px, py, pz] = out.get(parent); const pd = size(parent).d;
-    const fps = ch.map((c) => footprint(c, groundY(c), depth + 1));
-    const rowW = fps.reduce((a, f) => a + f.w, 0) + o.slotGap * (ch.length - 1);
+    const fps = ch.map((c) => footprint(c, groundY(c), depth + 1)); const wide = (f) => Math.max(f.w, f.floor);
+    const rowW = fps.reduce((a, f) => a + wide(f), 0) + o.slotGap * (ch.length - 1);
     let cx = px - rowW / 2;
     ch.forEach((c, i) => {
       const s = size(c);
-      if (o.flat) out.set(c, [cx + fps[i].w / 2, py, pz + pd / 2 + o.slotDrop + s.d / 2]);
-      else out.set(c, [cx + fps[i].w / 2, groundY(c), fitsUnder(parent, py, c) ? pz + o.slotForward + (ch.length > 1 ? (i % 2 ? 1 : -1) * o.slotStagger : 0) : pz + pd / 2 + o.slotDrop + s.d / 2]);
-      cx += fps[i].w + o.slotGap;
+      if (o.flat) out.set(c, [cx + wide(fps[i]) / 2, py, pz + pd / 2 + o.slotDrop + s.d / 2]);
+      else out.set(c, [cx + wide(fps[i]) / 2, groundY(c), fitsUnder(parent, py, c) ? pz + o.slotForward + (ch.length > 1 ? (i % 2 ? 1 : -1) * o.slotStagger : 0) : pz + pd / 2 + o.slotDrop + s.d / 2]);
+      cx += wide(fps[i]) + o.slotGap;
     });
     ch.forEach((c) => hang(c, depth + 1));
   };
