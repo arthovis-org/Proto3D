@@ -1,4 +1,4 @@
-// clients.js — the four real client hubs on imagine-os.github.io, as data: name, slug, brand,
+// clients.js — the five real client hubs on imagine-os.github.io, as data: name, slug, brand,
 // language, base URL, industry, roles and the page list (section → route, title, audience, role,
 // device). Routes come from the recon of the live sites (all four are iframe-embeddable: no
 // X-Frame-Options, no CSP). Add a client here, or fill a hub-blueprint node on the canvas.
@@ -95,6 +95,37 @@ export const CLIENTS = Object.freeze([
       { section: 'mockups', route: 'mockups/index.html', title: 'Device gallery' },
     ],
   },
+  {
+    // role portals are entered with `?as=<role>` (the hub's session switch); without it the page says it is not part of your role
+    slug: 'aluzina', name: 'Aluzina', brand: '#98876D', lang: 'en', industry: 'Interior design studio (Medellín)',
+    baseUrl: 'https://imagine-os.github.io/aluzina/', roles: ['founder', 'operations', 'studio', 'brand', 'client'],
+    pages: [
+      { section: 'hub', route: '#/', title: 'Business OS hub' },
+      { section: 'site', route: '#/services', title: 'Services' },
+      { section: 'site', route: '#/portfolio', title: 'Portfolio' },
+      { section: 'site', route: '#/method', title: 'Method' },
+      { section: 'site', route: '#/start', title: 'Start a project' },
+      { section: 'app', route: '?as=client#/client', title: 'Client app', role: 'client', device: 'phone' },
+      { section: 'staff', route: '?as=studio#/studio', title: 'Studio', role: 'studio' },
+      { section: 'staff', route: '?as=ops#/ops', title: 'Operations', role: 'operations' },
+      { section: 'staff', route: '?as=brand#/brand', title: 'Brand', role: 'brand' },
+      { section: 'owner', route: '?as=founder#/founder', title: 'Founder', role: 'founder' },
+      { section: 'owner', route: '?as=founder#/founder/pipeline', title: 'Pipeline', role: 'founder' },
+      { section: 'owner', route: '?as=founder#/founder/leads', title: 'Leads', role: 'founder' },
+      { section: 'manual', route: '?as=ops#/manual', title: 'Operations manual', role: 'operations' },
+      { section: 'docs', route: '#/docs', title: 'Docs' },
+      { section: 'plan', route: '#/dev/plan', title: 'Plan viewer' },
+      { section: 'dev', route: '#/design', title: 'Design system' },
+      { section: 'dev', route: '#/dev/tokens', title: 'Tokens' },
+      { section: 'dev', route: '#/dev/components', title: 'Components' },
+      { section: 'dev', route: '#/dev/specs', title: 'Specs' },
+      { section: 'mockups', route: '#/dev/canvas', title: 'Canvas' },
+      { section: 'mockups', route: '#/dev/simulator', title: 'Simulator' },
+      { section: 'mockups', route: '#/dev/testing', title: 'Testing hub' },
+      { section: 'mockups', route: 'business-os/', title: 'Business OS prototype' },
+      { section: 'machine', route: '#/dev/actions', title: 'Actions registry' },
+    ],
+  },
 ]);
 
 const bySlug = new Map(CLIENTS.map((c) => [c.slug, c]));
@@ -117,7 +148,7 @@ export function pagesOf(client, { sections = null, status = 'live' } = {}) {
   return list.map(({ p, s }, order) => ({
     url: joinUrl(c.baseUrl, p.route), route: p.route, title: p.title, section: s.id,
     audience: p.audience || s.audience, role: p.role || '', device: p.device || s.device,
-    status, client: c.slug, order, lang: c.lang, brand: c.brand,
+    status, client: c.slug, order, lang: c.lang, brand: c.brand, preview: previewPath(c.slug, p.route),
   }));
 }
 
@@ -126,6 +157,22 @@ export function blueprintParams(client) {
   const c = typeof client === 'string' ? clientBySlug(client) : client;
   if (!c) return null;
   return { client: c.name, slug: c.slug, brand: c.brand, lang: c.lang, baseUrl: c.baseUrl, industry: c.industry, roles: c.roles.join(', '), sections: SECTIONS.map((s) => s.id), status: 'live' };
+}
+
+/** A file-safe id for a page route: "#/site/proposal" → "site-proposal", "#/" / "index.html" → "index", "app/index.html?mode=phone" → "app-mode-phone". */
+export function pageId(route) {
+  const r = String(route || '').replace(/^https?:\/\/[^/]+\/[^/]+\//, '').replace(/index\.html/g, '').replace(/^#?\/?/, '').replace(/[?=&#/.]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+  return r || 'index';
+}
+/** Where a page's static preview lives, relative to the add-on directory (tools/capture-previews.mjs writes it). */
+export const previewPath = (slug, route) => `assets/previews/${String(slug || '').trim()}/${pageId(route)}.jpg`;
+/** The preview path for a hub-page's params: its `preview` param, else derived from the client slug and the url's route when the client is known. */
+export function previewFor(params = {}) {
+  const own = String(params.preview || '').trim(); if (own) return own;
+  const c = clientBySlug(params.client); if (!c) return '';
+  const url = String(params.url || '');
+  const hit = c.pages.find((p) => joinUrl(c.baseUrl, p.route) === url);
+  return hit ? previewPath(c.slug, hit.route) : '';
 }
 
 /** Sections a client has at least one page in, in phase order. */

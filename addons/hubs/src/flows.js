@@ -9,7 +9,7 @@
 //   audience  floors per audience (customers at the ground, then everyone, staff, owner, developers, machine), each floor a row stepped back a little
 //   sitemap   the hub page at the base, the sections as a semicircular ring one level up, pages rising above their section
 //   compare   clients as floors with a full card height of air between them, a client label card at the left end of each,
-//             sections as columns (split into a front and a back bank when too wide): a column reads top-to-bottom as one section across clients
+//             sections as columns (split into banks of at most bankMax width, each stepped back and slightly up): a column reads top-to-bottom as one section across clients
 //   devices   phone / tablet / desktop as three arcs, one level each
 // Footprints are the real card sizes (items carry width / height; hub-page cards default to
 // sizing.cardDims), so tall cards get taller floors. Deterministic in the items' order.
@@ -204,12 +204,13 @@ const LAYOUTS = {
     const cellW = (c, s) => { const ps = cell.get(`${c}|${s.id}`) || []; return ps.reduce((sum, p) => sum + W(p), 0) + GAP.x * Math.max(0, ps.length - 1); };
     // columns as wide as the busiest cell of that section (or its headers); too wide a grid splits into a front and a back bank
     const colW = new Map(sections.map((s) => { const hs = heads.get(s.id) || []; return [s.id, Math.max(...clients.map((c) => cellW(c, s)), hs.reduce((sum, h) => sum + W(h), 0) + GAP.x * Math.max(0, hs.length - 1), 1)]; }));
-    const total = sections.reduce((sum, s) => sum + colW.get(s.id), 0) + GAP.section * Math.max(0, sections.length - 1);
-    const banks = total > GAP.bankMax && sections.length > 1 ? [sections.slice(0, Math.ceil(sections.length / 2)), sections.slice(Math.ceil(sections.length / 2))] : [sections];
+    // banks: fill a row of columns up to bankMax wide, then start the next bank behind it (stepped back and slightly up)
+    const banks = [[]]; let bankW = 0;
+    for (const s of sections) { const w = colW.get(s.id); if (banks.at(-1).length && bankW + GAP.section + w > GAP.bankMax) { banks.push([]); bankW = 0; } banks.at(-1).push(s); bankW += (banks.at(-1).length > 1 ? GAP.section : 0) + w; }
     const colX = new Map();
     banks.forEach((bank, bi) => { let x = ox; for (const s of bank) { colX.set(s.id, { x, bank: bi }); x += colW.get(s.id) + GAP.section; } });
     const bps = groupBy(items.filter(isBlueprint), (b) => str(b.params.slug).trim());
-    const levelHeights = clients.map((c) => Math.max(maxH(pages.filter((p) => str(p.params.client).trim() === c)), maxH(bps.get(c) || []), maxH(labels.get(c) || [])) + (banks.length > 1 ? GAP.bankUp : 0));
+    const levelHeights = clients.map((c) => Math.max(maxH(pages.filter((p) => str(p.params.client).trim() === c)), maxH(bps.get(c) || []), maxH(labels.get(c) || [])) + (banks.length - 1) * GAP.bankUp);
     const bases = levelBases(levelHeights, (h) => h + GAP.level);   // a clear gap of one card height plus the margin between client levels
     clients.forEach((c, li) => {
       const base = bases[li], z = oz - li * GAP.stepBack;

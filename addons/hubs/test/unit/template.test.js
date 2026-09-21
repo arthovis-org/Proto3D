@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SECTIONS, SECTION_IDS, AUDIENCES, DEVICES, PHASES, sectionById, synthesizePages, joinUrl } from '../../src/template.js';
-import { CLIENTS, pagesOf, blueprintParams, clientBySlug, sectionsUsed } from '../../src/clients.js';
+import { CLIENTS, pagesOf, blueprintParams, clientBySlug, sectionsUsed, pageId, previewPath, previewFor } from '../../src/clients.js';
 
 test('template: eleven sections with unique ids, known audiences / devices, phases 0..10 in order', () => {
   assert.equal(SECTIONS.length, 11);
@@ -13,9 +13,11 @@ test('template: eleven sections with unique ids, known audiences / devices, phas
   assert.equal(sectionById('machine').audience, 'machine'); assert.equal(sectionById('nope'), null);
 });
 
-test('clients: four hubs, unique slugs, every page references a known section, phone pages are apps, urls sit under the base', () => {
-  assert.deepEqual(CLIENTS.map((c) => c.slug), ['cal-tenant-law', 'petrock', 'hoy', 'dorum-lifestyle']);
-  assert.deepEqual(CLIENTS.map((c) => c.pages.length), [21, 15, 18, 11]);
+test('clients: five hubs, unique slugs, every page references a known section, phone pages are apps, urls sit under the base', () => {
+  assert.deepEqual(CLIENTS.map((c) => c.slug), ['cal-tenant-law', 'petrock', 'hoy', 'dorum-lifestyle', 'aluzina']);
+  assert.deepEqual(CLIENTS.map((c) => c.pages.length), [21, 15, 18, 11, 24]);
+  assert.equal(pagesOf('aluzina').find((p) => p.section === 'app').url, 'https://imagine-os.github.io/aluzina/?as=client#/client');
+  assert.equal(pageId('?as=client#/client'), 'as-client-client'); assert.equal(pageId('business-os/'), 'business-os');
   for (const c of CLIENTS) {
     assert.match(c.brand, /^#[0-9A-Fa-f]{6}$/); assert.ok(['en', 'es'].includes(c.lang)); assert.match(c.baseUrl, /^https:\/\/imagine-os\.github\.io\/[a-z-]+\/$/);
     for (const p of c.pages) assert.ok(sectionById(p.section), `${c.slug}: ${p.route} → unknown section ${p.section}`);
@@ -53,4 +55,16 @@ test('synthesizePages: template defaults for an unknown client, planned, under t
   assert.equal(joinUrl('https://a.b/c/', 'docs/plan.html'), 'https://a.b/c/docs/plan.html');
   assert.equal(joinUrl('https://a.b/c', '#/x'), 'https://a.b/c/#/x');
   assert.equal(joinUrl('', '#/x'), '#/x');
+});
+
+test('previews: page ids are file-safe and unique per client, preview paths derive from slug + route, previewFor reads the param or derives it', () => {
+  assert.equal(pageId('#/'), 'index'); assert.equal(pageId('index.html'), 'index'); assert.equal(pageId('#/site/proposal'), 'site-proposal');
+  assert.equal(pageId('app/index.html?mode=phone'), 'app-mode-phone'); assert.equal(pageId('app/index.html#/role/broker/listings'), 'app-role-broker-listings'); assert.equal(pageId('index.html#roles'), 'roles');
+  assert.equal(pageId('https://imagine-os.github.io/petrock/#/dev/qa/screenshots'), 'dev-qa-screenshots', 'a full url reduces to its route');
+  for (const c of CLIENTS) { const ids = c.pages.map((p) => pageId(p.route)); assert.equal(new Set(ids).size, ids.length, `${c.slug}: page ids unique`); assert.ok(ids.every((id) => /^[a-z0-9-]+$/.test(id)), `${c.slug}: file-safe ids`); }
+  assert.equal(previewPath('petrock', '#/app'), 'assets/previews/petrock/app.jpg');
+  assert.ok(pagesOf('hoy').every((p) => p.preview === previewPath('hoy', p.route)));
+  assert.equal(previewFor({ preview: 'x/y.jpg' }), 'x/y.jpg');
+  assert.equal(previewFor({ client: 'cal-tenant-law', url: 'https://imagine-os.github.io/cal-tenant-law/#/desk' }), 'assets/previews/cal-tenant-law/desk.jpg');
+  assert.equal(previewFor({ client: 'cal-tenant-law', url: 'https://elsewhere.test/' }), ''); assert.equal(previewFor({ client: 'nope', url: 'x' }), '');
 });

@@ -77,20 +77,22 @@ test('compare: clients are levels stepped up and back, the same section of every
   for (const c of CLIENTS) { const l = map.get(`lbl-${c.slug}`), bp = map.get(`bp-${c.slug}`); assert.equal(l.y, bp.y, `${c.slug} label on its level`); assert.ok(l.x > bp.x && l.x < 0, `${c.slug} label between the blueprint and the columns`); }
   // eleven columns are too wide for one row: a front and a back bank, the back one stepped back and slightly up
   const banks = new Set([...map].filter(([uid]) => uid.startsWith('cal-tenant-law-')).map(([, p]) => p.z));
-  assert.equal(banks.size, 2, 'two banks'); const [zFront, zBack] = [...banks].sort((a, b) => b - a); assert.ok(zFront - zBack >= GAP.bankBack - 1e-6);
-  const bounds = layoutBounds(map); assert.ok(bounds.maxX - bounds.minX < 130, `the grid is ${(bounds.maxX - bounds.minX).toFixed(0)} wide`);
+  assert.ok(banks.size >= 2, 'several banks'); const zs = [...banks].sort((a, b) => b - a); assert.ok(zs[0] - zs[1] >= GAP.bankBack - 1e-6);
+  const bounds = layoutBounds(map); assert.ok(bounds.maxX - bounds.minX < GAP.bankMax + 24, `the grid is ${(bounds.maxX - bounds.minX).toFixed(0)} wide`);
   const colX = new Map();   // section → x of its first page, must agree across clients
   for (const c of CLIENTS) {
     const pages = sortPages(items.filter((x) => x.type === 'hub-page' && x.params.client === c.slug));
-    for (const p of pages) { const q = map.get(p.uid); assert.ok(q.y === map.get(`bp-${c.slug}`).y || q.y === map.get(`bp-${c.slug}`).y + GAP.bankUp, `${p.uid} on its client's level (or its back bank)`); assert.equal(q.ry, 0); }
+    for (const p of pages) { const q = map.get(p.uid); assert.ok(Math.abs((q.y - map.get(`bp-${c.slug}`).y) % GAP.bankUp) < 1e-6 && q.y - map.get(`bp-${c.slug}`).y < 3 * GAP.bankUp + 1e-6, `${p.uid} on its client's level (or a back bank)`); assert.equal(q.ry, 0); }
     for (const s of new Set(pages.map((p) => p.params.section))) {
       const first = pages.find((p) => p.params.section === s);
       const x = map.get(first.uid).x - dimsOf(first).width / 2;   // the cell's left edge
       if (colX.has(s)) assert.equal(x, colX.get(s), `${c.slug}: section ${s} column`); else colX.set(s, x);
     }
   }
-  const front = [...colX].filter(([s]) => sectionById(s).phase <= 5).sort((a, b) => a[1] - b[1]).map(([s]) => sectionById(s).phase);
-  assert.deepEqual(front, [...front].sort((a, b) => a - b), 'the front bank follows phase order left → right');
+  // within a bank (same z), the columns follow phase order left → right
+  const ctl = sortPages(items.filter((x) => x.type === 'hub-page' && x.params.client === 'cal-tenant-law'));
+  const bankOf = (s) => map.get(ctl.find((p) => p.params.section === s).uid).z;
+  for (const z of new Set([...colX.keys()].map(bankOf))) { const phases = [...colX].filter(([s]) => bankOf(s) === z).sort((a, b) => a[1] - b[1]).map(([s]) => sectionById(s).phase); assert.deepEqual(phases, [...phases].sort((a, b) => a - b), `bank at z ${z} follows phase order left → right`); }
   assert.ok(CLIENTS.every((c) => map.get(`bp-${c.slug}`).x < Math.min(...colX.values())));
 });
 
