@@ -11,8 +11,8 @@
       "id": "hubs",
       "dir": "hubs",
       "name": "Client Hubs",
-      "version": "0.1.0",
-      "description": "A client deliverable hub on the 3D canvas: blueprint → pages → tasks. The real hub pages (website, customer app, staff desks, manual, docs, dev tools) are embedded live as nodes and the canvas re-arranges into delivery, audience, site-map, compare and device flows."
+      "version": "0.2.0",
+      "description": "A client deliverable hub on the 3D canvas: blueprint \u2192 pages \u2192 tasks. The real hub pages (website, customer app, staff desks, manual, docs, dev tools) are embedded live as nodes and the canvas re-arranges into delivery, audience, site-map, compare and device flows."
     }
   ]
 }
