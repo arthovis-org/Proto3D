@@ -15,7 +15,7 @@ addons/
     testing/           fake-host.js · headless-engine.js · browser.js · drift-guard.js · run-addons.js
     test/              contract.test.js · host.test.js · storage.test.js · drift-guard.test.js · addons-registry.test.js · browser/core-smoke.test.js
   _template/           the smallest complete add-on; copy it to start a new one (tested, not listed)
-  gateway-credits/     a real add-on: metering, ledger, routing policy, admin block (see its README)
+  gateway-credits/     a real add-on: an agent with slot sub-nodes, per-step metering, ledger, routing policy, app-like faces, flow layout (see its README)
 ```
 
 ## The contract
@@ -44,7 +44,11 @@ The page is a near-empty `index.html` that loads `../sdk/shell.js`. The shell re
 | `host.world.onChange(cb) → off` · `nodes()` · `connections()` · `get()` | `world.onChange`; `get()` is the raw World, logged once as an escape hatch |
 | `host.ui.menu({ id, label, items })` · `panelSection(title, build)` · `toast` · `togglePanel` · `frameBlocks` · `hideStart` · `stylesheet` | a real top-level menu in the core menu bar; a `<details class="sec">` in `#panel` outside `#panel-body`, so `panel.build()` never clears it |
 | `host.selection.clear()` · `set()` · `nodes()` | the core selection |
-| `host.draw.{clear, drawText, roundRect, font}` · `host.theme.palette` · `host.theme.current()` · `onChange` · `host.icons.set/get/has` | `faces.js`, the live palette, the mutable icon table (core icons cannot be overwritten) |
+| `host.draw.{clear, drawText, roundRect, font}` + `beginFields, drawCaps, drawDivider, drawTile, drawChip, drawBar, drawStat, drawAvatar, fitLine, wrapLines, tabular, jsonLines, PAD, GRID, RADIUS` · `host.theme.palette` · `host.theme.current()` · `onChange` · `host.icons.set/get/has` | `faces.js` — the whole face design language, so add-on faces read like core faces and register editable regions the core's inline field editor hit-tests, marks and edits (`beginFields`); the live palette; the mutable icon table (core icons cannot be overwritten). A helper this core lacks throws a named `HostError` when called |
+| `host.commands.setParam(block, key, value, label?)` · `setTitle` · `execute(cmd)` | `cmd.setParam` / `cmd.setTitle` through `history.execute`: undoable writes from a face click, the same commands the panel and the field editor use |
+| `host.fields.open(block, field \| id)` · `editing()` · `leave()` | `fieldEditor.open`: open the core inline editor on a face field from add-on code (a single click on a select outside edit mode); who is in edit mode |
+| `host.layout.graph()` · `apply(positions, { label, frame })` | the graph as plain data (`{ uid, type, size, w, d, x, z }` / `{ from, to, fromKey, toKey }`) for pure layout code, and one undoable `cmd.transform` that moves blocks to `uid → [x, z]` and frames them |
+| `host.ui.wiring(on?)` | the core Wiring switch (ports and cables shown), read or set |
 | `host.examples.build(example)` | `buildExample` through `tabs.replaceActive`, so the graph lands in a tab, autosaves and is framed |
 | `host.storage.get/set/remove/keys()` | JSON values under `proto3d.addon.<id>.` in `localStorage` |
 | `host.persist.serialize()` · `load(doc)` | `proto.serialize` / `proto.load` |
@@ -150,6 +154,21 @@ The core is untouched. These additive changes would let the SDK drop its workaro
 ```
 
 The contract test flags each of these the moment it appears in the core, so the SDK can switch over.
+
+**(e) Slot cables and slot ports** — an agent's sub-nodes (Chat model, Memory, Tools) hang *below* their parent (gateway-credits `flowLayout`), but the parent's slot inputs sit on its left edge like any input, so their cables loop over the block. n8n draws these as short dashed drop-lines from the parent's bottom edge. Proposed: a port flag `slot: true` (`inputs: [{ key: 'model', type: 'data', slot: true }]`) that (1) places the port on the block's bottom edge and (2) styles its cable dashed and thinner. The add-on works around it by drawing the three slot chips on the agent's face (lit when connected) and by relying on the type hue (slot cables are `data`, so they already read differently from the event chain).
+
+```diff
+ // src/core/component.js normPort
+-  return Object.freeze({ key: p.key, label: …, multi: …, optional: !!p.optional });
++  return Object.freeze({ key: p.key, label: …, multi: …, optional: !!p.optional, slot: !!p.slot && dir === 'in' });
+ // src/node3d.js: slot inputs on the bottom edge; src/connection3d.js: u.dashed.value = to.slot ? 1 : 0 (thin, no travel crest)
+```
+
+**(f) Per-instance dynamic `icon`** — `def.icon` is one SVG per type, so a Model call on Anthropic and one on OpenAI look the same in the Add rail, the panel header and the mini toolbar. Proposed: `def.iconFor?(instance) → svg` consulted wherever `def.icon` is read (panel, tabs, command palette). The add-on works around it by putting a large service badge (glyph + accent ring) on every face, which is what reads on the canvas anyway; the glyphs are already registered as icons (`gw-svc-<id>`).
+
+**(g) Single-click face actions outside edit mode** — the core opens a face field only in edit mode (double-click, Enter, the pencil) except for `mode: 'open'` fields, which *enter* edit mode. An app-like face wants a Run button or a segmented control to react to one click without an edit-mode round trip. The add-on does this through `def.face.onPointer` (capture the press on a field, run / toggle / `fieldEditor.open` on click), which works but re-implements the hit test the core already has (`Block3D.fieldAt`). Proposed: a field `mode: 'click'` in `ui/field-editor.js` / `interaction.js` — a single press on such a region runs an `action`, toggles a `checkbox` or opens the editor, no edit mode needed.
+
+**(h) `layoutCommand` / tweened moves exposed** — `window.__proto.layout` exposes `arrange` and `plan` but not `layoutCommand(world, nodes, positions)`, so `host.layout.apply` moves blocks instantly through `cmd.transform` instead of gliding them like Auto-layout does. Proposed: add `layoutCommand` (or `tweenTo`) to `window.__proto.layout`.
 
 ## How this beats depending on n8n
 

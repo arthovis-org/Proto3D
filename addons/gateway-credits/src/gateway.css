@@ -65,3 +65,6 @@ table.gw-ledger, table.gw-rate-table { width: 100%; border-collapse: collapse; f
 .gw-rate .gw-hint { padding-bottom: 8px; }
 .gw-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 5px; }
 .gw-foot { border-top: 1px solid var(--border); padding-top: 6px; }
+
+/* agent panel: the step list */
+.gw-steps { white-space: pre-line; font-size: 11px; line-height: 1.5; color: var(--dim); font-variant-numeric: tabular-nums; padding: 2px 0 2px 8px; border-left: 2px solid var(--gw-credit); }

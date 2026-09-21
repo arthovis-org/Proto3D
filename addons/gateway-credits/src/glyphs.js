@@ -103,8 +103,8 @@ export function drawBadge(g, id, cx, cy, r, { color = GLYPHS[id]?.color || '#8b9
   g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2);
   g.fillStyle = bg || withAlpha(color, lit ? 0.18 : 0.08); g.fill();
   if (ring) { g.lineWidth = Math.max(2, r * 0.11); g.strokeStyle = lit ? color : withAlpha(color, 0.35); g.beginPath(); g.arc(cx, cy, r - g.lineWidth / 2, 0, Math.PI * 2); g.stroke(); }
-  const s = r * 1.1;
-  drawGlyph(g, id, cx - s / 2, cy - s / 2, s, ink || (lit ? color : withAlpha(color, 0.5)), { strokeWidth: 1.9 });
+  const s = r <= 14 ? r * 1.5 : r * 1.1;   // a small badge shows the glyph big, else it vanishes at face resolution
+  drawGlyph(g, id, cx - s / 2, cy - s / 2, s, ink || (lit ? color : withAlpha(color, 0.5)), { strokeWidth: r <= 14 ? 2.6 : 1.9 });
   g.restore?.();
 }
 /** #rrggbb → rgba(r, g, b, a); other strings pass through. */

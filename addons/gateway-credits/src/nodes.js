@@ -4,12 +4,14 @@
 // ledger.hold → provider adapter (async) → parked in a per-instance queue → drained on a later
 // frame → ledger.settle / refund → touch('result') + emit('done' | 'failed').
 // Everything the nodes need from the core arrives through the host: drawing helpers
-// (host.draw), the live palette (host.theme.palette) and icons (host.icons).
+// (host.draw, used by faces.js), the live palette (host.theme.palette), icons (host.icons),
+// undoable param writes (host.commands) and the inline field editor (host.fields).
 import { fmt, fmtBal } from './ledger.js';
 import { MODEL_PROVIDER_LABELS, TOOL_SERVICE_LABELS, TIER_OPTIONS, MODEL_OPTIONS, PROVIDERS, providerByLabel, toolByLabel, creditsToUsd } from './rates.js';
 import { resolveModel, fallbackFor } from './routing.js';
 import { adapterFor } from './providers.js';
 import { iconTable, glyphFor } from './glyphs.js';
+import { createFaces } from './faces.js';
 
 export const GATEWAY_TYPES = ['gw-llm', 'gw-tool', 'gw-budget', 'gw-meter', 'gw-memory', 'gw-agent'];
 /** Types that take a trigger and meter themselves (Run sample looks for these; the agent first). */
@@ -382,14 +384,14 @@ function agentPanel(api, block) {
 /** Register the gw- components. Called once per page from index.js `register(host)`. */
 export function registerNodes(h, l) {
   host = h; ledger = l;
-  const { clear, drawText, roundRect } = host.draw;
-  const palette = host.theme.palette;
   for (const [name, icon] of Object.entries(ICONS)) host.icons.set(name, icon);
   for (const [name, svg] of Object.entries(iconTable())) host.icons.set(name, svg);   // service glyphs: gw-svc-<provider|service|role>
+  // the faces (faces.js) are the nodes' working UI: fields the core edits in place + single-click actions
+  const faces = createFaces(host, ledger, { eligibility, estimateRun, kick, attachments, planSteps, estimateAgentRun, workflowOf });
 
   /* ---------- gw-llm ---------- */
   host.nodes.register({
-    id: 'gw-llm', category: 'gateway', label: 'Model call', icon: ICONS['gw-llm'], size: 'S',
+    id: 'gw-llm', category: 'gateway', label: 'Model call', icon: ICONS['gw-llm'], size: 'M',
     description: 'Calls a model through Gateway credits (metered) or your own key (bypassed); simulated providers',
     inputs: [{ key: 'trigger', label: 'trigger', type: 'event' }, { key: 'prompt', label: 'prompt', type: 'text', optional: true }],
     outputs: [{ key: 'result', label: 'result', type: 'text' }, { key: 'cost', label: 'cost', type: 'number' }, { key: 'done', label: 'done', type: 'event' }, { key: 'failed', label: 'failed', type: 'event' }, { key: 'handle', label: 'as model', type: 'data' }],
@@ -405,12 +407,13 @@ export function registerNodes(h, l) {
     evaluate: gatewayEvaluate('llm'),
     footer: gatewayFooter('llm'),
     panel: gatewayPanel('llm'),
+    face: faces.llm,
     onDestroy(instance) { const n = ledger.releaseHolds(instance.uid, 'node removed · hold released'); if (n) toast(`${instance.title}: ${n} hold${n > 1 ? 's' : ''} released`); },
   });
 
   /* ---------- gw-tool ---------- */
   host.nodes.register({
-    id: 'gw-tool', category: 'gateway', label: 'Tool call', icon: ICONS['gw-tool'], size: 'S',
+    id: 'gw-tool', category: 'gateway', label: 'Tool call', icon: ICONS['gw-tool'], size: 'M',
     description: 'Search, crawl, browse or parse through a tool service, priced per request / page / minute',
     inputs: [{ key: 'trigger', label: 'trigger', type: 'event' }, { key: 'query', label: 'query', type: 'text', optional: true }],
     outputs: [{ key: 'result', label: 'result', type: 'text' }, { key: 'cost', label: 'cost', type: 'number' }, { key: 'done', label: 'done', type: 'event' }, { key: 'failed', label: 'failed', type: 'event' }, { key: 'handle', label: 'as tool', type: 'data' }],
@@ -425,6 +428,7 @@ export function registerNodes(h, l) {
     evaluate: gatewayEvaluate('tool'),
     footer: gatewayFooter('tool'),
     panel: gatewayPanel('tool'),
+    face: faces.tool,
     onDestroy(instance) { ledger.releaseHolds(instance.uid, 'node removed · hold released'); },
   });
 
@@ -444,22 +448,7 @@ export function registerNodes(h, l) {
       return { spent: +spent.toFixed(4), remaining: +Math.max(0, params.limit - spent).toFixed(4) };
     },
     footer: ({ params, outputs }) => `${fmt(outputs.spent || 0)} / ${fmtBal(params.limit)} cr · ${params.period}`,
-    face: {
-      live: true, fps: 2,
-      render(g, w, h, { params }) {
-        clear(g, w, h);
-        const wf = String(params.workflow || '').trim();
-        const spent = ledger.spentFor(wf, params.period), held = ledger.heldFor(wf), limit = Math.max(0, +params.limit || 0);
-        const k = limit ? Math.min(1, spent / limit) : 1, kh = limit ? Math.min(1, (spent + held) / limit) : 1;
-        drawText(g, wf || 'no workflow', 16, 10, w - 32, 40, { size: 26, weight: 600, align: 'left' });
-        drawText(g, `${fmt(spent)} of ${fmtBal(limit)} cr · ${params.period}`, 16, 50, w - 32, 34, { size: 22, color: palette.faceDim, align: 'left' });
-        const bx = 16, by = h - 84, bw = w - 32, bh = 30;
-        g.fillStyle = palette.faceCard; roundRect(g, bx, by, bw, bh, 10); g.fill();
-        if (kh > 0) { g.fillStyle = 'rgba(245,185,66,0.55)'; roundRect(g, bx, by, Math.max(8, bw * kh), bh, 10); g.fill(); }
-        if (k > 0) { g.fillStyle = k >= 1 ? '#ff4d5e' : palette.faceAccent; roundRect(g, bx, by, Math.max(8, bw * k), bh, 10); g.fill(); }
-        drawText(g, spent + held > limit ? 'over budget: new holds decline' : `${fmt(Math.max(0, limit - spent - held))} cr left${held ? ` · ${fmt(held)} held` : ''}`, 16, h - 46, w - 32, 34, { size: 20, color: spent + held > limit ? '#ff4d5e' : palette.faceDim, align: 'left' });
-      },
-    },
+    face: faces.budget,
   });
 
   /* ---------- gw-meter ---------- */
@@ -470,23 +459,9 @@ export function registerNodes(h, l) {
     params: [],
     evaluate() { return { balance: +ledger.available().toFixed(2), spend: +ledger.spend().toFixed(4) }; },
     footer: () => `${fmtBal(ledger.available())} cr · $${creditsToUsd(ledger.available()).toFixed(2)}`,
-    face: {
-      live: true, fps: 2,
-      render(g, w, h) {
-        clear(g, w, h);
-        const bal = ledger.available(), held = ledger.held(), spend = ledger.spend(), last = ledger.lastCost();
-        drawText(g, 'GATEWAY CREDITS', 16, 8, w - 32, 28, { size: 18, weight: 600, color: palette.faceDim, align: 'left' });
-        drawText(g, `${fmtBal(bal)} cr`, 16, 34, w - 32, 70, { size: 54, weight: 700, mono: true, color: bal < 100 ? '#ff4d5e' : palette.faceText, align: 'left' });
-        drawText(g, `$${creditsToUsd(bal).toFixed(2)}${held ? ` · ${fmt(held)} cr on hold` : ''}`, 16, 104, w - 32, 30, { size: 20, color: palette.faceDim, align: 'left' });
-        const y = h - 96; const cw = (w - 32) / 2;
-        g.fillStyle = palette.faceCard; roundRect(g, 16, y, cw - 6, 84, 12); g.fill(); roundRect(g, 16 + cw + 6, y, cw - 6, 84, 12); g.fill();
-        drawText(g, 'spend this month', 28, y + 8, cw - 30, 26, { size: 17, color: palette.faceDim, align: 'left' });
-        drawText(g, `${fmt(spend)} cr`, 28, y + 36, cw - 30, 40, { size: 28, weight: 600, mono: true, align: 'left' });
-        drawText(g, 'last cost', 28 + cw + 6, y + 8, cw - 30, 26, { size: 17, color: palette.faceDim, align: 'left' });
-        drawText(g, last == null ? '—' : `${fmt(last)} cr`, 28 + cw + 6, y + 36, cw - 30, 40, { size: 28, weight: 600, mono: true, color: palette.faceAccent, align: 'left' });
-      },
-    },
+    face: faces.meter,
   });
+
   /* ---------- gw-memory ---------- */
   host.nodes.register({
     id: 'gw-memory', category: 'gateway', label: 'Memory', icon: ICONS['gw-memory'], size: 'S',
@@ -502,6 +477,7 @@ export function registerNodes(h, l) {
       return { handle: { kind: 'memory', uid: instance.uid, title: instance.title, window: win, count: state.exchanges.length, glyph: 'memory' }, count: state.exchanges.length, recent: last ? { prompt: last.prompt, answer: last.answer, at: last.at } : undefined };
     },
     footer: ({ state, params }) => `${(state.exchanges || []).length} of ${params.window} exchanges${state.total ? ` · ${state.total} total` : ''}`,
+    face: faces.memory,
   });
 
   /* ---------- gw-agent ---------- */
@@ -521,6 +497,7 @@ export function registerNodes(h, l) {
     evaluate: agentEvaluate,
     footer: agentFooter,
     panel: agentPanel,
+    face: faces.agent,
     onDestroy(instance) { const n = ledger.releaseHolds(instance.uid, 'agent removed · hold released'); if (n) toast(`${instance.title}: ${n} hold${n > 1 ? 's' : ''} released`); },
   });
   return GATEWAY_TYPES;

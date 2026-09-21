@@ -190,6 +190,8 @@ export function createHost(proto, manifest, core) {
     /** Frame blocks in the viewport (instant or animated), keeping the Add rail's width out of the framing. */
     frameBlocks(blocks, opts = {}) { const p = P('ui.frameBlocks'); return p.ws.frameBlocks(blocks, { insetLeft: p.leftBar?.isOpen ? 300 : 0, ...opts }); },
     hideStart: () => P('ui.hideStart').start.hide('addon'),
+    /** The Wiring switch (ports and cables shown): `wiring()` reads it, `wiring(true|false)` sets it (persisted by the core in this page's storage). */
+    wiring(on) { const p = P('ui.wiring'); if (!p.wiring || typeof p.wiring.set !== 'function' || typeof p.wiring.isOn !== 'function') throw new HostError('core seam missing: window.__proto.wiring.{isOn,set}', 'window.__proto.wiring'); if (on !== undefined) p.wiring.set(!!on); return p.wiring.isOn(); },
     /** Add a stylesheet to the page. Pass an absolute URL (e.g. new URL('./x.css', import.meta.url).href): the shell sets <base> to the core root, so a page-relative href would resolve there, not in the add-on directory. */
     stylesheet(href) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); return l; },
   });
@@ -255,6 +257,32 @@ export function createHost(proto, manifest, core) {
     keys() { const s = backing(); if (!s) return []; const out = []; try { for (let i = 0; i < s.length; i++) { const k = s.key(i); if (k && k.startsWith(ns)) out.push(k.slice(ns.length)); } } catch (_) { /* blocked */ } return out; },
   });
 
+  /* ---------------- commands / fields (faces as working UI) ---------------- */
+  const needCmd = (member) => { const p = P(member); if (!p.cmd || typeof p.history?.execute !== 'function') throw new HostError(`core seam missing: window.__proto.cmd / history.execute (needed by ${member})`, 'window.__proto.cmd'); return p; };
+  const commands = Object.freeze({
+    /** Undoable param write on a block through the core command (the same one the panel and the field editor use). */
+    setParam(block, key, value, label = null) { const p = needCmd('commands.setParam'); const c = p.cmd.setParam(p.world, block, key, value); if (label) c.label = label; return p.history.execute(c); },
+    setTitle(block, title) { const p = needCmd('commands.setTitle'); return p.history.execute(p.cmd.setTitle(p.world, block, String(title ?? ''))); },
+    /** Run any { label, do, undo } command through the history. */
+    execute(cmd) { const p = needCmd('commands.execute'); return p.history.execute(cmd); },
+  });
+  const fields = Object.freeze({
+    /**
+     * Open the core inline editor on a face field (a spec from beginFields, or its id) — enters edit
+     * mode on the block and lays the editor on the face plane. Returns true when it opened.
+     */
+    open(block, field) {
+      const p = P('fields.open');
+      if (!p.fieldEditor || typeof p.fieldEditor.open !== 'function') throw new HostError('core seam missing: window.__proto.fieldEditor.open(block, field)', 'window.__proto.fieldEditor');
+      const f = typeof field === 'string' ? (block.fields?.() || []).find((x) => x.id === field) : field;
+      if (!f) return false;
+      return !!p.fieldEditor.open(block, f);
+    },
+    /** The block in edit mode (or null) and the open editor { block, field } (or null). */
+    editing() { const p = P('fields.editing'); return { block: p.fieldEditor?.editBlock || null, open: p.fieldEditor?.editing || null }; },
+    leave() { P('fields.leave').fieldEditor?.leaveEdit?.(); },
+  });
+
   /* ---------------- layout ---------------- */
   const layout = Object.freeze({
     /**
@@ -301,7 +329,7 @@ export function createHost(proto, manifest, core) {
   });
 
   return Object.freeze({
-    version: SDK_VERSION, manifest: m, nodes, engine, world, ui, selection, draw, theme, icons, examples, storage, persist, layout,
+    version: SDK_VERSION, manifest: m, nodes, engine, world, ui, selection, draw, theme, icons, examples, storage, persist, layout, commands, fields,
     /** True once window.__proto exists (install phase). */
     get booted() { return !!getProto(); },
   });

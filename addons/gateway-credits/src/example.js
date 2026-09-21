@@ -1,32 +1,60 @@
 // example.js — the bundled sample graph, in the core example shape ({ id, label, camera, focus,
-// build({ add, connect, group }) }), loaded through host.examples.build():
-//   Input "New ticket" → gw-llm "Summarize" (Anthropic, standard tier, Gateway credits)
-//   → gw-tool "Web search" (Brave Search) → gw-llm "Draft reply" (OpenAI GPT-5 mini, Own key → one
-//   bypassed row) → Log "Reply log"; a gw-budget for the workflow and a gw-meter beside them.
-export default {
-  id: 'gateway-triage', label: 'Gateway credits · Support inbox triage',
-  description: 'Ticket trigger → metered model call → metered tool call → own-key model call → log; with a workflow budget and a credits meter',
-  camera: { position: [2, 22, 34], target: [2, 1, 3] },
-  focus: (named) => [named.trigger, named.summarize, named.search, named.draft, named.log, named.budget, named.meter],
-  build({ add, connect, group }) {
-    const trigger = add('input', [-20, null, 0], { title: 'New ticket', params: { mode: 'button', label: 'Run', key: 'Space' } });
-    const ticket = add('text', [-20, null, 8], { title: 'Ticket text', params: { mode: 'source', text: 'Customer cannot log in after the password reset email; error 403 on the account page since Tuesday.' } });
-    const summarize = add('gw-llm', [-9, null, 0], { title: 'Summarize', params: { credential: 'Gateway credits', provider: 'Anthropic', model: 'auto', tier: 'standard', workflow: 'Support inbox triage' } });
-    const search = add('gw-tool', [0, null, 0], { title: 'Web search', params: { credential: 'Gateway credits', service: 'Brave Search', units: 1, workflow: 'Support inbox triage' } });
-    const draft = add('gw-llm', [9, null, 0], { title: 'Draft reply', params: { credential: 'Own key', provider: 'OpenAI', model: 'gpt5-mini', tier: 'fixed', apiKey: 'sk-demo-placeholder', workflow: 'Support inbox triage' } });
-    const log = add('log', [19, null, 0], { title: 'Reply log' });
-    const budget = add('gw-budget', [-6, null, 9], { title: 'Triage budget', params: { workflow: 'Support inbox triage', limit: 50, period: 'monthly' } });
-    const meter = add('gw-meter', [5, null, 9], { title: 'Credits meter' });
+// build({ add, connect, group }) }), loaded through host.examples.build(). Justin's shape:
+//
+//   Input "New research request" ─trigger→ gw-agent "Research agent" ─done/answer→ gw-llm "Draft summary"
+//   (OpenAI, Own key → one bypassed row) ─→ Log "Report"
+//   hanging under the agent (slot sub-nodes): gw-llm "Chat model" (Anthropic, Gateway credits) →
+//   `model`, gw-memory "Memory" → `memory`, gw-tool ×3 (Brave Search · Firecrawl · PDF.co) → `tools`
+//   top row: gw-budget "Research budget" · gw-meter "Credits meter"
+//
+// Positions come from flowLayout() (the same pure function Credits → Flow layout applies), so the
+// sample opens already arranged n8n-style: chain left → right, sub-nodes under the agent.
+import { flowLayout } from './flowLayout.js';
 
-    connect(ticket, 'text', summarize, 'prompt');
-    connect(trigger, 'trigger', summarize, 'trigger');
-    connect(summarize, 'done', search, 'trigger');
-    connect(summarize, 'result', search, 'query');
-    connect(search, 'done', draft, 'trigger');
-    connect(search, 'result', draft, 'prompt');
+export const WORKFLOW = 'Research desk';
+const SPEC = [
+  ['trigger', 'input', 'S'], ['agent', 'gw-agent', 'L'], ['draft', 'gw-llm', 'M'], ['log', 'log', 'M'],
+  ['model', 'gw-llm', 'M'], ['memory', 'gw-memory', 'S'], ['search', 'gw-tool', 'M'], ['crawl', 'gw-tool', 'M'], ['pdf', 'gw-tool', 'M'],
+  ['budget', 'gw-budget', 'M'], ['meter', 'gw-meter', 'M'],
+];
+const LINKS = [
+  ['trigger', 'agent', 'trigger'], ['agent', 'draft', 'trigger'], ['agent', 'draft', 'prompt'], ['draft', 'log', 'trigger'], ['draft', 'log', 'in'],
+  ['model', 'agent', 'model'], ['memory', 'agent', 'memory'], ['search', 'agent', 'tools'], ['crawl', 'agent', 'tools'], ['pdf', 'agent', 'tools'],
+];
+/** The sample's positions (uid → [x, z]) from the pure layout; exported so tests can check the shape without a world. */
+export function samplePositions() {
+  return flowLayout(SPEC.map(([uid, type, size]) => ({ uid, type, size })), LINKS.map(([from, to, toKey]) => ({ from, to, toKey })));
+}
+
+export default {
+  id: 'gateway-research', label: 'Gateway credits · Research desk',
+  description: 'Trigger → research agent (chat model, memory and three tools as sub-nodes, every step metered) → own-key draft → log; with a workflow budget and a credits meter',
+  camera: { position: [14, 30, 44], target: [14, 1, 4] },
+  focus: (named) => [named.trigger, named.agent, named.draft, named.log, named.model, named.memory, named.search, named.crawl, named.pdf, named.budget, named.meter],
+  build({ add, connect }) {
+    const P = samplePositions(); const at = (k) => [P.get(k)[0], null, P.get(k)[1]];
+    const trigger = add('input', at('trigger'), { title: 'New research request', params: { mode: 'button', label: 'Run', key: 'Space', payload: 'Compare the September pricing changes across model providers' } });
+    const agent = add('gw-agent', at('agent'), { title: 'Research agent', params: { prompt: 'Compare the September pricing changes across model providers', maxTools: 3, workflow: WORKFLOW } });
+    const model = add('gw-llm', at('model'), { title: 'Chat model', params: { credential: 'Gateway credits', provider: 'Anthropic', model: 'auto', tier: 'standard', workflow: WORKFLOW } });
+    const memory = add('gw-memory', at('memory'), { title: 'Memory', params: { window: 6 } });
+    const search = add('gw-tool', at('search'), { title: 'Web search', params: { credential: 'Gateway credits', service: 'Brave Search', units: 2, workflow: WORKFLOW } });
+    const crawl = add('gw-tool', at('crawl'), { title: 'Crawl pages', params: { credential: 'Gateway credits', service: 'Firecrawl', units: 5, workflow: WORKFLOW } });
+    const pdf = add('gw-tool', at('pdf'), { title: 'Parse PDFs', params: { credential: 'Gateway credits', service: 'PDF.co', units: 2, workflow: WORKFLOW } });
+    const draft = add('gw-llm', at('draft'), { title: 'Draft summary', params: { credential: 'Own key', provider: 'OpenAI', model: 'gpt5-mini', tier: 'fixed', apiKey: 'sk-demo-placeholder', prompt: 'Turn the research answer into a short report', workflow: WORKFLOW } });
+    const log = add('log', at('log'), { title: 'Report' });
+    const budget = add('gw-budget', at('budget'), { title: 'Research budget', params: { workflow: WORKFLOW, limit: 80, period: 'monthly' } });
+    const meter = add('gw-meter', at('meter'), { title: 'Credits meter' });
+
+    connect(trigger, 'trigger', agent, 'trigger');
+    connect(model, 'handle', agent, 'model');
+    connect(memory, 'handle', agent, 'memory');
+    connect(search, 'handle', agent, 'tools');
+    connect(crawl, 'handle', agent, 'tools');
+    connect(pdf, 'handle', agent, 'tools');
+    connect(agent, 'done', draft, 'trigger');
+    connect(agent, 'answer', draft, 'prompt');
     connect(draft, 'done', log, 'trigger');
     connect(draft, 'result', log, 'in');
-    group('Support inbox triage', [summarize, search, draft]);
-    return { trigger, ticket, summarize, search, draft, log, budget, meter };
+    return { trigger, agent, model, memory, search, crawl, pdf, draft, log, budget, meter };
   },
 };

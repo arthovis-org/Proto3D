@@ -30,10 +30,12 @@ export function install(host, { sample = true } = {}) {
   const toast = (t, ms) => host.ui.toast(t, ms);
 
   /* ---- 1. sample graph: a fresh page (nothing restored from this page's own storage) gets the demo graph ---- */
-  const canBuildSample = () => ['input', 'text', 'log'].every((id) => host.nodes.has(id));
+  const canBuildSample = () => ['input', 'log'].every((id) => host.nodes.has(id));
   function loadSample() {
-    if (!canBuildSample()) { toast('Sample needs the core Input / Text / Log components'); return null; }
-    return host.examples.build(example, { name: example.label });
+    if (!canBuildSample()) { toast('Sample needs the core Input / Log components'); return null; }
+    const named = host.examples.build(example, { name: example.label });
+    try { host.ui.wiring(true); } catch (_) { /* older core: cables follow the user's switch */ }   // the flow reads by its cables (slot drop-lines under the agent), so show them
+    return named;
   }
   if (sample && host.world.nodes().length === 0 && canBuildSample()) loadSample();
 

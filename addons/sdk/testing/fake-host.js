@@ -24,7 +24,7 @@ export function createFakeHost(manifest, { registry = coreRegistry, headless = n
   const m = validateManifest(manifest);
   const prefix = nodePrefix(m);
   const ns = storageNamespace(m);
-  const rec = { defs: [], menus: [], sections: [], toasts: [], errorHandlers: [], worldListeners: [], icons: {}, examples: [], stylesheets: [], warnings: [], layouts: [] };
+  const rec = { defs: [], menus: [], sections: [], toasts: [], errorHandlers: [], worldListeners: [], icons: {}, examples: [], stylesheets: [], warnings: [], layouts: [], commands: [], fieldOpens: [] };
   const ownIds = new Set();
   const world = headless?.world || null;
   const engine = headless?.engine || null;
@@ -60,6 +60,7 @@ export function createFakeHost(manifest, { registry = coreRegistry, headless = n
       panelSection(title, build, opts = {}) { const body = fakeElement('div'); const details = fakeElement('details'); details.open = opts.open !== false; details.title = title; details.body = body; rec.sections.push({ title, details, body }); build?.(body, fakeElement); return details; },
       toast(text, ms) { rec.toasts.push({ text, ms }); },
       togglePanel() {}, frameBlocks() {}, hideStart() {}, stylesheet(href) { rec.stylesheets.push(href); },
+      wiring(on) { if (on !== undefined) rec.wiring = !!on; return !!rec.wiring; },
     }),
     selection: Object.freeze({ clear() {}, set() {}, nodes: () => [] }),
     draw: Object.freeze({
@@ -82,6 +83,17 @@ export function createFakeHost(manifest, { registry = coreRegistry, headless = n
       keys() { return [...storage.keys()].filter((k) => k.startsWith(ns)).map((k) => k.slice(ns.length)); },
       /** Test-only: the raw backing map. */
       raw: storage,
+    }),
+    commands: Object.freeze({
+      /** Direct write in Node (no history); recorded. */
+      setParam(block, key, value, label = null) { block.params[key] = value; block.faceDirty = true; rec.commands.push({ kind: 'setParam', uid: block.uid, key, value, label }); world?.changed('param'); return { label: label || `Set ${key}` }; },
+      setTitle(block, title) { block.title = String(title ?? ''); rec.commands.push({ kind: 'setTitle', uid: block.uid, title }); return { label: 'Rename' }; },
+      execute(cmd) { cmd.do?.(); rec.commands.push({ kind: 'execute', label: cmd.label }); return cmd; },
+    }),
+    fields: Object.freeze({
+      /** No editor in Node: records the request and marks the block as editing that field. */
+      open(block, field) { const f = typeof field === 'string' ? (block._fields || []).find((x) => x.id === field) : field; if (!f) return false; block._editing = f.id; rec.fieldOpens.push({ uid: block.uid, id: f.id, kind: f.kind }); return true; },
+      editing: () => ({ block: null, open: null }), leave() {},
     }),
     layout: Object.freeze({
       graph() { const w = need('layout.graph', world); return { nodes: w.nodes.map((n) => ({ uid: n.uid, type: n.typeId, size: n.def?.size || 'S', w: n.width || 0, d: n.height || 0, x: n.position?.x ?? 0, z: n.position?.z ?? 0 })), connections: w.connections.map((c) => ({ from: c.from.owner.uid, to: c.to.owner.uid, fromKey: c.from.key, toKey: c.to.key })) }; },
