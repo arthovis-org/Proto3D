@@ -1,0 +1,126 @@
+/* jev.css — Jev add-on layers on top of ../../styles.css. Only core tokens (--panel-solid, --border,
+   --text, --dim, --accent, --accent-soft, --danger, --ok, --warn, --r-l …) plus a Jev accent, so both
+   themes read well. The tab strip shows the demo name only; the core autosave indicator is inert here. */
+:root { --jev: #22c7d6; --jev-soft: rgba(34, 199, 214, 0.14); }
+:root[data-theme="light"] { --jev: #0e8f9c; --jev-soft: rgba(14, 143, 156, 0.12); }
+#tabstrip .asv-wrap { display: none; }   /* autosave lives in the core page; this page saves to its own key */
+
+/* ---- status pill (bottom-left) and the link back to the core ---- */
+#jev-status, #jev-badge {
+  position: fixed; z-index: 3; bottom: 16px; height: 28px; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px;
+  font-size: 11.5px; color: var(--dim); background: var(--panel); border: 1px solid var(--border); border-radius: 999px; backdrop-filter: blur(8px); box-shadow: var(--shadow); white-space: nowrap;
+}
+#jev-status { left: calc(var(--rail-w) + 16px); cursor: pointer; user-select: none; font-variant-numeric: tabular-nums; }
+#jev-status:hover { border-color: var(--border-strong); color: var(--text); }
+#jev-status b { color: var(--text); font-weight: 600; }
+#jev-status em { color: var(--danger); font-style: normal; font-weight: 600; }
+#jev-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
+#jev-status i.live { background: var(--ok); box-shadow: 0 0 0 3px rgba(52, 201, 154, 0.2); }
+#jev-status.err i { background: var(--danger); }
+#jev-badge { right: calc(var(--panel-w) + 24px); text-decoration: none; }
+body.panel-hidden #jev-badge { right: 24px; }
+#jev-badge:hover { border-color: var(--accent); }
+#jev-badge i { width: 8px; height: 8px; border-radius: 50%; background: var(--jev); }
+#jev-badge b { color: var(--text); font-weight: 600; }
+#jev-badge .link { color: var(--accent); }
+#jobs-tray:not([hidden]) ~ * { }   /* the tray sits above the badge; nothing to do */
+#bottom-right { bottom: 52px; }     /* jobs tray and stats clear the badge */
+
+/* ---- "Ask to add" bar: top centre, under the tab strip ---- */
+#jev-ask {
+  position: fixed; top: calc(var(--top-h) + 12px); left: calc(var(--rail-w) + (100% - var(--rail-w) - var(--panel-w)) / 2); transform: translateX(-50%); z-index: 6;
+  width: min(640px, calc(100% - var(--rail-w) - var(--panel-w) - 48px)); display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 6px; padding: 6px 6px 6px 12px;
+  background: var(--panel-solid); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); font-size: 12px;
+}
+body.panel-hidden #jev-ask { left: calc(var(--rail-w) + (100% - var(--rail-w)) / 2); width: min(640px, calc(100% - var(--rail-w) - 48px)); }
+#jev-ask .ja-ic { display: grid; color: var(--jev); }
+#jev-ask .ja-ic svg { width: 16px; height: 16px; }
+#jev-ask .ja-input { background: var(--field); border: 1px solid transparent; border-radius: var(--r-s); padding: 7px 10px; font-size: 12.5px; cursor: text; min-width: 0; }
+#jev-ask .ja-input:focus { border-color: var(--accent); background: var(--field-hover); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+#jev-ask .ja-go { color: #fff; background: var(--accent); border-radius: var(--r-s); padding: 7px 14px; font-weight: 600; }
+#jev-ask .ja-go:hover { filter: brightness(1.08); background: var(--accent); }
+#jev-ask.busy .ja-go { opacity: 0.6; pointer-events: none; }
+#jev-ask .ja-close { background: none; color: var(--dim); padding: 6px; border-radius: 50%; display: grid; }
+#jev-ask .ja-close:hover { color: var(--text); background: var(--field-hover); }
+#jev-ask .ja-close svg { width: 14px; height: 14px; }
+#jev-ask .ja-result { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 2px 2px; color: var(--text); border-top: 1px solid var(--border); margin-top: 2px; }
+#jev-ask .ja-result.bad { color: var(--danger); }
+#jev-ask .ja-line { flex: 1 1 100%; }
+#jev-ask .ja-alts { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#jev-ask .ja-alts-label { color: var(--dim); }
+#jev-ask .ja-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px 0 6px; border-radius: 12px; background: var(--field); color: var(--text); font-size: 11px; font-weight: 600; }
+#jev-ask .ja-chip svg { width: 13px; height: 13px; color: var(--dim); }
+#jev-ask .ja-chip small { color: var(--dim); font-weight: 500; font-variant-numeric: tabular-nums; }
+#jev-ask .ja-chip:hover { background: var(--accent-soft); color: var(--accent); }
+#jev-ask .ja-tag { margin-left: auto; color: var(--dim); font-size: 10.5px; }
+
+/* ---- the movable tutorial card ---- */
+#jev-tutorial {
+  position: fixed; z-index: 6; width: 340px; left: 0; top: 0; display: flex; flex-direction: column;
+  background: var(--panel-solid); border: 1px solid var(--border); border-radius: var(--r-l); box-shadow: var(--shadow); font-size: 12.5px; line-height: 1.5; color: var(--text);
+  pointer-events: auto; user-select: none; touch-action: none;
+}
+#jev-tutorial.dragging { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45); opacity: 0.96; }
+#jev-tutorial .jt-head { display: flex; align-items: center; gap: 4px; height: 34px; padding: 0 6px 0 8px; border-bottom: 1px solid var(--border); cursor: grab; }
+#jev-tutorial.dragging .jt-head { cursor: grabbing; }
+#jev-tutorial .jt-grip { display: grid; color: var(--dim); opacity: 0.7; }
+#jev-tutorial .jt-grip svg { width: 14px; height: 14px; transform: rotate(90deg); }
+#jev-tutorial .jt-title { font-weight: 600; font-size: 12.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#jev-tutorial .jt-count { font-size: 10.5px; color: var(--dim); font-variant-numeric: tabular-nums; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; line-height: 16px; }
+#jev-tutorial .jt-head button { width: 24px; height: 24px; padding: 0; display: grid; place-items: center; background: none; color: var(--dim); border-radius: 6px; }
+#jev-tutorial .jt-head button:hover { color: var(--text); background: var(--field-hover); }
+#jev-tutorial .jt-head button svg { width: 14px; height: 14px; }
+#jev-tutorial .jt-body { padding: 10px 12px 6px; display: flex; flex-direction: column; gap: 10px; }
+#jev-tutorial .jt-demos { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+#jev-tutorial .jt-demo { display: flex; align-items: center; gap: 7px; padding: 5px 8px; text-align: left; font-size: 11.5px; font-weight: 500; background: var(--field); border-radius: var(--r-s); color: var(--dim); min-width: 0; }
+#jev-tutorial .jt-demo span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#jev-tutorial .jt-demo:hover { background: var(--field-hover); color: var(--text); }
+#jev-tutorial .jt-demo.on { background: var(--jev-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--jev); }
+#jev-tutorial .jt-demo-n { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; background: var(--field-hover); color: var(--dim); flex: none; }
+#jev-tutorial .jt-demo.on .jt-demo-n { background: var(--jev); color: #fff; }
+#jev-tutorial .jt-stepno { font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dim); font-weight: 600; }
+#jev-tutorial h3 { margin: 4px 0 4px; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+#jev-tutorial p { margin: 0; color: var(--text); user-select: text; }
+#jev-tutorial .jt-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+#jev-tutorial .jt-actions:empty { display: none; }
+#jev-tutorial .jt-doit { color: #fff; background: var(--accent); font-weight: 600; padding: 6px 12px; }
+#jev-tutorial .jt-doit:hover { background: var(--accent); filter: brightness(1.08); }
+#jev-tutorial .jt-extra { font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 10px; }
+#jev-tutorial .jt-link { color: var(--accent); text-decoration: none; padding: 6px 2px; font-weight: 500; }
+#jev-tutorial .jt-link:hover { text-decoration: underline; }
+#jev-tutorial .jt-foot { display: flex; align-items: center; gap: 6px; padding: 8px 12px 10px; border-top: 1px solid var(--border); }
+#jev-tutorial .jt-grow { flex: 1; }
+#jev-tutorial .jt-next { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+#jev-tutorial .jt-showme { color: var(--dim); background: none; }
+#jev-tutorial .jt-showme:hover:not(:disabled) { color: var(--text); background: var(--field-hover); }
+#jev-tutorial.collapsed { width: auto; }
+#jev-tutorial.collapsed .jt-body, #jev-tutorial.collapsed .jt-foot, #jev-tutorial.collapsed .jt-dock { display: none; }
+#jev-tutorial.collapsed .jt-head { border-bottom: 0; border-radius: var(--r-l); padding-right: 4px; }
+#jev-tutorial.collapsed .jt-title { padding-right: 8px; }
+
+/* ---- spotlight ring over the step's blocks (never catches the pointer) ---- */
+#jev-spot {
+  position: fixed; z-index: 5; pointer-events: none; left: 0; top: 0; width: 80px; height: 80px; border-radius: 14px;
+  border: 2px solid var(--accent); box-shadow: 0 0 0 6px var(--accent-soft), 0 0 24px var(--accent-soft); transition: opacity 0.3s ease, left 0.12s linear, top 0.12s linear, width 0.12s linear, height 0.12s linear; opacity: 1;
+}
+#jev-spot.fade { opacity: 0; }
+
+/* ---- panel sections of the Jev components ---- */
+.jev-note { border-left: 2px solid var(--jev); padding-left: 8px; }
+.jev-raw summary { cursor: pointer; color: var(--dim); font-size: 11px; list-style: none; user-select: none; padding: 2px 0; }
+.jev-raw summary::before { content: "▸ "; font-size: 10px; }
+.jev-raw[open] summary::before { content: "▾ "; }
+.jev-pre { margin: 4px 0 0; padding: 8px; max-height: 220px; overflow: auto; font-family: "JetBrains Mono", Menlo, Consolas, monospace; font-size: 10.5px; line-height: 1.4; background: var(--field); border-radius: var(--r-s); color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.jev-list { display: flex; flex-direction: column; gap: 4px; }
+.jev-list-head { display: flex; align-items: center; justify-content: space-between; color: var(--dim); min-height: 24px; }
+.jev-list-add { padding: 3px 8px; font-size: 11px; border-radius: 6px; }
+.jev-list-rows { display: flex; flex-direction: column; gap: 4px; }
+.jev-list-row { display: grid; grid-template-columns: 88px 1fr 22px; gap: 4px; align-items: center; }
+.jev-list-row:has(.jev-f-label:only-of-type) { grid-template-columns: 1fr 22px; }
+.jev-list-row input { width: 100%; padding: 4px 7px; border-radius: 6px; background: var(--field); border: 1px solid transparent; cursor: text; font-size: 11.5px; min-width: 0; }
+.jev-list-row input:hover { background: var(--field-hover); }
+.jev-list-row input:focus { border-color: var(--accent); outline: none; }
+.jev-list-rm { width: 22px; height: 22px; padding: 0; display: grid; place-items: center; background: none; color: var(--dim); border-radius: 6px; font-size: 14px; line-height: 1; }
+.jev-list-rm:hover:not(:disabled) { color: var(--danger); background: var(--field-hover); }
+.jev-about code { font-size: 11px; background: var(--field); padding: 0 4px; border-radius: 4px; }
+.jev-about .modal-body p { margin: 0; line-height: 1.55; }
