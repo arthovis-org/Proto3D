@@ -67,6 +67,7 @@ function definition(kind) {
       { key: 'count', label: 'count', type: 'number', default: 1, min: 1, max: 4, step: 1, hidden: true },
       { key: 'autoRun', label: 'auto-run on input change', type: 'boolean', default: false, hidden: true },
       { key: 'approveAbove', label: 'approve above $', type: 'number', default: 0.05, min: 0, max: 100, step: 0.01, hidden: true },
+      { key: 'note', label: 'note', type: 'text', default: '' },   // free text (a ComfyUI import keeps the sampler / scheduler / checkpoint here)
     ],
     describeLink(from, toDef, to, n) {
       if (from.key === 'media') return toDef.id === 'kanban-board' && to.key === 'cover' ? `${n.fromPoss} ${kind} becomes a card cover on ${n.to}` : toDef.id === 'media-grid' ? `${n.fromPoss} ${kind} joins the ${n.to} gallery` : toDef.id === 'image-edit' ? `${n.to} edits ${n.fromPoss} ${kind}` : toDef.id === 'enhance' ? `${n.to} enhances ${n.fromPoss} ${kind}` : toDef.id === 'generate-guide' ? `${n.fromPoss} ${kind} guides through ${n.to}` : toDef.id === 'generate-mask' ? `${n.fromPoss} ${kind} sizes the mask of ${n.to}` : to.key === 'reference' ? `${n.fromPoss} ${kind} is the reference for ${n.to}` : `${n.fromPoss} ${kind} shows on ${n.to}`;

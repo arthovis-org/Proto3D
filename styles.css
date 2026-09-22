@@ -1188,3 +1188,12 @@ button.primary svg { width: 15px; height: 15px; }
 .pm-log { display: grid; grid-template-columns: 52px 112px 1fr auto; }
 .pm-log input[type="number"] { cursor: ew-resize; padding: 5px 6px; }
 .pm-who select { flex: 1; padding: 4px 6px; font-size: 11px; }
+
+/* ---- ComfyUI import report (ui/import-report.js) ---- */
+.import-list { margin: 0; padding: 0 0 0 16px; display: grid; gap: 4px; font-size: 12px; line-height: 1.45; }
+.import-list li small { color: var(--dim); }
+.import-none { margin: 0; color: var(--dim); }
+.import-mapping summary { cursor: pointer; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; }
+.import-mapping[open] summary { margin-bottom: 8px; }
+.import-copy { padding: 6px 12px; border-radius: 8px; }
+#import-report .modal-body section h3 { margin: 0 0 6px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim); font-weight: 600; }

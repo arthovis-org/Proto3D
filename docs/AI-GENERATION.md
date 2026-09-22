@@ -12,6 +12,7 @@ cannot promise, and how to extend it.
 ```
 components/generate/  prompt.js · generate-text.js · generate-media.js (image / video / audio) · common.js
                       generate-settings.js · generate-guide.js · generate-mask.js · image-edit.js · enhance.js
+import/comfyui.js     a ComfyUI workflow (UI or API JSON) → a Proto3D document + report   ui/import-report.js
 ui/                   connections.js (keys)  model-browser.js  jobs-tray.js
 ai/                   providers/{base,openrouter,fal,kie,demo,index}.js  vault.js  jobs.js  pricing.js  store.js  http.js  ui-hooks.js
 proxy/                cloudflare-worker.js (optional CORS proxy)
@@ -222,7 +223,7 @@ Blob-backed images (Demo output, uploads, masks, edge traces as data URLs) canno
 fal, so `run` swaps every `*_url` field that is a `blob:` URL for a base64 **data URL** before the
 request (`inlineBlobs`) — unverified: fal is believed to accept data URIs for `*_url` inputs.
 
-**Unverified endpoints** added by this round (from memory of fal's catalogue; the docs were not
+**Unverified endpoints** added by the Generate round (from memory of fal's catalogue; the docs were not
 reachable): `fal-ai/flux-general` (+ the XLabs ControlNet paths), `fal-ai/flux-pro/v1/fill`,
 `fal-ai/flux-pro/v1.1-ultra/redux`, `fal-ai/clarity-upscaler`, `fal-ai/aura-sr`,
 `fal-ai/birefnet`, `fal-ai/codeformer`, the `negative_prompt` field on Kling / Hunyuan / Wan and
@@ -304,3 +305,45 @@ settings, fal `buildInput` (`negative_prompt` only on rows with `negativeField`,
 controlnet / redux endpoints, the enhance rows), kie's refusal, Iterate, Ctrl+B pass-through on
 a Text node, a file drop and an image paste on a Media node, the download chips and every new
 drop-to-link sentence — with zero console errors — and renders the template's thumbnails.
+
+## 9. Importing ComfyUI workflows
+
+**File → Import → ComfyUI workflow…** (also *File → Open…*, *Import → Proto3D JSON…* and a
+`.json` dropped on the canvas, which all detect a workflow with `isComfyWorkflow`) turns a
+ComfyUI graph into a Proto3D project: `import/comfyui.js → comfyToProto3D(json, { name })`
+returns `{ doc, report }`, `main.js` opens the document like an example (an untouched empty tab is
+reused, else a new tab named after the file), lifts every block onto the floor, auto-arranges it
+along its cables and shows the **report dialog** (`ui/import-report.js`): *Imported N of M nodes ·
+K placeholders*, the skipped classes with a reason, the notes and a **Copy report** button. Both
+ComfyUI shapes are read — the editor's JSON (`nodes[] / links[] / groups[]`, widget values as a
+bare array named through `WIDGETS`) and the API format (`{ id: { class_type, inputs } }`).
+
+The rule of the Generate round applies: hosted APIs, not local diffusion, so loaders, latents and
+samplers collapse into the five primitives. `CLASS_MAP` is the table (one row per class: `pass`
+= links go through it, `silent` = read by another rule, `node` = a builder, `drop` = a reason):
+
+| ComfyUI | Proto3D | how |
+| --- | --- | --- |
+| `CLIPTextEncode` (`…Flux`, `…SDXL`) | **Prompt** | the text is the template; wired into a sampler's `positive` → Generate `prompt`, `negative` → `negative` |
+| `KSampler` · `KSamplerAdvanced` · `SamplerCustom(Advanced)` + `EmptyLatentImage` | **Settings** → **Generate Image** (Demo) | seed · `control_after_generate` → `seedMode` · steps · cfg → guidance (`FluxGuidance` wins) · denoise → strength · width × height → size preset / custom · batch → count; the checkpoint name (`CheckpointLoaderSimple` / `UNETLoader`) titles the generator, sampler / scheduler go into its `note` param; `LoraLoader` on the model chain → Settings LoRA (name, `strength_model`); an `ImageOnlyCheckpointLoader` / AnimateDiff / SVD chain makes a Generate Video instead |
+| `VAEEncode` (+ `VAEDecode`, latent ops) | pass through | `VAEEncode` on the sampler's latent chain → a **Guide** *image to image* with the denoise as strength and the picture as `reference`; `VAEEncodeForInpaint` / `SetLatentNoiseMask` → the mask into Generate `mask`; a sampler fed by another sampler takes the first's image as reference + guide |
+| `LoadImage` · `LoadImageMask` · `LoadAudio` | **Media** (+ a **Mask** from the alpha channel when the MASK output is used) | a sample stands in — ComfyUI's input folder is not reachable; the report says which file to pick |
+| `ControlNetApply(Advanced)` + `ControlNetLoader` + preprocessors (`Canny`, `CannyEdgePreprocessor`, `DepthAnything…`, `DWPreprocessor` / `Openpose…`) | **Guide** into Generate `guides` | mode from the preprocessor or the model name (canny / lineart / scribble → *edges*, depth → *depth*, pose → *pose*), `strength`; the guide reads the picture *before* the preprocessor (Proto3D traces edges, the endpoint estimates depth and pose); a lone `Canny` is an *edges* guide |
+| `IPAdapterApply` · `IPAdapterAdvanced` · `IPAdapter` | **Guide** *style reference* | `weight` → strength |
+| `ImageScale` · `ImageScaleBy` · `ImageCrop` · `ImagePadForOutpaint` · `ImageBlend` · `ImageCompositeMasked` · `ImageInvert` · `ImageBlur` · `ImageSharpen` | **Image Edit** | resize (crop `center` → cover) · resize ×k on a 1024 base with keep-aspect · crop (px as fractions of 1024, noted) · pad (transparent) · blend (factor, mode) · composite (source over destination through the mask) · invert · adjust blur · adjust sharpen |
+| `SolidMask` · `ImageToMask` · `InvertMask` · `GrowMask` · `FeatherMask` · `ThresholdMask` | **Mask** | the ops fold onto the Mask upstream (invert toggles, grow adds, feather averages the four sides, threshold sets it); `MaskToImage` passes through, `MaskComposite` keeps its destination |
+| `ImageUpscaleWithModel` + `UpscaleModelLoader` | **Enhance** (browser) | ×2 / ×4 from the model name (×8 → ×4), auto-run |
+| `SaveImage` · `PreviewImage` · `SaveAnimatedWEBP` · `VHS_VideoCombine` · `SaveAudio` | **Media Grid** | title = `filename_prefix` |
+| `Reroute` · conditioning combines · model patches (`FreeU`, `ModelSampling…`, `CLIPSetLastLayer`) | pass through | combines keep their first input (noted) |
+| `Note` · `MarkdownNote` | **Sticky Note** | |
+| `PrimitiveNode` | — | its value lands in the linked widget (a KSampler seed…), the node is dropped |
+| bypassed (`mode 4`) | the mapped block with `enabled: false` | Ctrl+B pass-through |
+| muted (`mode 2`), unknown classes | a **Sticky Note placeholder** *"ComfyUI · Class · not supported"* at the node's position | links from it are dropped; listed under *Skipped* |
+
+Positions come from the canvas (`pos / 70` → x, z) and set the reading order; the result is then
+auto-arranged (`layoutPlan`), so the layout follows the cables while ties keep the workflow's
+order. ComfyUI groups become Proto3D groups by bounding box. A **Run** button (ComfyUI's *Queue
+Prompt*) is wired into every generator's `run`. What is dropped and why: checkpoints, VAEs, CLIP
+loaders and schedulers name nothing a hosted endpoint takes beyond the numbers already on the
+Settings node; latents have no counterpart (the image is the value); a second LoRA, a
+`MaskComposite` or a `ConditioningCombine`'s second input have no slot, so the report says so.

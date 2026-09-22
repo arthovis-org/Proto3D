@@ -412,6 +412,21 @@ and into a Generate Image's `run`, and the Iterate's `result` into a Prompt's `v
 Prompt reads the current row before the run pulse reaches the generator, so each press paints
 the next row; with *auto* on and a timer-free graph the list runs on its own.
 
+**Importing a ComfyUI workflow.** **File → Import → ComfyUI workflow…** (a `.json` dropped on
+the canvas or opened with *Open…* is detected too) reads the editor's JSON or the API format and
+opens it as a new project: `CLIPTextEncode` → Prompt (positive → `prompt`, negative →
+`negative`), a `KSampler` with its `EmptyLatentImage` → one **Settings** node (seed and its
+after-run rule, steps, cfg, denoise, size, batch) driving one **Generate Image** on the Demo
+provider (the checkpoint names it, sampler / scheduler sit in its note), `LoadImage` → Media
+(a sample stands in for the file — the report says which to pick), `ControlNetApply` / IP-Adapter
+→ Guide, `VAEEncode` on the latent chain → an image-to-image Guide with the denoise as strength,
+`VAEEncodeForInpaint` / `SetLatentNoiseMask` → the mask into `mask`, the image ops → Image Edit,
+the mask ops fold onto one Mask, `ImageUpscaleWithModel` → Enhance, `SaveImage` / `PreviewImage`
+→ Media Grid, `Note` → Sticky Note, bypassed nodes arrive muted, unknown classes become a Sticky
+Note placeholder. VAEs, latents and loaders collapse. The scene is auto-arranged, a Run button
+stands in for *Queue Prompt*, and a report dialog lists what was mapped, folded or skipped (with
+*Copy report*). The mapping table is in [`docs/AI-GENERATION.md`](docs/AI-GENERATION.md) §9.
+
 **Bypass.** `Ctrl+B` (or *Edit → Bypass*, with a check mark while the selection is muted)
 toggles `enabled` on the selected blocks in one undoable step. A bypassed block does not evaluate;
 the engine carries its first input of each output's type straight to that output (`any` matches
