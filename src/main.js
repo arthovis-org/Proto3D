@@ -5,7 +5,7 @@
 // navigation presets, first-run tour, LOD, the AI layer (providers, key vault, jobs) with its
 // Connections page, model browser and job tray, the performance stats, the project tabs (each with
 // its own scene, history and view), autosave into IndexedDB with its indicator, version history, recent projects,
-// the Start panel (blank project, three starter templates with a hint bar, recent projects, open a file),
+// the Start panel (blank file, starter templates with a hint bar, recent files, open a file),
 // the Home page (every project in this browser with its metadata and task index, the people
 // directory, the Create / Edit Project dialog),
 // the 2D editing mode (plan view, key 2) with grid snapping and Auto-layout (L), inline editing of
@@ -195,7 +195,7 @@ const tabs = new Tabs({
     thumbnail: () => requestThumb(),
     confirmClose: (tab) => confirmDialog({
       icon: icons.file, title: `Save changes to ${tabs.displayName(tab)}?`,
-      text: tab.baseDoc?.nodes?.length ? 'Save downloads a JSON file. Discard closes the tab and keeps the project in Open recent as it was last saved or opened.' : 'Save downloads a JSON file. Discard closes the tab and removes this never-saved project from browser storage.',
+      text: tab.baseDoc?.nodes?.length ? 'Save downloads a JSON file. Discard closes the tab and keeps the file in Open recent as it was last saved or opened.' : 'Save downloads a JSON file. Discard closes the tab and removes this never-saved file from browser storage.',
       buttons: [{ id: 'discard', label: 'Discard', kind: 'danger' }, { id: 'cancel', label: 'Cancel' }, { id: 'save', label: 'Save', kind: 'primary', default: true }],
     }),
     download: (doc, name) => downloadJSON(doc, safeFileName(name)),
@@ -233,15 +233,15 @@ function syncHint(tab = tabs.active) { if (tab?.hint && !tab.hint.dismissed && !
 function newProject() {
   home.hide('new');
   let t = tabs.active;
-  if (t && tabs.isUntouchedEmpty(t)) overlays.toast('This tab is already an empty project', 1400);
-  else { t = tabs.newTab(); if (t) overlays.toast('New project · Save as… names it, Alt+W closes the tab', 1600); }
+  if (t && tabs.isUntouchedEmpty(t)) overlays.toast('This tab is already an empty file', 1400);
+  else { t = tabs.newTab(); if (t) overlays.toast('New file · Save as… names it, Alt+W closes the tab', 1600); }
   if (t) start.open('new');
   return t;
 }
 function closeTab(id = tabs.activeId) { return tabs.close(id); }
 async function renameProject() {
   const tab = tabs.active; if (!tab || tab.preview) return;
-  const name = await promptDialog({ icon: icons.text, title: 'Rename project', text: 'The tab, the window title and the next Save use this name.', value: tab.name || '', placeholder: 'Untitled', ok: 'Rename' });
+  const name = await promptDialog({ icon: icons.text, title: 'Rename file', text: 'The tab, the window title and the next Save use this name.', value: tab.name || '', placeholder: 'Untitled', ok: 'Rename' });
   if (name !== null) tabs.rename(tab.id, name.replace(/\.json$/i, ''));
 }
 /** Save = download the project as JSON under its name (a dated name the first time) and mark the tab saved; Save as… asks for the name. */
@@ -284,9 +284,9 @@ async function openRecent(id) {
 }
 async function clearRecent() {
   const n = recentCache.filter((p) => !p.open).length;
-  if (!n) { overlays.toast('No closed projects to remove', 1400); return; }
-  const ok = await confirmDialog({ icon: icons.trash, title: `Remove ${n} closed project${n > 1 ? 's' : ''} from this browser?`, text: 'Open tabs stay. Their versions go with them; downloaded JSON files are not affected.', buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Remove', kind: 'danger', default: true }] });
-  if (ok === 'ok') { await tabs.forgetClosed(); refreshRecent(); overlays.toast(`${n} project${n > 1 ? 's' : ''} removed`, 1400); }
+  if (!n) { overlays.toast('No closed files to remove', 1400); return; }
+  const ok = await confirmDialog({ icon: icons.trash, title: `Remove ${n} closed file${n > 1 ? 's' : ''} from this browser?`, text: 'Open tabs stay. Their versions go with them; downloaded JSON files are not affected.', buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Remove', kind: 'danger', default: true }] });
+  if (ok === 'ok') { await tabs.forgetClosed(); refreshRecent(); overlays.toast(`${n} file${n > 1 ? 's' : ''} removed`, 1400); }
 }
 /** Merge a document into the scene, undoable; the new blocks land to the right of everything and get selected and framed. */
 function importDoc(doc, label) {
@@ -472,7 +472,7 @@ const navHint = new NavHint({ controls: ws.controls, toast: (t, ms) => overlays.
 const syncEmptyHint = () => overlays.setEmptyHint(world.nodes.length === 0 && !start?.isOpen && !home?.isOpen);
 const start = new StartPanel({
   el: $('start'), templates, showcase: exampleById(DEFAULT_EXAMPLE), recent: () => tabs.recent(),
-  onBlank: () => { if (!(tabs.active && tabs.isUntouchedEmpty(tabs.active))) tabs.newTab(); overlays.toast('Blank project · add a component from the left', 1600); },
+  onBlank: () => { if (!(tabs.active && tabs.isUntouchedEmpty(tabs.active))) tabs.newTab(); overlays.toast('Blank file · add a component from the left', 1600); },
   onTemplate: (id) => loadExample(id), onExample: (id) => loadExample(id), onOpenFile: () => openProject(), onOpenRecent: (id) => openRecent(id),
   onAllProjects: () => home.open('projects', 'start'),
   onChange: () => { syncEmptyHint(); syncToolbar(); },
@@ -745,8 +745,7 @@ const menubar = new MenuBar({
   el: $('menubar'), tools,
   menus: [
     { id: 'file', label: 'File', items: () => [
-      { label: 'New project', shortcut: 'Alt+N', hint: 'in a new tab', run: newProject },
-      { label: 'New project…', hint: 'name, key, people, dates, a template', run: () => projectDialog.create() },
+      { label: 'New file', shortcut: 'Alt+N', hint: 'in a new tab', run: newProject },
       { label: 'Projects', shortcut: 'Alt+H', hint: 'all projects, tasks, calendar', checked: home.isOpen, run: () => home.toggle() },
       { label: 'Open…', shortcut: sc('Ctrl+O'), hint: 'a JSON file, in a new tab', run: openProject },
       { label: 'Open recent', items: () => {
@@ -761,7 +760,7 @@ const menubar = new MenuBar({
       { sep: true },
       { label: 'Save', shortcut: sc('Ctrl+S'), hint: project.name ? `${safeFileName(project.name)}` : 'downloads JSON', disabled: !!tabs.active?.preview, run: saveProject },
       { label: 'Save as…', shortcut: sc('Ctrl+Shift+S'), disabled: !!tabs.active?.preview, run: saveProjectAs },
-      { label: 'Rename project…', disabled: !!tabs.active?.preview, run: renameProject },
+      { label: 'Rename file…', disabled: !!tabs.active?.preview, run: renameProject },
       { label: 'Project settings…', hint: tabs.active?.meta ? `${tabs.active.meta.key} · ${tabs.active.meta.status}` : undefined, disabled: !!tabs.active?.preview, run: projectSettings },
       { sep: true },
       { label: 'Version history…', hint: `${tabs.active?.preview ? 'previewing an earlier version' : 'snapshots of this project, in this browser'}`, checked: versions.isOpen, run: () => versions.toggle() },
@@ -872,7 +871,7 @@ const menubar = new MenuBar({
     ] },
     { id: 'help', label: 'Help', items: () => [
       { label: 'Command palette…', hint: 'every command, component and block by name', shortcut: sc('Ctrl+K'), run: () => palette.open() },
-      { label: 'Start panel', hint: 'blank project, starter templates, recent projects', checked: start.isOpen, run: () => start.toggle() },
+      { label: 'Start panel', hint: 'blank file, starter templates, recent files', checked: start.isOpen, run: () => start.toggle() },
       { label: 'Take the tour', run: () => tour.start() },
       { label: 'Keyboard shortcuts…', shortcut: sc('Shift+?'), run: () => shortcutsSheet.open() },
       { label: 'Help & legend', shortcut: 'H', checked: $('help').open && !document.body.classList.contains('panel-hidden'), run: () => toggleHelp() },

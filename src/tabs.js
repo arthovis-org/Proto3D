@@ -134,7 +134,7 @@ export class Tabs {
   /* ---------- open / new ---------- */
   /** Open a fresh tab (File → New): empty unless `doc` is given. Returns the tab, or null at the limit. */
   newTab(opts = {}) {
-    if (!this.canOpenMore) { this.hooks.toast?.(`Up to ${this.limit} projects can be open at once · close one first`, 2600); return null; }
+    if (!this.canOpenMore) { this.hooks.toast?.(`Up to ${this.limit} files can be open at once · close one first`, 2600); return null; }
     const tab = this._makeTab(opts);
     const i = this.indexOf(this.activeId);
     this.tabs.splice(i >= 0 ? i + 1 : this.tabs.length, 0, tab);
@@ -161,7 +161,7 @@ export class Tabs {
       this.activate(fresh.id);
       return fresh;
     }
-    if (!this.canOpenMore) { this.hooks.toast?.(`Up to ${this.limit} projects can be open at once · close one first`, 2600); return null; }
+    if (!this.canOpenMore) { this.hooks.toast?.(`Up to ${this.limit} files can be open at once · close one first`, 2600); return null; }
     if (record) {
       const tab = this._fromRecord(record);
       const i = this.indexOf(this.activeId);

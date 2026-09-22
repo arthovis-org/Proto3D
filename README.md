@@ -2,7 +2,7 @@
 
 Proto3D is a browser-based workspace where **components** live as clean cards in a calm 3D room
 and **actually run**: a dataflow engine evaluates the graph every frame. The first visit opens the
-**Start panel**: a blank project, three **starter templates** (a project board, an AI content
+**Start panel**: a blank file, three **starter templates** (a project board, an AI content
 pipeline, an interactive device flow — see [Start panel and templates](#start-panel-and-templates))
 and the full **Showcase** — a product launch as a project-management system: a standing 3D Kanban board
 with draggable cards and a lane per person, a milestone, a Gantt timeline, a dashboard, a
@@ -59,7 +59,7 @@ Three.js r160 comes from `https://unpkg.com/three@0.160.0/` through the import m
 `index.html`; to run offline, copy `node_modules/three` next to the page and point the two
 import-map entries at it. Inter is loaded from Google Fonts when online; offline the type stack
 falls back to the system sans. The first load opens an empty project with the **Start panel** over
-it — pick a starter template, the Showcase, a blank project or a file; the first template you open
+it — pick a starter template, the Showcase, a blank file or a file on disk; the first template you open
 starts a short seven-step tour (once; **Help → Take the tour** replays it). After that the
 workspace restores your open **project tabs** from the browser's IndexedDB — every tab's scene,
 camera and 2D mode, with the active one in front (**File → New** opens an empty project in a new
@@ -474,7 +474,7 @@ Everything else is the same in every preset:
 | Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the menu bar's quick toggles have undo / redo |
 | Group | `Ctrl+G` group the selection · `C` collapse / expand · `Ctrl+Shift+G` ungroup · drag the frame to move the whole group · rename in the panel |
 | Interact | click a device screen (`tap`), an Input face (button, toggle, slider) or press the configured key · click / drag a **card** on a Kanban board (drop it on a **Person** or into a lane to assign it), click the **+** tile, click a checklist row, press the **Run** disc on a Flow Terminal, drag a Timeline bar's end handle |
-| File | menu bar **File** → New project (`Alt+N`, a new tab) · Open… (`Ctrl+O`) · Open recent (thumbnails, last opened) · Save (`Ctrl+S`, downloads JSON) · Save as… · Rename project… · Version history… · Close tab (`Alt+W`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave into the browser 1.5 s after every change |
+| File | menu bar **File** → New file (`Alt+N`, a new tab) · Open… (`Ctrl+O`) · Open recent (thumbnails, last opened) · Save (`Ctrl+S`, downloads JSON) · Save as… · Rename file… · Version history… · Close tab (`Alt+W`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave into the browser 1.5 s after every change |
 | Tabs | one tab per open project under the menu bar · click / `Ctrl+Tab` (`Alt+]` where the browser keeps it) switch · `+` new · drag to reorder · middle-click or × closes (a dirty tab asks Save / Discard / Cancel) · double-click renames · dot = unsaved changes · the indicator at the right end shows Saved · just now / Saving… / Unsaved changes and offers Save now, Download JSON, Version history |
 | Edit | menu bar **Edit** → Undo / Redo · Cut / Copy / Paste (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`, also between tabs) · Duplicate · Delete · Select all · Deselect · Auto-layout (`L`) · Group / Ungroup · Collapse |
 | View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · Cables ▸ (style, corner rounding, thickness, bundling, waypoints) · 2D editing mode (`2`) · Snap ▸ (`M`, grid size, objects, ports, rotation, scale) · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
@@ -503,7 +503,7 @@ autosave when the content changed (at most one every 2 minutes), on every manual
 restore and with **Snapshot now**. Each shows when, its kind, size and a one-line diff ("+2
 components · 1 renamed · 3 cables changed · 4 params changed"); give one a **name** to keep it
 past the 50-version cap. **Preview** opens it read-only in a temporary tab, **Restore** replaces
-the project as one undoable step, **Duplicate as tab** makes a new project of it, **Delete** and
+the project as one undoable step, **Duplicate as tab** makes a new file of it, **Delete** and
 **Clear older than…** free space. The footer shows what the project and all projects take and how
 much of the browser's storage quota this site uses, with a warning near the limit. **File → Open
 recent** lists every project in the browser with a thumbnail and when it was last opened; open
@@ -543,7 +543,7 @@ member · viewer*), start and due dates — stored with the record and written i
   and closed projects alike (undoable when the project is the active tab); **Shift+drag** keeps
   the span length. Agenda lists the next 30 days (and what is overdue).
 
-**New project** (Home, or **File → New project…**) opens the Create Project dialog: name, key,
+**New project** (the Projects tab on Home; a workspace tab is a *file*, File → New file) opens the Create Project dialog: name, key,
 description, colour, status, dates, tags (Enter or comma adds), **People** from the browser's
 directory with a role each (an inline row adds someone new) and **Start from** — blank, a starter
 template or the Showcase. **File → Project settings…** and a card's *Edit…* reopen it for an

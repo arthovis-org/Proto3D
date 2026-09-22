@@ -1,7 +1,7 @@
 // ui/tab-strip.js — the slim strip under the menu bar: a permanent Home tab first (the Home page,
 // ui/home.js: not closable, not draggable, `aria-current` while Home is shown), one tab per open
 // project (name, a dot while it has unsaved changes, × to close, a preview badge for a read-only
-// version), a "+" for a new project and, at the right end, the autosave indicator ("Saved · 2 min ago", "Saving…",
+// version), a "+" for a new file and, at the right end, the autosave indicator ("Saved · 2 min ago", "Saving…",
 // "Unsaved changes", "Autosave off") whose hover card shows when and where the last save went
 // and offers Save now, Download JSON and Version history. Presentation only: it renders from the
 // Tabs model (tabs.js) and calls back into it. The DOM is reconciled by tab id so a tab element
@@ -36,7 +36,7 @@ export class TabStrip {
     this.home.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') { e.preventDefault(); this.els.get(this.tabs.tabs[0]?.id)?.focus(); } });
     if (this.onHome) this.el.appendChild(this.home);
     this.list = document.createElement('div'); this.list.className = 'ptabs';
-    this.add = document.createElement('button'); this.add.type = 'button'; this.add.className = 'ptab-add'; this.add.title = 'New project (Alt+N)'; this.add.setAttribute('aria-label', 'New project'); this.add.innerHTML = icons.plus;
+    this.add = document.createElement('button'); this.add.type = 'button'; this.add.className = 'ptab-add'; this.add.title = 'New file (Alt+N)'; this.add.setAttribute('aria-label', 'New file'); this.add.innerHTML = icons.plus;
     this.add.addEventListener('click', () => this.onNew?.());
     this.el.appendChild(this.list); this.el.appendChild(this.add);
     // autosave indicator + hover card
@@ -100,7 +100,7 @@ export class TabStrip {
     }
     for (const [id, el] of this.els) if (!seen.has(id)) { el.remove(); this.els.delete(id); }
     this.add.disabled = !this.tabs.canOpenMore;
-    this.add.title = this.tabs.canOpenMore ? 'New project (Alt+N)' : `Up to ${this.tabs.limit} projects can be open at once`;
+    this.add.title = this.tabs.canOpenMore ? 'New file (Alt+N)' : `Up to ${this.tabs.limit} files can be open at once`;
     const active = this.els.get(this.tabs.activeId);
     if (active && this.list.scrollWidth > this.list.clientWidth) active.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     this.renderStatus(this.tabs.status);

@@ -1,5 +1,5 @@
 // ui/start-panel.js — the Start panel: a centred card over the viewport (not a modal — the room
-// behind it stays live) offering a blank project, the three starter templates with a thumbnail,
+// behind it stays live) offering a blank file, the three starter templates with a thumbnail,
 // the recent projects from this browser, Open file… and the Showcase. It shows on first run and
 // on File → New, reopens from Help → Start panel, closes on any pick, Esc, × or when something
 // lands in the scene; "Show on startup" is persisted in localStorage.
@@ -81,7 +81,7 @@ export class StartPanel {
       </div>
       <div class="start-main">
         <div class="start-grid">
-          <button type="button" class="start-tile" data-act="blank"><span class="start-thumb blank">${icons.plus}</span><span class="start-text"><b>Blank project</b><small>An empty room · add components from the left</small></span></button>
+          <button type="button" class="start-tile" data-act="blank"><span class="start-thumb blank">${icons.plus}</span><span class="start-text"><b>Blank file</b><small>An empty room · add components from the left</small></span></button>
           ${this.templates.map((t) => `<button type="button" class="start-tile" data-act="template" data-id="${esc(t.id)}">${this._thumb(t)}<span class="start-text"><b>${esc(t.label)}</b><small>${esc(t.description)}</small></span></button>`).join('')}
         </div>
       </div>

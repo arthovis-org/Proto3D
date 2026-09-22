@@ -920,9 +920,9 @@ fold into one ☰ button whose menu lists the five menus as submenus.
 
 What the menus add beyond the older controls, all in `main.js` and `serialize.js`:
 
-- **Projects.** Every open project is a tab (§10b): *New project* opens one and shows the Start
+- **Files.** Every open file (a workspace) is a tab (§10b): *New file* opens one and shows the Start
   panel over it (§9g), *Open…* / *Open recent* / *Examples* open in a new tab unless the active
-  tab is an untouched empty project (a starter template names its tab after itself),
+  tab is an untouched empty file (a starter template names its tab after itself),
   *Save* downloads under the tab's name (`safeFileName`, a dated name the first time) and marks
   it saved, *Save as…* and *Rename project…* ask in a themed prompt, *Version history…* opens the
   drawer, *Close tab* asks about unsaved changes. *Open recent* lists every project in the
@@ -1124,7 +1124,7 @@ positions read as rows of standing cards in 3D and as a diagram in 2D.
 tab and the **Start panel** over it; the same happens on a reload that lands on an untouched empty
 tab and on **File → New**. The panel is a centred card in the viewport (`#start`, `z-index` 4,
 `pointer-events: none` outside the card), not a modal: the room behind it stays live. It offers
-**Blank project**, the four **starter templates** with a thumbnail, **Open recent** (the closed
+**Blank file**, the four **starter templates** with a thumbnail, **Open recent** (the closed
 projects from `tabs.recent()`, patched into the card when the IndexedDB read resolves), **Open
 file…** and **More examples · Showcase**, plus a **Show this panel on startup** checkbox persisted
 as `localStorage["proto3d.start.v1"]` (`'0'` = off; `startOnLaunch()` / `setStartOnLaunch()`). It
@@ -1297,7 +1297,7 @@ canvas right after a render (`captureThumb` in the render loop), at most every 1
 
 **Keys**: `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle tabs and `Ctrl+W` closes when the browser hands the
 key to the page (Chrome keeps both for its own tabs); the fallbacks that always work are `Alt+]`
-/ `Alt+[` and `Alt+W`, `Alt+N` opens a new project, `Alt+H` toggles Home (§10c). In the strip: click activates, middle-click or
+/ `Alt+[` and `Alt+W`, `Alt+N` opens a new file, `Alt+H` toggles Home (§10c). In the strip: click activates, middle-click or
 × closes, double-click or F2 renames inline, a pointer drag reorders (window listeners: moving a
 captured element in the DOM would drop its capture), ← → move focus, Delete closes.
 
