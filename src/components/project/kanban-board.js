@@ -21,7 +21,7 @@ import { roundRect, font, drawChip, fitLine, tabular, bitmapFor } from '../../fa
 import { panelGeometry, slabGeometry, outlineGeometry } from '../../geometry.js';
 import {
   normalizeBoard, boardStats, flatCards, pushBurndown, addCard, moveCard, updateCard, updateColumn, findCard, findColumn, isBlocked, isOverdue,
-  initials, checklistRatio, PRIORITY_COLOURS, fmtDate, lastColumn, daysUntil, coverRecord,
+  initials, checklistRatio, PRIORITY_COLOURS, fmtDate, lastColumn, daysUntil, coverRecord, loggedMinutes, fmtHours,
 } from '../../pm/model.js';
 import { commitBoard } from '../../pm/board-ops.js';
 import { buildBoardPanel } from '../../pm/panel-pm.js';
@@ -127,9 +127,17 @@ export function drawCard(g, w, h, card, { blocked = false, overdue = false, sele
     g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 22); g.stroke();
     g.beginPath(); g.moveTo(x, y); g.lineTo(x + 15, y + 5); g.lineTo(x, y + 10); g.closePath(); g.fill();
   }
-  // bottom row: assignee chip · due · checklist · tags · estimate
+  // bottom row: assignee chip · due · checklist · tags · (time logged · comments) · estimate — tags give way first
   const by = h - 38, ch = 24;
   let x = P;
+  // the right end is laid out first: estimate, then the clock ("6.5h") and the bubble (comment count) when present
+  const logged = loggedMinutes(card), nComments = (card.comments || []).length;
+  let rx = w - 14 - coverW;
+  g.font = font(13, 500); tabular(g);
+  const estW = card.estimate ? g.measureText(`${card.estimate}d`).width + 10 : 0;
+  const logW = logged > 0 ? g.measureText(fmtHours(logged)).width + 22 : 0;
+  const comW = nComments ? g.measureText(String(nComments)).width + 22 : 0;
+  const rightW = estW + logW + comW;
   if (card.assignee) {
     const c = colour || '#6f8bb0';
     g.fillStyle = c; g.beginPath(); g.arc(x + ch / 2, by + ch / 2, ch / 2, 0, Math.PI * 2); g.fill();
@@ -151,10 +159,22 @@ export function drawCard(g, w, h, card, { blocked = false, overdue = false, sele
   }
   for (const tag2 of card.tags || []) {
     g.font = font(12, 600); const tw = g.measureText(tag2).width + 16;
-    if (x + tw > w - 14 - coverW - (card.estimate ? 30 : 0)) break;
+    if (x + tw > rx - rightW - 6) break;
     x += drawChip(g, tag2, x, by + (ch - 20) / 2, { h: 20, size: 12, bg: 'rgba(90,169,255,0.14)', color: hex(palette.pmToday), padX: 8 }) + 6;
   }
-  if (card.estimate && x < w - 50 - coverW) { g.fillStyle = dim; g.font = font(13, 500); g.textAlign = 'right'; g.fillText(`${card.estimate}d`, w - 14 - coverW, by + ch / 2); }
+  g.fillStyle = dim; g.font = font(13, 500); g.textAlign = 'right'; tabular(g);
+  if (card.estimate && x < rx - estW) { g.fillText(`${card.estimate}d`, rx, by + ch / 2); rx -= estW; }
+  const cy2 = by + ch / 2;
+  if (logged > 0 && x < rx - logW) {   // clock glyph + hours
+    g.fillStyle = dim; g.fillText(fmtHours(logged), rx, cy2); rx -= g.measureText(fmtHours(logged)).width + 6;
+    g.strokeStyle = dim; g.lineWidth = 1.4; g.beginPath(); g.arc(rx - 6, cy2, 5.5, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.moveTo(rx - 6, cy2 - 3.2); g.lineTo(rx - 6, cy2); g.lineTo(rx - 3.6, cy2 + 1.6); g.stroke(); rx -= 16;
+  }
+  if (nComments && x < rx - comW) {   // speech bubble + count
+    g.fillStyle = dim; g.fillText(String(nComments), rx, cy2); rx -= g.measureText(String(nComments)).width + 6;
+    g.strokeStyle = dim; g.lineWidth = 1.4; g.beginPath(); roundRect(g, rx - 13, cy2 - 6, 13, 9.5, 3); g.stroke();
+    g.beginPath(); g.moveTo(rx - 10, cy2 + 3.5); g.lineTo(rx - 11, cy2 + 7); g.lineTo(rx - 6.5, cy2 + 3.5); g.stroke();
+  }
 }
 
 /* ---------------- the 3D body ---------------- */

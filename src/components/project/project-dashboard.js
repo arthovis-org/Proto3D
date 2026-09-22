@@ -8,7 +8,7 @@ import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { palette, typography } from '../../theme.js';
 import { clear, roundRect, font, drawText, PAD, drawCaps, drawBar, drawDivider, drawTile, drawStat, fitLine, tabular } from '../../faces.js';
-import { daysUntil, fmtDate } from '../../pm/model.js';
+import { daysUntil, fmtDate, fmtHours, HOURS_PER_DAY } from '../../pm/model.js';
 
 /** Vertical layout of the face (logical px): shared by the renderer and the port anchors so the pins stay level with their panels. */
 function rows(w, h) {
@@ -69,11 +69,16 @@ export default registry.register({
       // --- stat tiles
       const R = rows(w, h);
       const tileY = R.tileY, tileH = R.tileH, gap = 8;
+      // time logged: from the `tasks` rows when connected (each carries `logged` minutes), else from the board's progress stats
+      const rows2 = Array.isArray(inputs.tasks) ? inputs.tasks : null;
+      const logged = rows2 ? rows2.reduce((a, r) => a + (r.logged || 0), 0) : s.loggedMinutes || 0;
+      const estMin = rows2 ? rows2.reduce((a, r) => a + Math.round((Number.isFinite(+r.estimate) ? +r.estimate : 0) * HOURS_PER_DAY * 60), 0) : s.estimateMinutes || 0;
       const tiles = [
         ['done', `${Math.round((s.doneRatio || 0) * 100)}%`, palette.faceText, `${s.done} of ${s.total}`],
         ['overdue', String(s.overdue || 0), s.overdue ? palette.faceBad : palette.faceText, ''],
         ['blocked', String(s.blocked || 0), palette.faceText, ''],
         ['remaining', `${s.remaining ?? 0}d`, palette.faceText, `of ${s.estimate ?? 0}d`],
+        ['logged', fmtHours(logged), logged > estMin && estMin ? palette.faceBad : palette.faceText, `of ${fmtHours(estMin)}`],
       ];
       const tw = (w - 2 * P - gap * (tiles.length - 1)) / tiles.length;
       tiles.forEach(([label, value, color, sub], i) => drawStat(g, P + i * (tw + gap), tileY, tw, tileH, label, value, { color, sub }));

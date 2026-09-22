@@ -3,8 +3,10 @@
 // board, the Timeline, the Dashboard and the Person component all read and write through these
 // helpers, so the same card is a slab on a board, a bar on a Gantt and a count on a dashboard.
 //
-//   Card      { id, title, description, assignee, due, priority, tags[], checklist[{text,done}],
-//               estimate, createdAt, movedAt, blockedBy[], cover? { kind, src, title, storeId?, hosted? } }
+//   Card      { id, title, description, assignee, start?, due, priority, tags[], checklist[{text,done}],
+//               estimate (days), createdAt, movedAt, updatedAt, blockedBy[], cover? { kind, src, title, storeId?, hosted? },
+//               comments: [{ id, who, at, text }], timeLogs: [{ id, who, at, date, minutes, note }] }
+//   `who` is a directory person's name (pm/people.js `me`); an estimate is days, HOURS_PER_DAY turns it into hours.
 //   Column    { id, title, wipLimit?, cards: [Card] }
 //   Board     { columns: [Column] }
 //   Person    { id, name, role, colour, capacity }
@@ -13,6 +15,8 @@
 export const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
 export const PRIORITY_COLOURS = { low: '#6f8bb0', medium: '#2dd4bf', high: '#f5b942', urgent: '#ff4d5e' };
 export const DAY_MS = 86400000;
+/** Estimate (days) ↔ hours: one working day. */
+export const HOURS_PER_DAY = 8;
 
 let seq = 0;
 export const newId = (prefix = 'c') => `${prefix}${Date.now().toString(36).slice(-4)}${(++seq).toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -39,6 +43,7 @@ export function createCard(o = {}) {
     title: String(o.title ?? 'New card'),
     description: String(o.description ?? ''),
     assignee: o.assignee ? String(o.assignee) : '',
+    start: o.start ? String(o.start).slice(0, 10) : '',
     due: o.due ? String(o.due).slice(0, 10) : '',
     priority: PRIORITIES.includes(o.priority) ? o.priority : 'medium',
     tags: Array.isArray(o.tags) ? o.tags.map(String) : typeof o.tags === 'string' ? o.tags.split(',').map((s) => s.trim()).filter(Boolean) : [],
@@ -46,7 +51,10 @@ export function createCard(o = {}) {
     estimate: Number.isFinite(+o.estimate) ? +o.estimate : 1,
     createdAt: o.createdAt || now,
     movedAt: o.movedAt || now,
+    updatedAt: o.updatedAt || o.createdAt || now,
     blockedBy: Array.isArray(o.blockedBy) ? o.blockedBy.map(String) : [],
+    comments: Array.isArray(o.comments) ? o.comments.filter((c) => c && typeof c === 'object').map((c) => ({ id: c.id || newId('m'), who: String(c.who || ''), at: c.at || now, text: String(c.text ?? '') })) : [],
+    timeLogs: Array.isArray(o.timeLogs) ? o.timeLogs.filter((t) => t && typeof t === 'object' && Number.isFinite(+t.minutes)).map((t) => ({ id: t.id || newId('l'), who: String(t.who || ''), at: t.at || now, date: t.date ? String(t.date).slice(0, 10) : isoDate(t.at || now), minutes: Math.max(0, Math.round(+t.minutes)), note: String(t.note ?? '') })) : [],
     ...(o.cover && typeof o.cover === 'object' && typeof o.cover.src === 'string' ? { cover: coverRecord(o.cover) } : {}),
   };
 }
@@ -93,6 +101,21 @@ export function isBlocked(board, card) {
   const done = new Set(lastColumn(board).cards.map((c) => c.id));
   return card.blockedBy.some((id) => !done.has(id) && findCard(board, id));
 }
+/* ---------------- comments and time ---------------- */
+export const loggedMinutes = (card) => (card?.timeLogs || []).reduce((a, t) => a + (t.minutes || 0), 0);
+export const estimateMinutes = (card) => Math.round((Number.isFinite(+card?.estimate) ? +card.estimate : 0) * HOURS_PER_DAY * 60);
+/** Minutes as hours: "6.5h", "0h", "40h". */
+export const fmtHours = (min) => { const h = (min || 0) / 60; return `${Number.isInteger(h) ? h : +h.toFixed(1)}h`; };
+/** Minutes logged within the last seven days (today included). */
+export const loggedWeek = (card, today = new Date()) => (card?.timeLogs || []).filter((t) => { const d = daysUntil(t.date, today); return d <= 0 && d > -7; }).reduce((a, t) => a + t.minutes, 0);
+/** A card's activity, newest last: its creation, its last move, comments and time logs merged by time. `[{ kind: 'created' | 'moved' | 'comment' | 'log', id?, who, at, text, minutes? }]`. */
+export function activity(card) {
+  const out = [{ kind: 'created', who: '', at: card.createdAt, text: 'created' }];
+  if (card.movedAt && card.movedAt !== card.createdAt) out.push({ kind: 'moved', who: '', at: card.movedAt, text: 'moved' });
+  for (const c of card.comments || []) out.push({ kind: 'comment', id: c.id, who: c.who, at: c.at, text: c.text });
+  for (const t of card.timeLogs || []) out.push({ kind: 'log', id: t.id, who: t.who, at: t.at, date: t.date, minutes: t.minutes, text: `logged ${fmtHours(t.minutes)}${t.note ? ` · ${t.note}` : ''}` });
+  return out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+}
 export const initials = (name) => String(name || '').split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((s) => s[0].toUpperCase()).join('') || '?';
 export const checklistRatio = (card) => (card.checklist && card.checklist.length ? card.checklist.filter((i) => i.done).length / card.checklist.length : NaN);
 
@@ -122,7 +145,7 @@ export function updateCard(board, cardId, patch) {
   const b = cloneBoard(board);
   const hit = findCard(b, cardId);
   if (!hit) return null;
-  const next = createCard({ ...hit.card, ...patch, id: hit.card.id });
+  const next = createCard({ ...hit.card, ...patch, id: hit.card.id, updatedAt: new Date().toISOString() });
   hit.column.cards[hit.index] = next;
   return { board: b, card: next, column: hit.column };
 }
@@ -179,11 +202,12 @@ export function boardStats(board, today = new Date()) {
   const blocked = allCards(board).filter(({ card }) => isBlocked(board, card)).length;
   const estimate = allCards(board).reduce((a, { card }) => a + (card.estimate || 0), 0);
   const remaining = allCards(board).filter(({ column }) => column !== last).reduce((a, { card }) => a + (card.estimate || 0), 0);
-  return { columns, total, done, doneRatio: total ? +(done / total).toFixed(3) : 0, overdue, blocked, estimate, remaining };
+  const logged = allCards(board).reduce((a, { card }) => a + loggedMinutes(card), 0);
+  return { columns, total, done, doneRatio: total ? +(done / total).toFixed(3) : 0, overdue, blocked, estimate, remaining, loggedMinutes: logged, estimateMinutes: Math.round(estimate * HOURS_PER_DAY * 60) };
 }
 /** Flat list of cards with their column (what the `cards` output carries). */
 export function flatCards(board) {
-  return board.columns.flatMap((col, ci) => col.cards.map((c, i) => ({ ...c, column: col.title, columnId: col.id, columnIndex: ci, order: i, done: ci === board.columns.length - 1, blocked: isBlocked(board, c) })));
+  return board.columns.flatMap((col, ci) => col.cards.map((c, i) => ({ ...c, column: col.title, columnId: col.id, columnIndex: ci, order: i, done: ci === board.columns.length - 1, blocked: isBlocked(board, c), logged: loggedMinutes(c), comments: (c.comments || []).length })));
 }
 /**
  * Burndown: a series of { t, remaining } points. `history` is kept in component state and gets

@@ -1057,7 +1057,7 @@ button.primary svg { width: 15px; height: 15px; }
 .home-table th button { width: 100%; text-align: left; padding: 8px 10px; background: none; border: 0; border-radius: 0; color: var(--dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; display: flex; gap: 4px; align-items: center; }
 .home-table th button:hover, .home-table th button.on { color: var(--text); }
 .home-table .sort-ic { font-style: normal; font-size: 11px; }
-.home-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+.home-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
 .home-table tbody tr { cursor: pointer; }
 .home-table tbody tr:hover, .home-table tbody tr:focus-visible { background: var(--field); outline: none; }
 .home-table tr.done td { color: var(--dim); }
@@ -1116,3 +1116,75 @@ button.primary svg { width: 15px; height: 15px; }
 .pd-add button svg { width: 14px; height: 14px; }
 .pd-foot .pd-error { color: var(--danger); font-weight: 500; }
 @media (max-width: 900px) { .pd-body { grid-template-columns: 1fr; } .pd-people { border-left: 0; padding-left: 0; border-top: 1px solid var(--border); padding-top: 16px; } .home-head { grid-template-columns: 1fr auto; } .home-me { grid-column: 2; grid-row: 1; } .home-switch { grid-column: 1 / -1; justify-self: start; } }
+
+/* ---- Home · Tasks view: inline editors, the expanded card panel, New task (ui/home.js); the panel's Activity / Time sections (pm/panel-pm.js) ---- */
+.home-table td select, .home-table td input[type="date"], .home-table td input[type="text"] { font-size: 11.5px; padding: 3px 6px; border-radius: 6px; background: none; border: 1px solid transparent; color: inherit; max-width: 150px; }
+.home-table td select:hover, .home-table td input:hover { background: var(--field); border-color: var(--border); }
+.home-table td select:focus, .home-table td input:focus { background: var(--field); border-color: var(--accent); outline: none; }
+.home-table td input[type="date"] { width: 108px; cursor: pointer; }
+.home-table th button { white-space: nowrap; }
+.home-table td.t-due.overdue input { color: var(--danger); font-weight: 600; }
+.home-table .t-assignee { white-space: nowrap; }
+.home-table .t-assignee select { max-width: 130px; }
+.home-table .t-title { display: flex; align-items: center; gap: 4px; }
+.home-table .t-open { cursor: pointer; }
+.home-table .t-open:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.t-exp { width: 20px; height: 20px; padding: 0; display: grid; place-items: center; background: none; color: var(--dim); border-radius: 5px; flex: none; }
+.t-exp svg { width: 12px; height: 12px; transition: transform 0.12s ease; }
+.t-exp[aria-expanded="true"] svg { transform: rotate(90deg); }
+.t-exp:hover { background: var(--field-hover); color: var(--text); }
+.home-table tr.expanded td { border-bottom-color: transparent; background: var(--field); }
+.home-table tr.t-detail { cursor: default; }
+.home-table tr.t-detail:hover { background: none; }
+.home-table tr.t-detail td { white-space: normal; max-width: none; padding: 0 10px 14px 34px; background: var(--field); }
+.home-table .t-time, .home-table .t-com { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.home-table .t-time svg, .home-table .t-com svg, .home-table th svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: 4px; color: var(--dim); }
+.home-table .t-time.overdue { color: var(--danger); font-weight: 600; }
+.t-panel-cols { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 20px; padding: 12px 0 0; }
+.t-panel h3 { margin: 0 0 8px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); font-weight: 600; }
+.t-feed, .t-logs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+.t-feed li, .t-logs li { display: flex; align-items: flex-start; gap: 8px; padding: 4px 6px; border-radius: 7px; }
+.t-feed li:hover, .t-logs li:hover { background: var(--field-hover); }
+.t-feed li > div { display: flex; flex-direction: column; min-width: 0; line-height: 1.35; flex: 1; }
+.t-feed li small, .t-logs li small { color: var(--dim); font-size: 10.5px; }
+.t-feed li span { white-space: pre-wrap; word-break: break-word; }
+.t-feed li.created span, .t-feed li.moved span { color: var(--dim); font-style: italic; }
+.t-feed .avatar, .t-logs .avatar, .pm-feed .avatar, .pm-logs .avatar { width: 20px; height: 20px; font-size: 8.5px; box-shadow: none; margin-top: 1px; }
+.t-logs li span { flex: 1; line-height: 1.5; }
+.t-logs li.dim { color: var(--dim); }
+.t-x { width: 18px; height: 18px; padding: 0; display: grid; place-items: center; background: none; color: var(--dim); border-radius: 4px; opacity: 0; flex: none; }
+.t-feed li:hover .t-x, .t-logs li:hover .t-x, .t-x:focus-visible { opacity: 1; }
+.t-x:hover { color: var(--danger); background: var(--field-hover); }
+.t-x svg { width: 11px; height: 11px; }
+.t-comment { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: end; margin-top: 8px; }
+.t-comment textarea { resize: vertical; min-height: 40px; background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-s); padding: 6px 8px; cursor: text; font-family: inherit; line-height: 1.4; }
+.t-comment textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.t-logged { margin: 0 0 6px; color: var(--text); font-variant-numeric: tabular-nums; }
+.pm-bar { height: 4px; border-radius: 2px; background: var(--field-hover); overflow: hidden; margin: 4px 0 8px; }
+.pm-bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 2px; transition: width 0.2s ease; }
+.pm-bar.over i { background: var(--danger); }
+.t-log { display: grid; grid-template-columns: 64px 128px 1fr auto; gap: 6px; margin-bottom: 8px; }
+.t-log input { background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-s); padding: 5px 8px; cursor: text; min-width: 0; }
+.t-log input[type="number"] { cursor: ew-resize; font-variant-numeric: tabular-nums; }
+.t-log input:focus { border-color: var(--accent); outline: none; }
+.t-who { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.t-who select, .t-who input { background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-s); padding: 5px 8px; }
+.home-newtask { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) minmax(120px, 0.8fr) minmax(200px, 2fr) auto; gap: 8px; align-items: center; padding: 10px 24px; border-bottom: 1px solid var(--border); background: var(--field); margin: 0; }
+.home-newtask select, .home-newtask input { background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-s); padding: 6px 8px; min-width: 0; }
+.home-newtask input { cursor: text; }
+.home-newtask input:focus, .home-newtask select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.home-newtask-btn[aria-expanded="true"] { filter: brightness(0.92); }
+/* the properties panel's Activity / Time sections */
+.pm-feed li, .pm-logs li { grid-template-columns: 1fr auto; cursor: default; }
+.pm-feed li .pm-main, .pm-logs li .pm-main { align-items: flex-start; }
+.pm-act-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.35; }
+.pm-act-text small { color: var(--dim); font-size: 10px; }
+.pm-act-text span { white-space: pre-wrap; word-break: break-word; }
+.pm-act.created .pm-act-text span, .pm-act.moved .pm-act-text span { color: var(--dim); font-style: italic; }
+.pm-comment { display: grid; grid-template-columns: 1fr auto; gap: 4px; align-items: end; margin-top: 4px; }
+.pm-comment textarea { resize: vertical; min-height: 36px; font-family: inherit; line-height: 1.4; background: var(--field); border: 1px solid transparent; border-radius: 7px; padding: 5px 8px; cursor: text; font-size: 11.5px; }
+.pm-comment textarea:focus { border-color: var(--accent); outline: none; }
+.pm-comment button, .pm-log button { padding: 4px 8px; font-size: 11px; border-radius: 6px; }
+.pm-log { display: grid; grid-template-columns: 52px 112px 1fr auto; }
+.pm-log input[type="number"] { cursor: ew-resize; padding: 5px 6px; }
+.pm-who select { flex: 1; padding: 4px 6px; font-size: 11px; }

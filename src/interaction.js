@@ -1200,6 +1200,7 @@ export class Interaction {
   onKey(e) {
     if (e.key === 'Shift') this.shift = true;
     if (isTyping(e)) return;
+    if (this.keysSuspended?.() && !(e.ctrlKey || e.metaKey) && e.key !== 'Escape') return;   // a page covers the scene (Home): its single keys stay with it
     const FE = this.fieldEditor;
     if (FE?.editBlock && !FE.active && !e.ctrlKey && !e.metaKey && !e.altKey) {
       // edit mode with no editor open: Tab walks the fields, Enter opens the focused one, Esc leaves

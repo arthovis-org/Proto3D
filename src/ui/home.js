@@ -3,18 +3,21 @@
 // (a searchable, filterable grid of every project in this browser — thumbnail, key, status,
 // tags, member avatars, a progress ring from the task index, next due, last opened, a ⋯ menu:
 // Open · Edit… · Duplicate · Archive · Delete), Tasks (a sortable table over the task index of
-// every project or of the active one; a row opens the project and selects the card) and Calendar
-// (a placeholder until the next round). At the right of the header the "You are …" picker sets
-// who the viewer is in the people directory (pm/people.js). Presentation only: projects come
-// from the store's listing (metadata + index, no documents), edits go through Tabs
-// (`patchProject`, `duplicateProject`, `deleteProject`) and the project dialog.
+// every project, of the active one or of mine; column, assignee, dates and priority edit inline,
+// a chevron opens the card's activity — comments and time logs; New task adds a card to any
+// project's board) and Calendar (a placeholder until the next round). At the right of the header
+// the "You are …" picker sets who the viewer is in the people directory (pm/people.js).
+// Presentation only: projects come from the store's listing (metadata + index, no documents),
+// metadata edits go through Tabs (`patchProject`, `duplicateProject`, `deleteProject`) and the
+// project dialog, task edits through `onWrite` (main.js `editTask`: the active tab's undoable
+// commands, a background tab in place, a closed project's stored document).
 //
-//   new Home({ el, tabs, people, store, onNew, onEdit, onOpenTask, toast })
+//   new Home({ el, tabs, people, store, onNew, onEdit, onOpenTask, onWrite, onBoards, onCard, activeDoc, toast })
 //   open(view?) / hide(reason) / toggle() / isOpen · onChange(open, reason) · refresh()
 import { icons } from '../icons.js';
 import { isTyping } from '../interaction.js';
 import { PROJECT_STATUSES, projectStats, indexDoc, isoToday } from '../project-store.js';
-import { fmtDate, PRIORITY_COLOURS } from '../pm/model.js';
+import { fmtDate, PRIORITY_COLOURS, PRIORITIES, activity, loggedMinutes, estimateMinutes, fmtHours, newId, isoDate } from '../pm/model.js';
 import { confirmDialog } from './confirm.js';
 import { timeAgo } from './tab-strip.js';
 
@@ -22,7 +25,10 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const VIEWS = [['projects', 'Projects'], ['tasks', 'Tasks'], ['calendar', 'Calendar']];
 const STATUS_CHIPS = [['all', 'All'], ...PROJECT_STATUSES.map((s) => [s, s[0].toUpperCase() + s.slice(1)])];
 const SORTS = [['opened', 'Last opened'], ['name', 'Name'], ['due', 'Due'], ['progress', 'Progress']];
-const COLUMNS = [['title', 'Task'], ['project', 'Project'], ['column', 'Column'], ['assignee', 'Assignee'], ['due', 'Due'], ['priority', 'Priority']];
+const COLUMNS = [['title', 'Task'], ['project', 'Project'], ['column', 'Column'], ['assignee', 'Assignee'], ['start', 'Start'], ['due', 'Due'], ['priority', 'Priority'], ['logged', 'Logged / est'], ['comments', '']];
+const BUBBLE = '<svg viewBox="0 0 24 24" aria-label="comments"><path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/></svg>';
+const CLOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/></svg>';
+const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 const PRIORITY_RANK = { urgent: 0, high: 1, medium: 2, low: 3 };
 /** An avatar disc: initials in a colour. */
 export const avatar = (name, colour, title = name) => `<span class="avatar" style="--av:${esc(colour || '#8e9bb1')}" title="${esc(title)}">${esc(initialsOf(name))}</span>`;
@@ -30,17 +36,18 @@ const initialsOf = (name) => String(name || '').split(/[\s._-]+/).filter(Boolean
 const ring = (ratio, size = 30) => { const r = (size - 4) / 2, c = 2 * Math.PI * r; return `<svg class="ring" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-track"/><circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-fill" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${(c * (1 - Math.max(0, Math.min(1, ratio)))).toFixed(1)}"/></svg>`; };
 
 export class Home {
-  constructor({ el, tabs, people, store, onNew = () => {}, onEdit = () => {}, onOpenTask = () => {}, onChange = () => {}, toast = () => {} }) {
-    Object.assign(this, { el, tabs, people, store, onNew, onEdit, onOpenTask, onChange, toast });
+  constructor({ el, tabs, people, store, onNew = () => {}, onEdit = () => {}, onOpenTask = () => {}, onWrite = async () => null, onBoards = async () => [], onCard = async () => null, activeDoc = null, onChange = () => {}, toast = () => {} }) {
+    Object.assign(this, { el, tabs, people, store, onNew, onEdit, onOpenTask, onWrite, onBoards, onCard, activeDoc, onChange, toast });
     this.view = 'projects';
     this.filters = { q: '', status: 'all', tag: '', member: '', sort: 'opened' };
-    this.tasks = { scope: 'all', q: '', sort: 'due', dir: 1, projectId: null };
+    this.tasks = { scope: 'all', q: '', sort: 'due', dir: 1, projectId: null, expanded: null, newOpen: false };
     this.projects = [];            // the store's listing, merged with the open tabs
     this._activeAtOpen = null;
     this.el.hidden = true; this.el.setAttribute('aria-hidden', 'true');
     this.el.innerHTML = `<div class="home-wrap"><header class="home-head"></header><div class="home-body"></div></div>`;
     this.head = this.el.querySelector('.home-head'); this.body = this.el.querySelector('.home-body');
     this.el.addEventListener('click', (e) => this._click(e));
+    this.el.addEventListener('change', (e) => this._change(e));
     this.el.addEventListener('keydown', (e) => this._key(e));
     window.addEventListener('keydown', (e) => { if (this.isOpen && e.key === 'Escape' && !isTyping(e) && !document.querySelector('.confirm-backdrop, .modal-backdrop:not([hidden])')) { if (this._closeMenus()) { e.stopPropagation(); return; } e.stopPropagation(); this.hide('esc'); } }, true);
     window.addEventListener('pointerdown', (e) => { if (!e.target.closest('.home-menu, .pcard-more, .home-me')) this._closeMenus(); }, true);
@@ -85,7 +92,7 @@ export class Home {
     const seq = this._seq = (this._seq || 0) + 1;
     const list = await this.store.listProjects();
     if (seq !== this._seq) return;
-    this.projects = list.map((p) => { const tab = this.tabs.byId(p.id); return { ...p, name: tab ? tab.name : p.name, meta: tab ? tab.meta : p.meta, dirty: tab ? tab.dirty : !!p.dirty, open: !!tab, active: p.id === this.tabs.activeId, stats: projectStats(tab?.doc ? { doc: tab.doc } : p) }; });
+    this.projects = list.map((p) => { const tab = this.tabs.byId(p.id); const index = this._indexOf(p.id, tab, p); return { ...p, index, name: tab ? tab.name : p.name, meta: tab ? tab.meta : p.meta, dirty: tab ? tab.dirty : !!p.dirty, open: !!tab, active: p.id === this.tabs.activeId, stats: projectStats({ index }) }; });
     if (this.isOpen) this._renderContent();
   }
   /** The listing without untouched empty tabs (a new, unnamed, never edited tab is not a project yet). */
@@ -113,19 +120,28 @@ export class Home {
     list.today = today;
     return list;
   }
-  /** The task rows of the Tasks view: every non-archived project, or the scoped one. */
+  /** A project's task index: the live scene for the active tab (`activeDoc`), a background tab's document, else the stored index. */
+  _indexOf(id, tab = this.tabs.byId(id), rec = null) {
+    if (tab && tab.id === this.tabs.activeId && this.activeDoc) { try { return indexDoc(this.activeDoc()); } catch (_) { /* fall through */ } }
+    if (tab?.doc) return indexDoc(tab.doc);
+    return rec?.index || this.projects.find((p) => p.id === id)?.index || { tasks: [], boards: [], milestones: [] };
+  }
+  get meName() { return this.people.mePerson?.name || ''; }
+  /** The task rows of the Tasks view: every non-archived project, the scoped one, or mine (assignee = me). */
   taskRows() {
-    const t = this.tasks, q = t.q.trim().toLowerCase();
+    const t = this.tasks, q = t.q.trim().toLowerCase(), me = this.meName;
     const src = t.scope === 'project' && t.projectId ? this.projects.filter((p) => p.id === t.projectId) : this.projects.filter((p) => p.meta?.status !== 'archived');
     const rows = [];
     for (const p of src) {
-      const tab = this.tabs.byId(p.id);
-      const tasks = tab?.doc ? indexDoc(tab.doc).tasks : p.index?.tasks || [];   // an open tab's document is fresher than its stored index
-      for (const k of tasks) rows.push({ ...k, projectId: p.id, project: p.name || 'Untitled', key: p.meta?.key || '', colour: p.meta?.colour });
+      const idx = p.index || { tasks: [], boards: [] };
+      for (const k of idx.tasks || []) {
+        if (t.scope === 'mine' && !sameName(k.assignee, me)) continue;
+        rows.push({ ...k, projectId: p.id, project: p.name || 'Untitled', key: p.meta?.key || '', colour: p.meta?.colour, columns: (idx.boards || []).find((b) => b.uid === k.boardUid)?.columns || [] });
+      }
     }
     const out = q ? rows.filter((r) => `${r.title} ${r.project} ${r.assignee} ${r.column}`.toLowerCase().includes(q)) : rows;
     const dir = t.dir, k = t.sort;
-    const val = (r) => (k === 'due' ? r.due || '9999' : k === 'priority' ? PRIORITY_RANK[r.priority] ?? 9 : k === 'column' ? `${r.columnIndex}` : String(r[k] || '').toLowerCase());
+    const val = (r) => (k === 'due' || k === 'start' ? r[k] || '9999' : k === 'priority' ? PRIORITY_RANK[r.priority] ?? 9 : k === 'column' ? `${r.columnIndex}` : k === 'logged' || k === 'comments' ? -(r[k] || 0) : String(r[k] || '').toLowerCase());
     out.sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir || a.title.localeCompare(b.title); });
     return out;
   }
@@ -164,14 +180,19 @@ export class Home {
       q.addEventListener('input', () => { this.filters.q = q.value; this._renderContent(); });
       for (const role of ['tag', 'member', 'sort']) this.body.querySelector(`[data-role="${role}"]`).addEventListener('change', (e) => { this.filters[role] = e.target.value; this._renderContent(); });
     } else if (this.view === 'tasks') {
+      const me = this.meName;
       this.body.innerHTML = `<div class="home-tools">
-          <div class="home-seg" role="group" aria-label="Scope"><button type="button" data-scope="project" aria-pressed="${this.tasks.scope === 'project'}" ${this.tasks.projectId ? '' : 'disabled'}>This project</button><button type="button" data-scope="all" aria-pressed="${this.tasks.scope === 'all'}">All projects</button></div>
+          <div class="home-seg" role="group" aria-label="Scope"><button type="button" data-scope="project" aria-pressed="${this.tasks.scope === 'project'}" ${this.tasks.projectId ? '' : 'disabled'}>This project</button><button type="button" data-scope="all" aria-pressed="${this.tasks.scope === 'all'}">All</button><button type="button" data-scope="mine" aria-pressed="${this.tasks.scope === 'mine'}" ${me ? '' : 'disabled'} title="${me ? `Tasks assigned to ${esc(me)}` : 'Pick who you are (top right) first'}">Mine</button></div>
           <label class="home-search">${icons.search}<input type="search" data-role="tq" placeholder="Search tasks" aria-label="Search tasks" value="${esc(this.tasks.q)}"></label>
           <span class="grow"></span><span class="home-count" data-role="count"></span>
+          <button type="button" class="primary home-newtask-btn" data-act="newtask" aria-expanded="${this.tasks.newOpen}">${icons.plus}<span>New task</span></button>
         </div>
-        <div class="home-table-wrap"><table class="home-table"><thead><tr>${COLUMNS.map(([k, l]) => `<th scope="col"><button type="button" data-sort="${k}">${l}<i class="sort-ic"></i></button></th>`).join('')}</tr></thead><tbody></tbody></table></div>`;
+        <form class="home-newtask" data-role="newtask" ${this.tasks.newOpen ? '' : 'hidden'}><select data-role="nt-project" aria-label="Project"></select><select data-role="nt-board" aria-label="Board"></select><select data-role="nt-column" aria-label="Column"></select><input type="text" data-role="nt-title" placeholder="Task title" aria-label="Task title" spellcheck="false"><button type="submit" class="primary">Add</button></form>
+        <div class="home-table-wrap"><table class="home-table"><thead><tr>${COLUMNS.map(([k, l]) => `<th scope="col"><button type="button" data-sort="${k}">${l || BUBBLE}<i class="sort-ic"></i></button></th>`).join('')}</tr></thead><tbody></tbody></table></div>`;
       const q = this.body.querySelector('[data-role="tq"]');
       q.addEventListener('input', () => { this.tasks.q = q.value; this._renderContent(); });
+      this.body.querySelector('[data-role="newtask"]').addEventListener('submit', (e) => { e.preventDefault(); this._addTask(); });
+      if (this.tasks.newOpen) this._fillNewTask();
     } else {
       this.body.innerHTML = `<div class="home-placeholder"><span class="modal-icon">${icons.timeline}</span><div><h2>Calendar comes in the next round</h2><p>Milestones, due dates and people's load by week will show here. Until then the Tasks view sorts by due date.</p></div></div>`;
     }
@@ -223,17 +244,122 @@ export class Home {
     const tbody = this.body.querySelector('tbody'); if (!tbody) return;
     for (const b of this.body.querySelectorAll('[data-scope]')) b.setAttribute('aria-pressed', String(b.dataset.scope === this.tasks.scope));
     for (const b of this.body.querySelectorAll('[data-sort]')) { const on = b.dataset.sort === this.tasks.sort; b.classList.toggle('on', on); b.querySelector('.sort-ic').textContent = on ? (this.tasks.dir > 0 ? '↑' : '↓') : ''; b.closest('th').setAttribute('aria-sort', on ? (this.tasks.dir > 0 ? 'ascending' : 'descending') : 'none'); }
+    this._renderTasksRows();
+  }
+  _renderTasksRows() {
+    const tbody = this.body.querySelector('tbody'); if (!tbody) return;
     const rows = this.taskRows(), today = isoToday();
-    this.body.querySelector('[data-role="count"]').textContent = `${rows.length} task${rows.length === 1 ? '' : 's'} · ${rows.filter((r) => r.done).length} done · ${rows.filter((r) => !r.done && r.due && r.due < today).length} overdue`;
-    if (!rows.length) { tbody.innerHTML = `<tr><td colspan="6" class="home-none">${this.tasks.scope === 'project' ? 'This project has no cards or tasks yet. Add a Kanban board or a Timeline.' : 'No tasks in any project yet.'}</td></tr>`; return; }
-    tbody.innerHTML = rows.map((r) => `<tr class="${r.done ? 'done' : ''}" data-project="${esc(r.projectId)}" data-board="${esc(r.boardUid)}" data-task="${esc(r.id)}" tabindex="0" title="Open ${esc(r.project)} and select this card">
-      <td class="t-title">${esc(r.title)}</td>
-      <td class="t-project"><span class="pkey" style="--pc:${esc(r.colour || '#5aa9ff')}">${esc(r.key)}</span>${esc(r.project)}</td>
-      <td>${esc(r.column)}</td>
-      <td>${r.assignee ? `${avatar(r.assignee, this.people.byName(r.assignee)?.colour || '#8e9bb1')} ${esc(r.assignee)}` : '<span class="dim">—</span>'}</td>
-      <td class="t-due${!r.done && r.due && r.due < today ? ' overdue' : ''}">${r.due ? esc(fmtDate(r.due)) : '<span class="dim">—</span>'}</td>
-      <td><i class="pm-prio" style="background:${PRIORITY_COLOURS[r.priority] || PRIORITY_COLOURS.medium}"></i> ${esc(r.priority || 'medium')}</td>
-    </tr>`).join('');
+    const mineBtn = this.body.querySelector('[data-scope="mine"]'); if (mineBtn) mineBtn.disabled = !this.meName;
+    this.body.querySelector('[data-role="count"]').textContent = `${rows.length} task${rows.length === 1 ? '' : 's'} · ${rows.filter((r) => r.done).length} done · ${rows.filter((r) => !r.done && r.due && r.due < today).length} overdue · ${fmtHours(rows.reduce((a, r) => a + (r.logged || 0), 0))} logged`;
+    if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${COLUMNS.length}" class="home-none">${this.tasks.scope === 'project' ? 'This project has no cards or tasks yet. Add a Kanban board or a Timeline.' : this.tasks.scope === 'mine' ? `Nothing is assigned to ${esc(this.meName)}.` : 'No tasks in any project yet.'}</td></tr>`; return; }
+    const names = this.people.list().map((p) => p.name);
+    const ex = this.tasks.expanded;
+    tbody.innerHTML = rows.map((r) => {
+      const open = ex && ex.projectId === r.projectId && ex.boardUid === r.boardUid && ex.taskId === r.id;
+      const aOpts = [...new Set([...names, ...(r.assignee && !names.some((n) => sameName(n, r.assignee)) ? [r.assignee] : [])])];
+      const est = Math.round((r.estimate || 0) * 8 * 60);
+      return `<tr class="${r.done ? 'done' : ''}${open ? ' expanded' : ''}" data-project="${esc(r.projectId)}" data-board="${esc(r.boardUid)}" data-task="${esc(r.id)}" data-kind="${esc(r.kind || 'card')}" data-pname="${esc(r.project)}" tabindex="0">
+      <td class="t-title"><button type="button" class="t-exp" data-act="expand" aria-expanded="${open}" aria-label="Activity">${icons.chevron}</button><span class="t-open" title="Open ${esc(r.project)} and select this card">${esc(r.title)}</span></td>
+      <td class="t-project t-open" title="Open ${esc(r.project)}"><span class="pkey" style="--pc:${esc(r.colour || '#5aa9ff')}">${esc(r.key)}</span>${esc(r.project)}</td>
+      <td><select data-edit="column" aria-label="Column">${r.columns.map((c) => `<option value="${esc(c.id)}"${c.title === r.column ? ' selected' : ''}>${esc(c.title)}</option>`).join('') || `<option>${esc(r.column)}</option>`}</select></td>
+      <td class="t-assignee">${r.assignee ? avatar(r.assignee, this.people.byName(r.assignee)?.colour || '#8e9bb1') : ''}<select data-edit="assignee" aria-label="Assignee"><option value="">—</option>${aOpts.map((n) => `<option value="${esc(n)}"${sameName(n, r.assignee) ? ' selected' : ''}>${esc(n)}</option>`).join('')}<option value="__other">Other…</option></select></td>
+      <td><input type="date" data-edit="start" value="${esc(r.start || '')}" aria-label="Start"></td>
+      <td class="t-due${!r.done && r.due && r.due < today ? ' overdue' : ''}"><input type="date" data-edit="due" value="${esc(r.due || '')}" aria-label="Due"></td>
+      <td><i class="pm-prio" style="background:${PRIORITY_COLOURS[r.priority] || PRIORITY_COLOURS.medium}"></i><select data-edit="priority" aria-label="Priority">${PRIORITIES.map((p) => `<option value="${p}"${p === (r.priority || 'medium') ? ' selected' : ''}>${p}</option>`).join('')}</select></td>
+      <td class="t-time${est && r.logged > est ? ' overdue' : ''}">${r.logged ? `${CLOCK}${esc(fmtHours(r.logged))}` : '<span class="dim">—</span>'}<span class="dim"> / ${esc(fmtHours(est))}</span></td>
+      <td class="t-com">${r.comments ? `${BUBBLE}${r.comments}` : ''}</td>
+    </tr>${open ? `<tr class="t-detail" data-project="${esc(r.projectId)}" data-board="${esc(r.boardUid)}" data-task="${esc(r.id)}"><td colspan="${COLUMNS.length}"><div class="t-panel" data-role="panel">Loading…</div></td></tr>` : ''}`;
+    }).join('');
+    if (ex) this._renderDetail();
+  }
+  /* ---------- the expanded row: activity, comment, time ---------- */
+  async _renderDetail() {
+    const ex = this.tasks.expanded; if (!ex) return;
+    const el = this.body.querySelector('.t-detail [data-role="panel"]'); if (!el) return;
+    const card = await this.onCard(ex);
+    if (!card || this.tasks.expanded !== ex) return;
+    const me = this.meName;
+    const who = (w) => { const p = this.people.byName(w); return avatar(w || '?', p?.colour || '#8e9bb1'); };
+    const est = estimateMinutes(card), lg = loggedMinutes(card);
+    el.innerHTML = `<div class="t-panel-cols">
+      <section><h3>Activity</h3>
+        ${me ? '' : this._identityHtml()}
+        <ul class="t-feed">${activity(card).map((a) => `<li class="${a.kind}">${a.who ? who(a.who) : '<span class="avatar empty">·</span>'}<div><small>${esc(a.who || 'card')} · ${esc(timeAgo(new Date(a.at).getTime()))}</small><span>${esc(a.text)}</span></div>${a.kind === 'comment' && me && a.who === me ? `<button type="button" class="t-x" data-act="del-comment" data-id="${esc(a.id)}" aria-label="Delete comment">${icons.close}</button>` : ''}</li>`).join('')}</ul>
+        <div class="t-comment"><textarea data-role="comment" rows="2" placeholder="${me ? `Comment as ${esc(me)} · Ctrl+Enter sends` : 'Pick who you are first'}" ${me ? '' : 'disabled'}></textarea><button type="button" data-act="comment" ${me ? '' : 'disabled'}>Comment</button></div>
+      </section>
+      <section><h3>Time</h3>
+        <p class="t-logged">${esc(fmtHours(lg))} logged · estimate ${card.estimate ?? 0}d (${esc(fmtHours(est))})</p>
+        <div class="pm-bar${est && lg > est ? ' over' : ''}"><i style="width:${Math.min(100, est ? lg / est * 100 : lg ? 100 : 0).toFixed(1)}%"></i></div>
+        <div class="t-log"><input type="number" data-role="hours" step="0.25" min="0" value="1" aria-label="Hours"><input type="date" data-role="date" value="${isoDate()}" aria-label="Date"><input type="text" data-role="note" placeholder="note" aria-label="Note"><button type="button" data-act="log" ${me ? '' : 'disabled'}>Log time</button></div>
+        <ul class="t-logs">${[...(card.timeLogs || [])].reverse().map((t) => `<li>${who(t.who)}<span>${esc(t.who || '—')} · ${esc(fmtDate(t.date))} · <b>${esc(fmtHours(t.minutes))}</b>${t.note ? ` · ${esc(t.note)}` : ''}</span><button type="button" class="t-x" data-act="del-log" data-id="${esc(t.id)}" aria-label="Remove entry">${icons.close}</button></li>`).join('') || '<li class="dim">No time logged yet.</li>'}</ul>
+      </section></div>`;
+    el.querySelector('[data-role="comment"]')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); this._detailAction('comment', el); } });
+    el.dataset.card = JSON.stringify({ comments: card.comments || [], timeLogs: card.timeLogs || [] });
+  }
+  _identityHtml() { return `<div class="t-who"><select data-role="who" aria-label="You are"><option value="">You are…</option>${this.people.list().map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}<option value="+">Add me…</option></select><input type="text" data-role="who-name" placeholder="Your name" hidden><button type="button" data-act="who-add" hidden>Add</button></div>`; }
+  async _detailAction(act, el, id = null) {
+    const ex = this.tasks.expanded; if (!ex) return;
+    const cur = JSON.parse(el.dataset.card || '{"comments":[],"timeLogs":[]}');
+    const me = this.meName, row = this.body.querySelector(`tr[data-task="${ex.taskId}"][data-board="${ex.boardUid}"]`);
+    const write = (patch, label) => this.onWrite({ ...ex, project: row?.dataset.pname, op: 'update', patch, label });
+    if (act === 'comment') { const ta = el.querySelector('[data-role="comment"]'); const t = ta.value.trim(); if (!t || !me) return; await write({ comments: [...cur.comments, { id: newId('m'), who: me, at: new Date().toISOString(), text: t }] }, 'Comment'); }
+    else if (act === 'del-comment') await write({ comments: cur.comments.filter((c) => c.id !== id) }, 'Delete comment');
+    else if (act === 'log') { const h = parseFloat(el.querySelector('[data-role="hours"]').value); if (!(h > 0) || !me) return; await write({ timeLogs: [...cur.timeLogs, { id: newId('l'), who: me, at: new Date().toISOString(), date: el.querySelector('[data-role="date"]').value || isoDate(), minutes: Math.round(h * 60), note: el.querySelector('[data-role="note"]').value.trim() }] }, `Log ${fmtHours(Math.round(h * 60))}`); }
+    else if (act === 'del-log') await write({ timeLogs: cur.timeLogs.filter((t) => t.id !== id) }, 'Remove time entry');
+    else return;
+    this.refresh();
+  }
+  /* ---------- New task ---------- */
+  async _fillNewTask(projectId = null) {
+    const form = this.body.querySelector('[data-role="newtask"]'); if (!form) return;
+    const ps = form.querySelector('[data-role="nt-project"]'), bs = form.querySelector('[data-role="nt-board"]'), cs = form.querySelector('[data-role="nt-column"]');
+    const list = this.real.filter((p) => p.meta?.status !== 'archived');
+    const want = projectId || ps.value || (this.tasks.scope === 'project' && this.tasks.projectId) || this.tabs.activeId;
+    const pid = list.some((p) => p.id === want) ? want : list[0]?.id;
+    ps.innerHTML = list.map((p) => `<option value="${esc(p.id)}"${p.id === pid ? ' selected' : ''}>${esc(p.name || 'Untitled')}${p.open ? ' · open' : ''}</option>`).join('') || '<option value="">No project</option>';
+    const boards = pid ? await this.onBoards(pid) : [];
+    if (ps.value !== pid && pid) return;
+    const bid = boards.some((b) => b.uid === bs.value) ? bs.value : boards[0]?.uid;
+    bs.innerHTML = boards.map((b) => `<option value="${esc(b.uid)}"${b.uid === bid ? ' selected' : ''}>${esc(b.title)}</option>`).join('') || '<option value="">No board in this project</option>';
+    const cols = boards.find((b) => b.uid === bid)?.columns || [];
+    cs.innerHTML = cols.map((c, i) => `<option value="${esc(c.id)}"${i === 0 ? ' selected' : ''}>${esc(c.title)}</option>`).join('');
+    form.querySelector('button[type="submit"]').disabled = !bid;
+  }
+  async _addTask() {
+    const form = this.body.querySelector('[data-role="newtask"]'); if (!form) return;
+    const projectId = form.querySelector('[data-role="nt-project"]').value, boardUid = form.querySelector('[data-role="nt-board"]').value, column = form.querySelector('[data-role="nt-column"]').value;
+    const titleEl = form.querySelector('[data-role="nt-title"]'), title = titleEl.value.trim();
+    if (!projectId || !boardUid) return;
+    if (!title) { titleEl.focus(); return; }
+    const p = this.projects.find((x) => x.id === projectId);
+    const r = await this.onWrite({ projectId, boardUid, op: 'add', column, title, project: p?.name || 'Untitled' });
+    if (!r) { this.toast('Could not add the task', 1600); return; }
+    titleEl.value = '';
+    this.toast(`Added "${title}" to ${p?.name || 'the project'}${r.mode === 'active' ? ' · Ctrl+Z undoes' : ''}`, 1600);
+    this.refresh();
+  }
+  /** An inline edit in a row: column (move), assignee (with "Other…" → free text), start / due, priority. */
+  async _change(e) {
+    const t = e.target, edit = t.dataset.edit;
+    if (t.dataset.role === 'nt-project') { this._fillNewTask(t.value); return; }
+    if (t.dataset.role === 'nt-board') { this._fillNewTask(); return; }
+    if (t.dataset.role === 'who') { if (t.value === '+') { const n = t.parentElement.querySelector('[data-role="who-name"]'); n.hidden = false; t.parentElement.querySelector('[data-act="who-add"]').hidden = false; n.focus(); } else if (t.value) { this.people.setMe(t.value); this._renderTasks(); } return; }
+    if (!edit) return;
+    const row = t.closest('tr[data-task]'); if (!row) return;
+    const ctx = { projectId: row.dataset.project, boardUid: row.dataset.board, taskId: row.dataset.task, project: row.dataset.pname };
+    if (edit === 'assignee' && t.value === '__other') {
+      const inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = 'Name'; inp.setAttribute('aria-label', 'Assignee'); inp.dataset.free = 'assignee';
+      t.replaceWith(inp); inp.focus();
+      const done = async () => { const v = inp.value.trim(); if (v) await this.onWrite({ ...ctx, op: 'update', patch: { assignee: v }, label: 'Assign card' }); this.refresh(); };
+      inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); done(); } else if (ev.key === 'Escape') { ev.stopPropagation(); this._renderTasks(); } });
+      inp.addEventListener('blur', done);
+      return;
+    }
+    let r = null;
+    if (edit === 'column') r = await this.onWrite({ ...ctx, op: 'move', column: t.value });
+    else r = await this.onWrite({ ...ctx, op: 'update', patch: { [edit]: t.value }, label: edit === 'assignee' ? 'Assign card' : edit === 'priority' ? 'Set priority' : `Set ${edit} date` });
+    if (!r) this.toast('Could not save that change', 1600);
+    this.refresh();
   }
 
   /* ---------- events ---------- */
@@ -247,6 +373,10 @@ export class Home {
     if (act) {
       const a = act.dataset.act;
       if (a === 'new') { this.onNew(); return; }
+      if (a === 'newtask') { this.tasks.newOpen = !this.tasks.newOpen; const f = this.body.querySelector('[data-role="newtask"]'); f.hidden = !this.tasks.newOpen; act.setAttribute('aria-expanded', String(this.tasks.newOpen)); if (this.tasks.newOpen) { this._fillNewTask().then(() => f.querySelector('[data-role="nt-title"]')?.focus()); } return; }
+      if (a === 'expand') { const row = act.closest('tr'); const ex = { projectId: row.dataset.project, boardUid: row.dataset.board, taskId: row.dataset.task }; const same = this.tasks.expanded && this.tasks.expanded.taskId === ex.taskId && this.tasks.expanded.boardUid === ex.boardUid; this.tasks.expanded = same ? null : ex; this._renderTasks(); return; }
+      if (a === 'comment' || a === 'log' || a === 'del-comment' || a === 'del-log') { this._detailAction(a, act.closest('[data-role="panel"]'), act.dataset.id); return; }
+      if (a === 'who-add') { const n = act.parentElement.querySelector('[data-role="who-name"]').value.trim(); if (!n) return; const p = this.people.byName(n) || this.people.add({ name: n }); this.people.setMe(p.id); this._renderTasks(); return; }
       if (a === 'more') { e.stopPropagation(); this._menu(act, act.closest('.pcard').dataset.id); return; }
       if (a === 'me-new') { const row = this.head.querySelector('.home-me-add'); row.hidden = false; act.hidden = true; row.querySelector('input').focus(); return; }
       if (a === 'me-add') { const name = this.head.querySelector('[data-role="me-name"]').value.trim(); if (!name) { this.head.querySelector('[data-role="me-name"]').focus(); return; } const p = this.people.add({ name, email: this.head.querySelector('[data-role="me-email"]').value.trim(), role: '' }); this.people.setMe(p.id); this.toast(`You are ${p.name}`, 1400); return; }
@@ -256,11 +386,13 @@ export class Home {
     if (meBtn) { const pop = this.head.querySelector('.home-me-pop'); pop.hidden = !pop.hidden; meBtn.setAttribute('aria-expanded', String(!pop.hidden)); return; }
     const me = t.closest('[data-me]'); if (me) { this.people.setMe(me.dataset.me); this._closeMenus(); const p = this.people.byId(me.dataset.me); if (p) this.toast(`You are ${p.name}`, 1200); return; }
     if (t.closest('.home-me-pop')) return;
-    const row = t.closest('tr[data-task]'); if (row) { this.onOpenTask({ projectId: row.dataset.project, boardUid: row.dataset.board, taskId: row.dataset.task }); return; }
+    if (t.closest('select, input, textarea, .t-detail')) return;   // inline editors and the expanded panel keep the click
+    const row = t.closest('tr[data-task]'); if (row && t.closest('.t-open')) { this.onOpenTask({ projectId: row.dataset.project, boardUid: row.dataset.board, taskId: row.dataset.task }); return; }
     const card = t.closest('.pcard'); if (card && !t.closest('.pcard-more')) this._openProject(card.dataset.id);
   }
   _key(e) {
-    const card = e.target.closest?.('.pcard'), row = e.target.closest?.('tr[data-task]');
+    const card = e.target.closest?.('.pcard'), row = e.target.closest?.('tr[data-task]:not(.t-detail)');
+    if (e.key === 'Enter' && e.target.dataset?.role === 'who-name') { e.preventDefault(); e.target.parentElement.querySelector('[data-act="who-add"]').click(); return; }
     if ((e.key === 'Enter' || e.key === ' ') && (card || row) && e.target === (card || row)) { e.preventDefault(); if (card) this._openProject(card.dataset.id); else this.onOpenTask({ projectId: row.dataset.project, boardUid: row.dataset.board, taskId: row.dataset.task }); }
     else if (e.key === 'Enter' && e.target.dataset?.role === 'me-name') { e.preventDefault(); this.head.querySelector('[data-act="me-add"]').click(); }
     else if (e.key === 'ContextMenu' && card) { e.preventDefault(); this._menu(card.querySelector('.pcard-more'), card.dataset.id); }

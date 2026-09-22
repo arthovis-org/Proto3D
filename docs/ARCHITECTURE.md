@@ -1255,8 +1255,9 @@ projects   keyPath id, index openedAt
              savedAt, autosavedAt, openedAt, createdAt, thumb (256 px JPEG data URL), bytes, nodes, connections,
              lastSnapshotAt, lastSnapshotHash,
              meta:  { key, description, status, colour, tags: [], members: [{ personId, role }], start, due, owner },
-             index: { tasks: [{ id, title, boardUid, board, column, columnIndex, done, assignee, due, start, priority, estimate }],
-                      milestones: [{ uid, title, date }], updatedAt } }
+             index: { tasks: [{ id, title, boardUid, board, column, columnId, columnIndex, done, assignee, start, due, priority, estimate,
+                                logged (minutes), comments (count), updatedAt }],
+                      boards: [{ uid, title, type, columns: [{ id, title }] }], milestones: [{ uid, title, date }], updatedAt } }
 snapshots  keyPath id, index project (projectId)
            { id, projectId, at, kind: 'auto' | 'manual' | 'before', label, doc, bytes, name, nodes, connections,
              summary: { added, removed, renamed, connections, params, moved, groups, first, text } }
@@ -1271,7 +1272,7 @@ status *active*, a colour from a stable hash of its id, the key derived from the
 `index` is `indexDoc(doc)`, pure: every card of every `kanban-board` (`params.board.columns`, done
 = the last column), a `timeline`'s own `params.tasks`, the `milestone` nodes; `Tabs._record`
 recomputes it on every persist, so the Home page lists and counts tasks from the listing alone.
-`projectStats(rec)` turns the index into `{ total, done, doneRatio, overdue, nextDue, people }`.
+`projectStats(rec)` turns the index into `{ total, done, doneRatio, overdue, nextDue, people, loggedMinutes }`.
 The DB upgrade from v1 only adds the `people` store.
 
 The round-5 keys `proto3d.world.v2` (autosave) and `proto3d.recent.v1` (recents) are migrated
@@ -1350,16 +1351,54 @@ status and on directory changes (debounced); untouched empty tabs are not listed
   circle with `stroke-dashoffset`), next due, opened `timeAgo`. Click / Enter opens it
   (`tabs.openRecord` of the full record); the ⋯ menu (`.home-menu`, arrow keys, Esc) runs *Open ·
   Edit… · Duplicate · Archive / Unarchive · Delete* (`confirmDialog`).
-- *Tasks*: the scope toggle defaults to *This project* when Home opened over a project with
-  content, else *All projects*; rows come from the open tab's live document when it has one,
-  else the stored index (archived projects are left out). Headers sort (a second click flips);
-  overdue dues use `--danger`; a row (click / Enter) calls `onOpenTask({ projectId, boardUid,
-  taskId })`, which `main.js` answers by opening the record, `node.selectSub({ kind: 'card' |
-  'task', id }, selection)` on the board or timeline, framing it and showing the panel — the same
-  path the Person panel uses. Read-only in this round.
+- *Tasks*: the scope defaults to *This project* when Home opened over a project with content,
+  else *All*; *Mine* keeps rows whose assignee is `people.me`'s name (disabled without one). Rows
+  come from `_indexOf`: `indexDoc(activeDoc())` for the active tab (the live scene), `indexDoc(tab.doc)`
+  for a background tab, the stored `index` for a closed project (archived ones are left out); each
+  row also carries its board's columns from `index.boards`. Columns: Task · Project · Column ·
+  Assignee · Start · Due · Priority · Logged / est · comments. Headers sort (a second click
+  flips); overdue dues and over-estimate hours use `--danger`. The task name (click / Enter) calls
+  `onOpenTask({ projectId, boardUid, taskId })`, which `main.js` answers by opening the record,
+  `node.selectSub({ kind: 'card' | 'task', id }, selection)` on the board or timeline, framing it
+  and showing the panel — the same path the Person panel uses.
+  **Inline edits** (`<select>` / `<input type="date">` in the cells, an *Other…* option swaps the
+  assignee select for a text field) call `onWrite(args)` = `main.js → editTask({ projectId,
+  boardUid, op: 'update' | 'move' | 'add', taskId, patch, column, title, project })`. Three write
+  paths, one per project state: the **active tab** goes through the board's commands
+  (`applyTaskOp` → `updateCard` / `moveCard` / `addCard` → `commitBoard`, or `setParam('tasks')`
+  for a timeline), so Ctrl+Z walks it back; a **background tab** has `tabs.patchNodeParams`
+  replace the params on its detached node (`tab.live.nodes`) and in its document, then persist; a
+  **closed project** has `store.patchNodeParams` patch the node in the stored document, recompute
+  `index` and `bytes`, and a toast says *Saved to <name> (closed)*. The row's chevron expands a
+  panel (`_renderDetail`, the card fetched with `onCard` = `main.js → getTask`): the activity
+  feed, a comment box (Ctrl+Enter), the time bar, a *Log time* row and the entries — every write
+  is an `update` with the new `comments` / `timeLogs` array through the same `onWrite`. **New
+  task** (`_fillNewTask`, boards from `onBoards` = `main.js → projectBoards`: the live world, a
+  tab's document or `index.boards`) adds through `op: 'add'`. Without a `me`, the panel shows a
+  one-line *You are…* select (directory + *Add me…*) before its inputs.
+- *Keys*: while Home is open `main.js`'s single-key and Ctrl+letter handlers return early and
+  `interaction.keysSuspended()` (set by `main.js`) makes `Interaction.onKey` skip the navigation
+  preset's keys (W / E / R / G…); Alt+H, Ctrl+K, Esc and the tab keys keep working.
 - *Calendar*: a placeholder card; the switcher tab is there so the next round only fills it.
 - *You are …*: an avatar button listing the directory (`role="listbox"`) plus *Add me…* (an
   inline name / email row); picking sets `people.setMe`.
+
+**Comments and time on cards** (`pm/model.js`, `pm/panel-pm.js`). A card carries `start`,
+`comments: [{ id, who, at, text }]`, `timeLogs: [{ id, who, at, date, minutes, note }]` and
+`updatedAt` (set by `updateCard`); `createCard` normalises them, so old documents load unchanged.
+`who` is a name from the people directory — `people.mePerson.name`, picked on Home or through
+`identityRow` (a one-line *You are…* select + *Add me…*) that the Activity and Time sections
+show when nobody is picked. Helpers: `loggedMinutes(card)`, `estimateMinutes(card)` (`estimate`
+days × `HOURS_PER_DAY` = 8 × 60), `fmtHours(min)` → "6.5h", `loggedWeek(card)` (the last seven
+days), `activity(card)` (created, moved, comments and logs merged by time). `boardStats` adds
+`loggedMinutes` / `estimateMinutes`, `flatCards` rows carry `start`, `logged` and `comments` (a
+count — the array is replaced on the row), `toTasks` keeps an explicit `start`. The Card editor
+(`buildActivitySection`, `buildTimeSection`) writes each change as one `updateCard` →
+`commitBoard` command ("Comment", "Log 2.5h", "Delete comment", "Remove time entry"); the hours
+field takes `attachScrub`. Consumers: the card face draws a clock + hours and a bubble + count at
+the right of its bottom row (tags give way first); the Dashboard's fifth tile *logged* reads the
+`tasks` rows when connected, else `progress.loggedMinutes`; the Person face adds *Xh this week*
+and the hours beside a task, its `person` output `loggedWeek`.
 
 **Create / Edit Project** (`ui/project-dialog.js`, a `.modal` on the shared shell like
 Connections): name (required), key (auto from the name through `deriveKey` while untouched,

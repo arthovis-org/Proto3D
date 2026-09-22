@@ -66,17 +66,20 @@ export const isoToday = () => new Date().toISOString().slice(0, 10);
  * without opening the document.
  */
 export function indexDoc(doc) {
-  const tasks = [], milestones = [];
+  const tasks = [], milestones = [], boards = [];
+  const minutes = (c) => (Array.isArray(c.timeLogs) ? c.timeLogs.reduce((a, t) => a + (Number.isFinite(+t?.minutes) ? +t.minutes : 0), 0) : 0);
   for (const n of doc?.nodes || []) {
     if (!n || !n.type) continue;
     if (n.type === 'kanban-board') {
       const cols = Array.isArray(n.params?.board?.columns) ? n.params.board.columns : [];
-      cols.forEach((col, ci) => { for (const c of col?.cards || []) if (c && c.id) tasks.push({ id: c.id, title: String(c.title || ''), boardUid: n.uid, board: n.title || 'Board', column: col.title || '', columnIndex: ci, done: ci === cols.length - 1, assignee: c.assignee || '', due: c.due || '', start: c.start || '', priority: c.priority || 'medium', estimate: Number.isFinite(+c.estimate) ? +c.estimate : 1 }); });
+      boards.push({ uid: n.uid, title: n.title || 'Board', type: 'kanban-board', columns: cols.map((col) => ({ id: col?.id || '', title: col?.title || '' })) });
+      cols.forEach((col, ci) => { for (const c of col?.cards || []) if (c && c.id) tasks.push({ id: c.id, title: String(c.title || ''), boardUid: n.uid, board: n.title || 'Board', column: col.title || '', columnId: col.id || '', columnIndex: ci, done: ci === cols.length - 1, assignee: c.assignee || '', due: c.due || '', start: c.start || '', priority: c.priority || 'medium', estimate: Number.isFinite(+c.estimate) ? +c.estimate : 1, logged: minutes(c), comments: Array.isArray(c.comments) ? c.comments.length : 0, updatedAt: c.updatedAt || c.movedAt || c.createdAt || '' }); });
     } else if (n.type === 'timeline') {
-      for (const t of Array.isArray(n.params?.tasks) ? n.params.tasks : []) if (t && t.id) tasks.push({ id: t.id, title: String(t.title || ''), boardUid: n.uid, board: n.title || 'Timeline', column: t.done ? 'Done' : 'Planned', columnIndex: t.done ? 1 : 0, done: !!t.done, assignee: t.assignee || '', due: t.due || t.end || '', start: t.start || '', priority: t.priority || 'medium', estimate: Number.isFinite(+t.estimate) ? +t.estimate : 1, kind: 'task' });
+      boards.push({ uid: n.uid, title: n.title || 'Timeline', type: 'timeline', columns: [{ id: 'planned', title: 'Planned' }, { id: 'done', title: 'Done' }] });
+      for (const t of Array.isArray(n.params?.tasks) ? n.params.tasks : []) if (t && t.id) tasks.push({ id: t.id, title: String(t.title || ''), boardUid: n.uid, board: n.title || 'Timeline', column: t.done ? 'Done' : 'Planned', columnId: t.done ? 'done' : 'planned', columnIndex: t.done ? 1 : 0, done: !!t.done, assignee: t.assignee || '', due: t.due || t.end || '', start: t.start || '', priority: t.priority || 'medium', estimate: Number.isFinite(+t.estimate) ? +t.estimate : 1, logged: minutes(t), comments: Array.isArray(t.comments) ? t.comments.length : 0, updatedAt: t.updatedAt || '', kind: 'task' });
     } else if (n.type === 'milestone') milestones.push({ uid: n.uid, title: n.title || 'Milestone', date: n.params?.date || '' });
   }
-  return { tasks, milestones, updatedAt: Date.now() };
+  return { tasks, milestones, boards, updatedAt: Date.now() };
 }
 /** Counts for a card: total, done, doneRatio, overdue, the next due date and the people assigned — from `rec.index` (computed on the fly when missing). */
 export function projectStats(rec, today = isoToday()) {
@@ -88,13 +91,14 @@ export function projectStats(rec, today = isoToday()) {
   const upcoming = open.filter((t) => t.due && t.due >= today).map((t) => t.due).sort();
   const dated = open.filter((t) => t.due).map((t) => t.due).sort();
   const people = [...new Set(tasks.map((t) => t.assignee).filter(Boolean))];
-  return { total: tasks.length, done, doneRatio: tasks.length ? done / tasks.length : 0, overdue, nextDue: upcoming[0] || dated[0] || null, people, milestones: idx.milestones || [] };
+  const loggedMinutes = tasks.reduce((a, t) => a + (t.logged || 0), 0);
+  return { total: tasks.length, done, doneRatio: tasks.length ? done / tasks.length : 0, overdue, nextDue: upcoming[0] || dated[0] || null, people, loggedMinutes, milestones: idx.milestones || [] };
 }
 /** A stored record with `meta` and `index` filled in (records written before DB v2 have neither). */
 export function withMeta(rec) {
   if (!rec) return rec;
   if (!rec.meta || !rec.meta.key) rec.meta = normalizeMeta({ ...(rec.doc?.project || {}), ...(rec.meta || {}) }, { id: rec.id, name: rec.name });
-  if (!rec.index) rec.index = indexDoc(rec.doc);
+  if (!rec.index || !rec.index.boards) rec.index = indexDoc(rec.doc);
   return rec;
 }
 
@@ -225,6 +229,20 @@ export class ProjectStore {
         rec.meta = normalizeMeta({ ...rec.meta, ...meta }, { id: rec.id, name: name ?? rec.name });
         if (name !== undefined) rec.name = name || null;
         if (rec.doc) rec.doc = { ...rec.doc, name: rec.name || rec.doc.name, project: rec.meta };
+        s.put(rec); return rec;
+      });
+    } catch (_) { return null; }
+  }
+
+  /** Replace one node's params in a stored document (a closed project edited from Home); the counts and the index follow. Returns the record, or null. */
+  async patchNodeParams(id, uid, params) {
+    try {
+      return await this._tx(PROJECTS, 'readwrite', async (t) => {
+        const s = t.objectStore(PROJECTS); const rec = withMeta(await reqResult(s.get(id))); if (!rec?.doc) return null;
+        const node = (rec.doc.nodes || []).find((n) => n.uid === uid); if (!node) return null;
+        node.params = { ...node.params, ...params };
+        rec.dirty = docHash(rec.doc) !== (rec.baseDoc ? docHash(rec.baseDoc) : '');
+        rec.index = indexDoc(rec.doc); rec.bytes = docBytes(rec.doc);
         s.put(rec); return rec;
       });
     } catch (_) { return null; }

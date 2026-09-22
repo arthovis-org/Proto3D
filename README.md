@@ -523,9 +523,15 @@ member · viewer*), start and due dates — stored with the record and written i
   was last opened, a dot when it is open in a tab. Search, status chips (archived projects hide
   until you ask for them), a tag and a member select, sort by last opened, name, due or progress.
   Click a card to open it; its **⋯** menu offers *Open · Edit… · Duplicate · Archive · Delete*.
-- **Tasks** — a sortable table over every card and timeline task of *this project* or *all
-  projects*: task, project, column, assignee, due (overdue in red), priority. A row opens the
-  project and selects the card on its board. Read-only for now.
+- **Tasks** — a sortable table over every card and timeline task of *this project*, *all*
+  projects or *mine* (assigned to who you are): task, project, column, assignee, start, due
+  (overdue in red), priority, hours logged against the estimate, comment count. Column,
+  assignee (the directory, or *Other…* for a name), start, due and priority edit inline; a
+  project open in a tab takes the change as an undoable command (Ctrl+Z on the board), a closed
+  one is written straight to the browser (*Saved to … (closed)*). The chevron on a row opens the
+  card's **activity** — created, moved, comments and time logs, a comment box (Ctrl+Enter) and a
+  *Log time* row — and **New task** adds a card to any project's board and column. The task name
+  opens the project and selects the card.
 - **Calendar** — a placeholder; the next round fills it.
 
 **New project** (Home, or **File → New project…**) opens the Create Project dialog: name, key,
@@ -535,6 +541,14 @@ template or the Showcase. **File → Project settings…** and a card's *Edit…
 existing project. The **You are …** picker at the right of the Home header says who you are in
 the directory. The **Person** component's panel gets a *from directory* select that fills a
 Person from a directory entry (undoable) and *Add to directory* for a new name.
+
+**Comments and time on cards.** A card's panel has an **Activity** section (the feed, a comment
+box; you delete your own comments) and a **Time** section (*2.5h logged · estimate 2d (16h)* with
+a bar that turns red when over, a *Log time* row — hours, date, note — and the entries). Who
+writes is the person you picked as *You are …* (Home, or the one-line pick in the section). The
+card shows a clock with the hours and a bubble with the comment count in its bottom row; the
+Dashboard gets a **logged** tile (hours against the estimate, 8 h per estimated day); a Person
+shows *2.5h this week* under its load bar and the hours beside each task.
 
 There is no server: projects and the people directory live in this browser (IndexedDB); share a
 project with **File → Save**, and open the file elsewhere. Live sync is a later step.

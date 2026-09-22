@@ -277,6 +277,29 @@ export class Tabs {
     this._notify();
     return !!rec;
   }
+  /**
+   * Home's Tasks view edits a board that is not in the world: a background tab's detached node
+   * gets the params in place (and its document, so a reload agrees), a closed project's stored
+   * document is patched and reindexed. The active tab goes through commands instead (main.js).
+   * Resolves 'background' | 'closed' | null.
+   */
+  async patchNodeParams(projectId, uid, params) {
+    const tab = this.byId(projectId);
+    if (tab) {
+      if (tab === this.active || tab.preview) return null;
+      const live = tab.live?.nodes?.find((n) => n.uid === uid);
+      if (live) { Object.assign(live.params, params); live.faceDirty = true; }
+      const rec = (tab.doc?.nodes || []).find((n) => n.uid === uid);
+      if (rec) rec.params = { ...rec.params, ...params };
+      if (!live && !rec) return null;
+      tab.doc = { ...tab.doc }; tab.bytes = docBytes(tab.doc); tab.dirty = docHash(tab.doc) !== tab.baseHash;
+      await this._persist(tab); this._notify();
+      return 'background';
+    }
+    const rec = await this.store.patchNodeParams(projectId, uid, params);
+    this._notify();
+    return rec ? 'closed' : null;
+  }
   /** Every project key in the browser (uniqueness in the dialog), except `exceptId`'s. */
   async projectKeys(exceptId = null) { const list = await this.store.listProjects(); return list.filter((p) => p.id !== exceptId).map((p) => p.meta?.key).filter(Boolean); }
   /** A stored copy of a project (open or closed) under "<name> (copy)" with a fresh key; not opened. Resolves the new record, or null. */

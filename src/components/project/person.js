@@ -8,7 +8,7 @@ import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { palette, typography } from '../../theme.js';
 import { clear, drawText, roundRect, font, PAD, drawAvatar, drawBar, drawCaps, drawDivider, fitLine, tabular, beginFields } from '../../faces.js';
-import { initials, fmtDate, PRIORITY_COLOURS, daysUntil } from '../../pm/model.js';
+import { initials, fmtDate, PRIORITY_COLOURS, daysUntil, loggedWeek, loggedMinutes, fmtHours } from '../../pm/model.js';
 import { personTasks, groupByColumn } from '../../pm/relations.js';
 import { buildPersonPanel } from '../../pm/panel-pm.js';
 
@@ -33,6 +33,8 @@ export default registry.register({
   evaluate({ params, state, instance }) {
     const rows = personTasks(instance);
     const open = rows.filter((r) => !r.done);
+    const week = rows.reduce((a, r) => a + loggedWeek(r.card), 0);
+    if (week !== instance._week) { instance._week = week; instance.faceDirty = true; }
     const s = sig(rows);
     if (s !== instance._sig) { instance._sig = s; instance.faceDirty = true; }
     instance._tasks = rows;
@@ -40,8 +42,8 @@ export default registry.register({
     const summary = `${params.name} · ${open.length} open of ${rows.length}\n${lines.join('\n') || (rows.length ? 'all done' : 'no tasks yet')}`;
     return {
       person: {
-        id: instance.uid, name: params.name, role: params.role, colour: params.colour, capacity: params.capacity, load: open.length,
-        tasks: rows.map((r) => ({ id: r.card.id, title: r.card.title, column: r.column.title, due: r.card.due, priority: r.card.priority, done: r.done, overdue: r.overdue, board: r.board.title })),
+        id: instance.uid, name: params.name, role: params.role, colour: params.colour, capacity: params.capacity, load: open.length, loggedWeek: week,
+        tasks: rows.map((r) => ({ id: r.card.id, title: r.card.title, column: r.column.title, due: r.card.due, priority: r.card.priority, done: r.done, overdue: r.overdue, board: r.board.title, logged: loggedMinutes(r.card) })),
       },
       load: open.length,
       summary,
@@ -77,7 +79,8 @@ export default registry.register({
       drawBar(g, bx, by, bw, 6, load / cap, { fill: load > cap ? palette.faceBad : params.colour || palette.faceAccent });
       const boards = new Set(rows.map((t) => t.board)).size;
       g.fillStyle = palette.faceDim; g.font = font(12, 500);
-      g.fillText(rows.length ? `${rows.length} task${rows.length === 1 ? '' : 's'} · ${boards} board${boards === 1 ? '' : 's'}` : 'no board yet', w - P, by + 26);
+      const week = instance._week || 0;
+      g.fillText(`${rows.length ? `${rows.length} task${rows.length === 1 ? '' : 's'} · ${boards} board${boards === 1 ? '' : 's'}` : 'no board yet'}${week ? ` · ${fmtHours(week)} this week` : ''}`, w - P, by + 26);
       // task list grouped by column
       let y = P + 2 * r + 20;
       drawDivider(g, P, y - 8, w - 2 * P);
@@ -98,7 +101,8 @@ export default registry.register({
         for (const t of gr.rows) {
           if (y + ROW > h - 6) { g.fillStyle = palette.faceDim; g.font = font(13, 500); g.textAlign = 'left'; g.fillText(`+ ${total - drawn} more…`, P + 14, y + 6); break outer; }
           g.fillStyle = PRIORITY_COLOURS[t.card.priority] || PRIORITY_COLOURS.medium; roundRect(g, P, y + 8, 3, ROW - 16, 1.5); g.fill();
-          const dueText = t.card.due ? (t.overdue ? `! ${fmtDate(t.card.due)}` : t.done ? 'done' : daysUntil(t.card.due) === 0 ? 'today' : fmtDate(t.card.due)) : t.done ? 'done' : '';
+          const lg = loggedMinutes(t.card);
+          const dueText = `${lg ? `${fmtHours(lg)} · ` : ''}${t.card.due ? (t.overdue ? `! ${fmtDate(t.card.due)}` : t.done ? 'done' : daysUntil(t.card.due) === 0 ? 'today' : fmtDate(t.card.due)) : t.done ? 'done' : ''}`.replace(/ · $/, '');
           g.font = font(13, t.overdue ? 600 : 500); const dw = dueText ? g.measureText(dueText).width : 0;
           g.fillStyle = t.overdue ? palette.faceBad : palette.faceDim; g.textAlign = 'right'; g.fillText(dueText, w - P, y + ROW / 2);
           g.textAlign = 'left'; g.fillStyle = t.done ? palette.faceDim : palette.faceText; g.font = font(typography.scale.label, t.done ? 400 : 500);

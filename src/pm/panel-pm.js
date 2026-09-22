@@ -6,7 +6,10 @@
 import {
   normalizeBoard, boardStats, addCard, moveCard, updateCard, removeCard, addColumn, updateColumn, removeColumn, moveColumn,
   findCard, allCards, PRIORITIES, PRIORITY_COLOURS, fmtDate, isOverdue, isBlocked, toTasks, createCard, isoDate, addDays,
+  activity, loggedMinutes, estimateMinutes, fmtHours, newId, initials, HOURS_PER_DAY,
 } from './model.js';
+import { attachScrub } from '../ui/scrub.js';
+import { timeAgo } from '../ui/tab-strip.js';
 import { commitBoard } from './board-ops.js';
 import { connectedPeople, personTasks, groupByColumn, sameName } from './relations.js';
 import { people } from './people.js';
@@ -95,6 +98,7 @@ function buildCardEditor(api, b, id) {
   const opts = ['', ...new Set([...linked, ...persons, ...(current && ![...linked, ...persons].includes(current) ? [current] : [])])];
   api.select(s, 'assignee', opts, () => { const a = get()?.assignee || ''; return opts.includes(a) ? a : ''; }, (v) => patch({ assignee: v }, 'Assign card'), 'cardAssignee');
   api.text(s, 'assignee (free text)', () => get()?.assignee || '', (v) => patch({ assignee: v }, 'Assign card', 'assignee'), 'cardAssigneeText');
+  api.date(s, 'start', () => get()?.start || '', (v) => patch({ start: v }, 'Set start date'), 'cardStart');
   api.date(s, 'due', () => get()?.due || '', (v) => patch({ due: v }, 'Set due date'), 'cardDue');
   api.select(s, 'priority', PRIORITIES, () => get()?.priority || 'medium', (v) => patch({ priority: v }, 'Set priority'), 'cardPriority');
   api.text(s, 'tags (comma)', () => (get()?.tags || []).join(', '), (v) => patch({ tags: v }, 'Tag card', 'tags'), 'cardTags');
@@ -140,6 +144,9 @@ function buildCardEditor(api, b, id) {
   ngo.addEventListener('click', doItem); ni.addEventListener('keydown', (e) => { if (e.key === 'Enter') doItem(); });
   addRow.appendChild(ni); addRow.appendChild(ngo); ck.appendChild(addRow);
 
+  buildActivitySection(api, get, patch);
+  buildTimeSection(api, get, patch);
+
   // dependencies: blocked by (multi-select over the other cards)
   const dep = api.section('Blocked by', !!(get()?.blockedBy || []).length);
   const others = allCards(boardOf(b)).filter(({ card }) => card.id !== id);
@@ -183,6 +190,78 @@ export function buildPersonPanel(api, b) {
       li.addEventListener('click', () => r.board.selectSub({ kind: 'card', id: r.card.id }, api.selection));
       list.appendChild(li);
     }
+  }
+}
+
+/* ---------- comments and time on a card (the Card editor; Home's Tasks view renders the same data) ---------- */
+/** Who writes: the directory person picked as "me"; without one, a row to pick or add yourself (people.setMe). Returns the name or ''. */
+function identityRow(api, parent) {
+  if (people.mePerson) return people.mePerson.name;
+  const row = api.h('div', 'pm-inline pm-who');
+  const sel = api.h('select'); sel.setAttribute('aria-label', 'You are');
+  for (const [v, l] of [['', 'You are…'], ...people.list().map((p) => [p.id, p.name]), ['+', 'Add me…']]) { const o = api.h('option', null, l); o.value = v; sel.appendChild(o); }
+  const inp = api.h('input'); inp.type = 'text'; inp.placeholder = 'Your name'; inp.hidden = true;
+  const go = api.h('button', null, 'Add'); go.type = 'button'; go.hidden = true;
+  const add = () => { const n = inp.value.trim(); if (!n) return; const p = people.byName(n) || people.add({ name: n }); people.setMe(p.id); api.rebuild(); };
+  sel.addEventListener('change', () => { if (sel.value === '+') { inp.hidden = false; go.hidden = false; inp.focus(); } else if (sel.value) { people.setMe(sel.value); api.rebuild(); } });
+  go.addEventListener('click', add); inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+  row.appendChild(sel); row.appendChild(inp); row.appendChild(go); parent.appendChild(row);
+  return '';
+}
+const avatarEl = (api, who) => { const p = people.byName(who); const a = api.h('span', 'avatar', initials(who || '?')); a.style.setProperty('--av', p?.colour || '#8e9bb1'); return a; };
+/** Activity: the feed (created, moved, comments, time logs) and a comment box; a comment's author can delete it. */
+function buildActivitySection(api, get, patch) {
+  const card = get(); if (!card) return;
+  const s = api.section('Activity', !!(card.comments || []).length);
+  const me = identityRow(api, s);
+  const list = api.h('ul', 'pm-list pm-feed'); s.appendChild(list);
+  for (const a of activity(card)) {
+    const li = api.h('li', `pm-act ${a.kind}`);
+    const main = api.h('div', 'pm-main');
+    if (a.who) main.appendChild(avatarEl(api, a.who));
+    const text = api.h('div', 'pm-act-text');
+    const head = api.h('small', null, `${a.who || 'card'} · ${timeAgo(new Date(a.at).getTime())}`); text.appendChild(head);
+    text.appendChild(api.h('span', null, a.text)); main.appendChild(text); li.appendChild(main);
+    if (a.kind === 'comment' && me && a.who === me) {
+      const btns = api.h('div', 'pm-btns'); const rm = api.h('button', null, '✕'); rm.type = 'button'; rm.title = 'Delete comment';
+      rm.addEventListener('click', () => { patch({ comments: get().comments.filter((c) => c.id !== a.id) }, 'Delete comment'); api.rebuild(); });
+      btns.appendChild(rm); li.appendChild(btns);
+    }
+    list.appendChild(li);
+  }
+  const box = api.h('div', 'pm-comment');
+  const ta = api.h('textarea'); ta.rows = 2; ta.placeholder = me ? `Comment as ${me} · Ctrl+Enter sends` : 'Pick who you are above, then comment'; ta.id = 'pm-comment'; ta.disabled = !me;
+  const go = api.h('button', null, 'Comment'); go.type = 'button'; go.disabled = !me;
+  const send = () => { const t = ta.value.trim(); if (!t || !me) return; patch({ comments: [...(get().comments || []), { id: newId('m'), who: me, at: new Date().toISOString(), text: t }] }, 'Comment'); api.rebuild(); };
+  go.addEventListener('click', send); ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } });
+  box.appendChild(ta); box.appendChild(go); s.appendChild(box);
+}
+/** Time: logged vs the estimate (days × HOURS_PER_DAY) with a bar, a log row and the entries. */
+function buildTimeSection(api, get, patch) {
+  const card = get(); if (!card) return;
+  const s = api.section('Time', loggedMinutes(card) > 0);
+  const me = people.mePerson?.name || '';
+  api.readonly(s, 'logged', () => { const c = get(); return `${fmtHours(loggedMinutes(c))} logged · estimate ${c.estimate ?? 0}d (${fmtHours(estimateMinutes(c))})`; });
+  const bar = api.h('div', 'pm-bar'); const fill = api.h('i'); bar.appendChild(fill); s.appendChild(bar);
+  api.live(() => { const c = get(); if (!c) return; const est = estimateMinutes(c), lg = loggedMinutes(c); const r = est ? lg / est : lg ? 1 : 0; fill.style.width = `${Math.min(100, r * 100).toFixed(1)}%`; bar.classList.toggle('over', est > 0 && lg > est); });
+  if (!me) identityRow(api, s);
+  const row = api.h('div', 'pm-inline pm-log');
+  const hrs = api.h('input'); hrs.type = 'number'; hrs.step = 0.25; hrs.min = 0; hrs.max = 999; hrs.value = '1'; hrs.placeholder = 'h'; hrs.id = 'pm-log-hours'; hrs.setAttribute('aria-label', 'Hours');
+  attachScrub(hrs, { step: 0.25, min: 0, max: 999, get: () => parseFloat(hrs.value) || 0, set: (v) => { hrs.value = String(+v.toFixed(2)); } });
+  const date = api.h('input'); date.type = 'date'; date.value = isoDate(); date.setAttribute('aria-label', 'Date');
+  const note = api.h('input'); note.type = 'text'; note.placeholder = 'note'; note.id = 'pm-log-note';
+  const go = api.h('button', null, 'Log time'); go.type = 'button'; go.disabled = !me; go.title = me ? '' : 'Pick who you are first';
+  const log = () => { const h = parseFloat(hrs.value); if (!(h > 0) || !me) return; patch({ timeLogs: [...(get().timeLogs || []), { id: newId('l'), who: me, at: new Date().toISOString(), date: date.value || isoDate(), minutes: Math.round(h * 60), note: note.value.trim() }] }, `Log ${fmtHours(Math.round(h * 60))}`); api.rebuild(); };
+  go.addEventListener('click', log); note.addEventListener('keydown', (e) => { if (e.key === 'Enter') log(); });
+  row.appendChild(hrs); row.appendChild(date); row.appendChild(note); row.appendChild(go); s.appendChild(row);
+  const list = api.h('ul', 'pm-list pm-logs'); s.appendChild(list);
+  for (const t of [...(card.timeLogs || [])].reverse()) {
+    const li = api.h('li'); const main = api.h('div', 'pm-main');
+    main.appendChild(avatarEl(api, t.who)); main.appendChild(api.h('span', null, `${t.who || '—'} · ${fmtDate(t.date)} · ${fmtHours(t.minutes)}`)); if (t.note) main.appendChild(api.h('small', null, t.note));
+    li.appendChild(main);
+    const btns = api.h('div', 'pm-btns'); const rm = api.h('button', null, '✕'); rm.type = 'button'; rm.title = 'Remove entry';
+    rm.addEventListener('click', () => { patch({ timeLogs: get().timeLogs.filter((x) => x.id !== t.id) }, 'Remove time entry'); api.rebuild(); });
+    btns.appendChild(rm); li.appendChild(btns); list.appendChild(li);
   }
 }
 

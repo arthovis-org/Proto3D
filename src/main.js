@@ -51,6 +51,9 @@ import { StartPanel, startOnLaunch } from './ui/start-panel.js';
 import { Home } from './ui/home.js';
 import { ProjectDialog } from './ui/project-dialog.js';
 import { people } from './pm/people.js';
+import { normalizeBoard, updateCard, moveCard, addCard, findCard, isoDate, addDays, newId as newPmId } from './pm/model.js';
+import { commitBoard } from './pm/board-ops.js';
+import { indexDoc } from './project-store.js';
 import { HintBar } from './ui/hint-bar.js';
 import { NavHint } from './ui/nav-hint.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
@@ -386,12 +389,69 @@ async function openTask({ projectId, boardUid, taskId }) {
   const node = world.nodeByUid(boardUid);
   if (node?.selectSub) { node.selectSub({ kind: node.typeId === 'timeline' ? 'task' : 'card', id: taskId }, selection); ws.frameBlocks([node], { fill: 0.7, insetLeft: insetLeft() }); togglePanel(true); }
 }
+/* Home's Tasks view writes (ui/home.js → editTask): the active tab through the board's undoable commands, a background tab's detached board in place, a closed project in its stored document (tabs.patchNodeParams) */
+/** One Tasks-view operation on a board's or a timeline's params: `{ op: 'update' | 'move' | 'add', taskId, patch, column (id), title }` → `{ params, card, res? }` or null. */
+function applyTaskOp(node, params, { op, taskId = null, patch = null, column = null, title = '' }) {
+  if ((node.typeId || node.type) === 'timeline') {
+    const tasks = Array.isArray(params.tasks) ? params.tasks : [];
+    if (op === 'add') { const today = isoDate(); const t = { id: newPmId('t'), title: title || 'Task', start: today, due: addDays(today, 3), assignee: '', priority: 'medium', done: column === 'done', ...(patch || {}) }; return { params: { tasks: [...tasks, t] }, card: t }; }
+    const i = tasks.findIndex((t) => t.id === taskId); if (i < 0) return null;
+    const next = op === 'move' ? { ...tasks[i], done: column === 'done' } : { ...tasks[i], ...patch, updatedAt: new Date().toISOString() };
+    return { params: { tasks: tasks.map((t, j) => (j === i ? next : t)) }, card: next };
+  }
+  const board = normalizeBoard(params.board);
+  const res = op === 'update' ? updateCard(board, taskId, patch) : op === 'move' ? moveCard(board, taskId, column) : op === 'add' ? addCard(board, column || board.columns[0].id, { title, ...(patch || {}) }) : null;
+  return res ? { params: { board: res.board }, card: res.card, res } : null;
+}
+/** Resolves `{ mode: 'active' | 'background' | 'closed', card }` or null. `project` is the name for the toast. */
+async function editTask(args) {
+  const { projectId, boardUid, project = 'the project' } = args;
+  const tab = tabs.byId(projectId);
+  const label = args.label || (args.op === 'add' ? 'Add card' : args.op === 'move' ? 'Move card' : 'Edit card');
+  if (tab && tab === tabs.active) {
+    const node = world.nodeByUid(boardUid); if (!node) return null;
+    const out = applyTaskOp(node, node.params, args); if (!out) return null;
+    if (out.res) commitBoard(node, history, out.res, label); else history.execute(Object.assign(cmd.setParam(world, node, 'tasks', out.params.tasks), { label }));
+    engine.evaluate();
+    return { mode: 'active', card: out.card };
+  }
+  let docNode = null;
+  if (tab) docNode = tab.live?.nodes?.find((n) => n.uid === boardUid) || (tab.doc?.nodes || []).find((n) => n.uid === boardUid);
+  else { const rec = await projectStore.getProject(projectId); docNode = rec ? (rec.doc?.nodes || []).find((n) => n.uid === boardUid) : null; }
+  if (!docNode) return null;
+  const out = applyTaskOp(docNode, docNode.params, args); if (!out) return null;
+  const mode = await tabs.patchNodeParams(projectId, boardUid, out.params);
+  if (!mode) return null;
+  if (mode === 'closed') overlays.toast(`Saved to ${project} (closed)`, 1600);
+  return { mode, card: out.card };
+}
+/** The boards and timelines of a project with their columns (Home's New task): the live world, a tab's document or the stored index. */
+async function projectBoards(projectId) {
+  const tab = tabs.byId(projectId);
+  if (tab && tab === tabs.active) return indexDoc(currentDoc()).boards;
+  if (tab) return indexDoc(tab.doc).boards;
+  const rec = await projectStore.getProject(projectId);
+  return rec?.index?.boards || [];
+}
+/** One card (with its comments and time logs) wherever the project is. */
+async function getTask({ projectId, boardUid, taskId }) {
+  const tab = tabs.byId(projectId);
+  let params = null;
+  if (tab && tab === tabs.active) params = world.nodeByUid(boardUid)?.params;
+  else if (tab) params = (tab.live?.nodes?.find((n) => n.uid === boardUid) || (tab.doc?.nodes || []).find((n) => n.uid === boardUid))?.params;
+  else { const rec = await projectStore.getProject(projectId); params = (rec?.doc?.nodes || []).find((n) => n.uid === boardUid)?.params; }
+  if (!params) return null;
+  if (Array.isArray(params.tasks)) return params.tasks.find((t) => t.id === taskId) || null;
+  return findCard(normalizeBoard(params.board), taskId)?.card || null;
+}
 const home = new Home({
   el: $('home'), tabs, people, store: projectStore,
   onNew: () => projectDialog.create(), onEdit: (rec) => projectDialog.edit(rec), onOpenTask: openTask,
+  onWrite: editTask, onBoards: projectBoards, onCard: getTask, activeDoc: () => currentDoc(),
   onChange: () => { tabStrip?.renderHome(); syncEmptyHint(); },
   toast: (t, ms) => overlays.toast(t, ms),
 });
+interaction.keysSuspended = () => home.isOpen;   // W / E / R / G… belong to Home while it covers the scene
 const projectDialog = new ProjectDialog({ tabs, people, templates, showcase: exampleById(DEFAULT_EXAMPLE), onCreate: createProject, toast: (t, ms) => overlays.toast(t, ms) });
 /** File → Project settings…: the active project's card. */
 function projectSettings() { const t = tabs.active; if (!t || t.preview) return; projectDialog.edit({ id: t.id, name: t.name, meta: t.meta }); }
@@ -630,7 +690,7 @@ window.addEventListener('keydown', (e) => {
   if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') { e.preventDefault(); e.stopPropagation(); closeTab(); }
 }, true);
 window.addEventListener('keydown', (e) => {
-  if (isTyping(e) || anyModalOpen() || e.altKey) return;
+  if (isTyping(e) || anyModalOpen() || e.altKey || home.isOpen) return;   // Home covers the scene: its keys stay with it (Alt+H, Ctrl+K, Esc and the tab keys still work)
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   if (mod) {
     // Ctrl+V arrives as the paste event above, so the system clipboard can be read
@@ -646,7 +706,7 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
-  if (anyModalOpen()) return;   // modals own the keyboard
+  if (anyModalOpen() || home.isOpen) return;   // modals and the Home page own the keyboard
   if (nav.keyAction(e)) return;   // the navigation preset owns this key (interaction.js handles it)
   if (e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); leftBar.open('search'); return; }
   if (e.shiftKey) return;
@@ -931,7 +991,7 @@ frame();
 // Exposed for debugging / automated tests
 window.__proto = {
   ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, vpHeader, fieldEditor, glideSetting, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, navHint, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
-  home, projectDialog, people, createProject, projectSettings,
+  home, projectDialog, people, createProject, projectSettings, editTask, getTask, projectBoards,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
   plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
   cables, setCableOption, bundles,
