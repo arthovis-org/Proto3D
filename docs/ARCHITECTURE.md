@@ -1290,6 +1290,9 @@ captured element in the DOM would drop its capture), ← → move focus, Delete 
 - **A body**: build it from `panelGeometry` / `slabGeometry` (`h.panelGeometry` inside `body3d`)
   and `materials.panel`; use `outlineGeometry` for its rim.
 - **A param control**: extend `PARAM_TYPES` in `core/component.js` and `_buildBlock` in `panel.js`.
+  Number rows (`_num`) and the face editor's number fields carry `attachScrub` (`ui/scrub.js`): no
+  browser spinner, a horizontal click-drag changes the value (6 px per step, Shift ×10, Alt ×0.1,
+  Escape restores), a plain click focuses for typing.
 - **An undoable operation**: a command in `core/commands.js` built from `World` mutations.
 - **A 2D-mode behaviour**: subscribe with `onPlanChange` (`plan.js`) or read `isPlanOn()`; a body
   that should pivot differently when flat overrides `planPivot()` (§9f).

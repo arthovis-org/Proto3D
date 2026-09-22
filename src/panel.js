@@ -10,6 +10,7 @@ import { describeLink } from './pm/relations.js';
 import * as cmd from './core/commands.js';
 import { icons } from './icons.js';
 import { nav } from './controls/navigation.js';
+import { attachScrub } from './ui/scrub.js';
 import { PRESET_IDS } from './controls/presets.js';
 
 const RAD = 180 / Math.PI;
@@ -49,6 +50,7 @@ export class Panel {
     if (min !== undefined) i.min = min; if (max !== undefined) i.max = max;
     if (attr) i.dataset.param = attr;
     i.addEventListener('input', () => { const v = parseFloat(i.value); if (Number.isFinite(v)) set(v); });
+    attachScrub(i, { step, min, max, get, set });   // horizontal click-drag changes the value; a plain click still types
     r.appendChild(i);
     const upd = () => { if (document.activeElement !== i) { const v = get(); i.value = typeof v === 'number' ? (+v.toFixed(3)).toString() : ''; } }; upd(); this.live.push(upd);
     return i;

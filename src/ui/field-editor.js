@@ -30,6 +30,7 @@
 import * as THREE from 'three';
 import * as cmd from '../core/commands.js';
 import { palette, typography, sizes, onThemeChange } from '../theme.js';
+import { attachScrub } from './scrub.js';
 
 const PAD = 0.35;                                  // editor padding as a fraction of the font size (face px), drawn outward from the field rect
 const LABEL_PX = 92;                               // face px per unit of a 3D label's `size` (theme.js makeLabel: 96 px glyphs on a 1.3 line)
@@ -417,7 +418,13 @@ export class FieldEditor {
       const input = document.createElement(c.kind === 'text' || c.kind === 'multiline' ? 'textarea' : 'input');
       input.className = 'fe-input';
       if (c.kind === 'date') input.type = 'date';
-      else if (c.kind === 'number') { input.type = 'text'; input.inputMode = 'decimal'; input.autocomplete = 'off'; }
+      else if (c.kind === 'number') {
+        input.type = 'text'; input.inputMode = 'decimal'; input.autocomplete = 'off';
+        // Horizontal drag scrubs the value like the panel's number rows; it only edits the text, the commit path (Enter / blur) writes it.
+        attachScrub(input, { step: () => (Number.isFinite(f.step) ? f.step : 1), min: f.min, max: f.max, keepFocus: true,
+          get: () => { const v = Number(String(input.value).replace(',', '.')); return Number.isFinite(v) ? v : Number(this.valueOf(c.block, f)) || 0; },
+          set: () => { this.el.classList.remove('bad'); c.err.hidden = true; } });
+      }
       else { input.rows = 1; input.wrap = 'soft'; input.spellcheck = false; }
       input.value = text;
       if (f.placeholder) input.placeholder = f.placeholder;

@@ -216,7 +216,12 @@ details.sec[open] > summary::before { transform: rotate(45deg); }
 .row select { cursor: pointer; }
 .row input[type="checkbox"] { width: 16px; height: 16px; padding: 0; justify-self: start; cursor: pointer; accent-color: var(--accent); }
 .row input[type="color"] { padding: 0; height: 24px; width: 48px; cursor: pointer; }
-.row input[type="number"] { font-variant-numeric: tabular-nums; }
+.row input[type="number"] { font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; cursor: ew-resize; }   /* no spinner: a horizontal drag scrubs the value */
+.row input[type="number"]::-webkit-outer-spin-button, .row input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.row input[type="number"]:focus { cursor: text; }
+.row input[type="number"].scrubbing { background: var(--accent-soft); border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+#field-editor input.fe-input[inputmode="decimal"] { cursor: ew-resize; }
+#field-editor input.fe-input.scrubbing { box-shadow: 0 0 0 0.12em var(--fe-accent), inset 0 -0.15em 0 var(--fe-accent), 0 0.6em 1.6em rgba(0, 0, 0, 0.28); }
 .row input[type="range"] { padding: 0; height: 20px; accent-color: var(--accent); background: none; }
 .row .val { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .btn-group { display: flex; gap: 4px; }

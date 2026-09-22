@@ -101,7 +101,8 @@ Thumbnails are rendered headless and committed under `assets/templates/`.
 5. **Move around.** Middle-drag orbits, Shift+middle pans, the wheel zooms towards the cursor,
    `Numpad 1 / 3 / 7` are the front / right / top views, `Numpad 5` toggles orthographic, `Home`
    frames everything, left-drag on the floor box-selects, right-click opens a block's properties.
-   Prefer Unreal or Maya? **? → Controls**.
+   Prefer Unreal or Maya? **? → Controls**. Number fields in the panel have no spinner: click
+   and drag them horizontally to scrub the value (Shift coarse, Alt fine); a plain click types.
 6. Open the left **Add** toolbar, drag a component into the room, `Ctrl+G` groups, `C` collapses
    the group into one slab, `F` frames the selection.
 
