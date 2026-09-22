@@ -35,10 +35,11 @@ export function candidates(fixed, need) {
       const fake = { ...pd, dir: need, owner: { title: def.label, typeId: def.id, def, kind: def.device ? 'device' : 'node' } };
       let hint = null;
       try { hint = need === 'in' ? describePorts(fixed, fake) : describePorts(fake, fixed); } catch (_) { hint = null; }
-      out.push({ def, portDef: pd, label: `${def.label} · ${pd.label}`, hint: hint || portTypeText(pd), group: (cats.find((c) => c.id === def.category) || {}).label || def.category, cat: order.get(def.category) ?? 99, rank, same, other, icon: def.icon || icons.node });
+      const best = rank === 0 && same === 0;   // a port named like the dragged one leads the list under its own header
+      out.push({ def, portDef: pd, label: `${def.label} · ${pd.label}`, hint: hint || portTypeText(pd), group: best ? 'Best match' : (cats.find((c) => c.id === def.category) || {}).label || def.category, cat: best ? -1 : order.get(def.category) ?? 99, rank, same, other, icon: def.icon || icons.node });
     }
   }
-  // exact matches first; inside a rank the categories stay contiguous (one header each), then the port named like the dragged one, sinks / sources, name
+  // exact matches first (the ports named like the dragged one under "Best match"); inside a rank the categories stay contiguous, then sinks / sources, name
   out.sort((a, b) => a.rank - b.rank || a.cat - b.cat || a.same - b.same || a.other - b.other || a.def.label.localeCompare(b.def.label) || a.label.localeCompare(b.label));
   return out;
 }
