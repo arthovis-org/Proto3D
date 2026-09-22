@@ -1077,7 +1077,7 @@ never saved, off at boot). Turning it on does four things at once:
 
 **Snapping** (`snap` in `plan.js`, *View → Snap ▸*, the viewport header's magnet (§9h), the `M` key, the
 *Snap* section of the Workspace panel, `localStorage["proto3d.snap.v1"]`, 2D and 3D alike). The
-settings are a **master switch** (`snap.on`, `set / toggle`) plus independent, persisted toggles
+settings are a **master switch** (`snap.on`, `set / toggle`; **off by default** for a new visitor, a stored record keeps the choice) plus independent, persisted toggles
 (`snap.setOption(key, v)`, `snap.active(kind)` = master and toggle both on): `grid` with `gridSize`
 (one of `GRID_SIZES` 0.25 / 0.5 / 1 / 2 units), `objects`, `ports`, `rotation` and `scale`, plus two
 persisted **increments**: `rotationStep` in degrees (15 by default; presets `ROTATION_STEPS` 5 / 10
