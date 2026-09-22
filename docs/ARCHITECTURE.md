@@ -260,7 +260,7 @@ kept for add-ons).
 - `Group3D` hides its proxy ports and labels with the switch;
 - `Interaction._allPorts()` lists only ports on blocks whose `portsVisible` is true, so hidden pins
   are never picked, hovered, snapped to or emphasised; `_tubeMeshes()` already reads `c.visible`;
-- `main.js` owns the quick toggle (`#btn-wiring` in the menu bar), the `P` key, the toast and `syncToolbar`; the panel
+- `main.js` owns the Wiring toggle (`#vph-wiring` in the viewport header, §9h, with *Ports on selection* and *Flow animation* in its popover), the `P` key, the toast and `syncToolbar`; the panel
   shows the checkbox in the workspace section; the tour sets wiring on for steps flagged
   `wiring: true` and restores the previous value in `finish()`.
 
@@ -893,8 +893,8 @@ left and a row of **quick toggles** on the right — above the Add rail, the vie
 properties panel (all three start at `--menubar-h`, so nothing overlaps and the viewport keeps
 the whole height under the bar; there is no floating toolbar). The toggles are icon buttons with
 tooltips built in `main.js` and handed to `MenuBar` as `tools` (appended after a flexible gap):
-undo · redo | wiring (`#btn-wiring`) · flow animation · gizmo | theme · frame all | help & legend
-· properties panel | command palette (`#btn-palette`, §9d). `syncToolbar()` keeps their `on` / `off` / disabled / `aria-pressed` state
+undo · redo | 2D editing mode | theme · frame all | help & legend · properties panel | command
+palette (`#btn-palette`, §9d); wiring, flow animation, snap, gizmo and cables live in the viewport header (§9h). `syncToolbar()` keeps their `on` / `off` / disabled / `aria-pressed` state
 current (history, wiring, theme, gizmo, panel and help changes all call it); Connections lives in
 the File and View menus. `MenuBar` is presentation and keyboard model only: `main.js` hands it
 the menus as data, `[{ id, label, items: () => Item[] }]`, and **every item calls the same
@@ -1159,19 +1159,23 @@ thumbnail pair and a row in this table.
 ## 9h. Viewport header (`ui/viewport-header.js`)
 
 A compact floating bar centred at the top of the viewport (`#vp-header`, 8 px under the tab strip,
-on the menu bar's translucent surface), modelled on Blender's 3D-viewport header. Three groups,
+on the menu bar's translucent surface), modelled on Blender's 3D-viewport header. Four groups,
 each an icon button plus a caret that opens a popover (one at a time; Esc, a click outside or the
-caret closes it; it clamps inside the viewport): **Snap** — the magnet is the master switch (`M`);
+caret closes it; it clamps inside the viewport): **Wiring** (`#vph-wiring`) — the switch (`P`,
+`toggleWiring` + its toast); the popover has *Ports on selection* (Follow the switch / Always
+show / Always hide → `setPortsOnSelection`, disabled with nothing selected) and *Flow animation*
+(`setFlowEnabled`). **Snap** — the magnet is the master switch (`M`);
 the popover is Blender's *Snap to* panel: Grid with grid-size pills, Objects, Ports, Rotation with
 step pills and a scrubbable custom field, Scale likewise. **Gizmo** — the toggle (`G`) whose icon
 shows the mode; the popover picks Move / Rotate / Scale (disabled in the 2D plan). **Cables** —
 the button shows the style's icon and opens Style, Corner rounding (orthogonal only), Thickness,
 Bundle parallel cables + Bundle distance, Show waypoints. Every control calls the same functions
-the View menu and the keys call (`toggleSnap`, `setSnapOption`, `setGizmo`, `gizmo.setMode`,
-`setCableOption` in `main.js`), and `sync()` re-reads the state from `snap.onChange`,
-`cables.onChange` and `syncToolbar()`, so nothing can disagree. The properties panel's Workspace
+the View menu and the keys call (`toggleWiring`, `toggleSnap`, `setSnapOption`, `setGizmo`,
+`gizmo.setMode`, `setCableOption` in `main.js`), and `sync()` re-reads the state from
+`onWiringChange` (via `syncToolbar`), `selection.onChange`, `world.onChange('wiring')`,
+`snap.onChange` and `cables.onChange`, so nothing can disagree. The properties panel's Workspace
 no longer lists Snap, Cables or Gizmo sections (it keeps the 2D checkbox and the navigation
-Controls); the menu bar's quick toggles lost `#btn-gizmo` and `#btn-snap`. `#hint-bar` sits under
+Controls); the menu bar's quick toggles lost `#btn-wiring`, `#btn-flow`, `#btn-gizmo` and `#btn-snap`. `#hint-bar` sits under
 the header and the mini toolbar's `avoid()` list includes the header.
 
 ## 10. Serialization (`serialize.js`)

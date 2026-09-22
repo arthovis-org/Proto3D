@@ -415,7 +415,7 @@ function refreshAllText() {
 if (document.fonts?.ready) document.fonts.ready.then(() => { if (document.fonts.check('600 16px Inter')) refreshAllText(); }).catch(() => {});
 
 /* ---- Quick toggles: icon buttons at the right end of the menu bar (the MenuBar appends `tools`). Each runs the same code as its key or menu item.
-   Snap, the gizmo and the cable settings live in the viewport header (ui/viewport-header.js, built below), not here ---- */
+   Wiring, flow animation, snap, the gizmo and the cable settings live in the viewport header (ui/viewport-header.js, built below), not here ---- */
 let vpHeader = null;   // the viewport header, once built; syncToolbar refreshes it
 document.querySelectorAll('[data-icon]').forEach((el) => { el.innerHTML = icons[el.dataset.icon] || ''; });
 const tools = document.createElement('span'); tools.className = 'mnu-tools'; tools.setAttribute('role', 'toolbar'); tools.setAttribute('aria-label', 'Quick toggles');
@@ -425,8 +425,6 @@ const toolSep = () => { const sep = document.createElement('span'); sep.classNam
 tool('btn-undo', 'undo', 'Undo (Ctrl+Z)', 'Undo');
 tool('btn-redo', 'redo', 'Redo (Ctrl+Shift+Z or Ctrl+Y)', 'Redo');
 toolSep();
-tool('btn-wiring', 'flow', 'Wiring — show or hide ports and cables (P). Cables are optional: drop a component onto another to link them', 'Wiring').setAttribute('aria-pressed', 'false');
-tool('btn-flow', 'connection', 'Flow animation on cables', 'Flow animation');
 tool('btn-plan', 'plan', '2D editing mode (2) · a top-down plan: drag to box-select, middle-drag or Space+drag pans, the wheel zooms, blocks snap to the grid · press again for 3D', '2D editing mode').setAttribute('aria-pressed', 'false');
 toolSep();
 tool('btn-theme', 'sun', 'Switch light / dark theme (T)', 'Theme');
@@ -438,9 +436,6 @@ toolSep();
 tool('btn-palette', 'search', 'Command palette (Ctrl+K) · every command, component and block by name', 'Command palette');
 const connectionsHint = () => { const live = providerRegistry.all().filter((p) => p.needsKey && providerStatus(p.id) === 'connected').length; return live ? `${live} provider${live > 1 ? 's' : ''} connected` : 'AI providers and API keys'; };
 function syncToolbar() {
-  tb['btn-flow'].classList.toggle('off', !isFlowEnabled());
-  tb['btn-wiring'].classList.toggle('on', isWiringOn());
-  tb['btn-wiring'].setAttribute('aria-pressed', String(isWiringOn()));
   tb['btn-plan'].classList.toggle('on', isPlanOn());
   tb['btn-plan'].setAttribute('aria-pressed', String(isPlanOn()));
   tb['btn-theme'].title = getTheme() === 'dark' ? 'Switch to the light theme (T)' : 'Switch to the dark theme (T)';
@@ -456,8 +451,6 @@ function syncToolbar() {
 }
 history.onChange(syncToolbar);
 onWiringChange(() => { syncToolbar(); panel.refresh(); });
-tb['btn-flow'].addEventListener('click', () => { setFlowEnabled(!isFlowEnabled()); syncToolbar(); panel.refresh(); });
-tb['btn-wiring'].addEventListener('click', () => { toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on · ports and cables shown' : 'Wiring off · drop a component onto another to link them', 1800); });
 tb['btn-theme'].addEventListener('click', () => toggleTheme());
 tb['btn-plan'].addEventListener('click', () => setPlanView(!isPlanOn()));
 snap.onChange(() => { syncToolbar(); panel.refresh(); });
@@ -768,13 +761,18 @@ const miniBar = new MiniToolbar({
   onMore: () => { togglePanel(true); const body = $('panel'); body.scrollTop = 0; const f = body.querySelector('#prop-name, #panel-body input, #panel-body select, #panel-body textarea'); f?.focus({ preventScroll: true }); },
 });
 
-/* ---- Viewport header: Snap · Gizmo · Cables at the top of the viewport; every control is the same code path as the View menu and the keys ---- */
+/* ---- Viewport header: Wiring · Snap · Gizmo · Cables at the top of the viewport; every control is the same code path as the View menu and the keys ---- */
 vpHeader = new ViewportHeader({
   el: $('vp-header'), viewport: $('viewport'), snap, cables, gizmo, isPlanOn,
   toggleSnap: () => toggleSnap(), setSnapOption: (k, v) => setSnapOption(k, v), setGizmo: (on) => setGizmo(on),
   setGizmoMode: (m) => { if (!gizmo.enabled) setGizmo(true); gizmo.setMode(m); syncToolbar(); }, setCableOption: (k, v) => setCableOption(k, v),
+  isWiringOn, toggleWiring: () => { toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on · ports and cables shown' : 'Wiring off · drop a component onto another to link them', 1800); },
+  portsOnSelection: () => ({ n: selection.nodes.length, v: selection.nodes.length ? selection.nodes[selection.nodes.length - 1].showPorts : null }), setPortsOnSelection,
+  isFlowEnabled, setFlowEnabled: (v) => { setFlowEnabled(v); syncToolbar(); panel.refresh(); },
   GRID_SIZES, ROTATION_STEPS, SCALE_STEPS, CABLE_STYLES, THICKNESSES, fmtDeg, fmtScale,
 });
+selection.onChange(() => vpHeader.sync());   // "ports on selection" follows the selection
+world.onChange((what) => { if (what === 'wiring') vpHeader.sync(); });
 syncToolbar();
 
 /* ---- First scene: the saved tabs (IndexedDB; the round-5 localStorage autosave migrates once), otherwise an empty tab with the Start panel over it ---- */

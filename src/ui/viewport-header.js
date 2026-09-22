@@ -1,5 +1,5 @@
 // ui/viewport-header.js — the viewport header: a compact floating bar centred at the top of the
-// viewport (Blender's 3D-viewport header) that holds Snap, Gizmo and Cables. Each group is an
+// viewport (Blender's 3D-viewport header) that holds Wiring, Snap, Gizmo and Cables. Each group is an
 // icon button plus a caret that opens a popover with that group's settings (Blender's "Snap To"
 // panel). Every control calls the same functions the View menu and the keys call (main.js
 // toggleSnap / setSnapOption / setGizmo / gizmo.setMode / setCableOption), so the menu, the keys
@@ -16,15 +16,17 @@ const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) 
 export class ViewportHeader {
   /**
    * @param {object} o { el, viewport, snap, cables, gizmo, isPlanOn(), toggleSnap(), setSnapOption(k, v), setGizmo(on),
-   *   setGizmoMode(m), setCableOption(k, v), GRID_SIZES, ROTATION_STEPS, SCALE_STEPS, CABLE_STYLES, THICKNESSES, fmtDeg, fmtScale }
+   *   setGizmoMode(m), setCableOption(k, v), isWiringOn(), toggleWiring(), portsOnSelection() → { n, v: true | false | null },
+   *   setPortsOnSelection(v), isFlowEnabled(), setFlowEnabled(on), GRID_SIZES, ROTATION_STEPS, SCALE_STEPS, CABLE_STYLES, THICKNESSES, fmtDeg, fmtScale }
    */
   constructor(o) {
     Object.assign(this, o);
     this.open = null;   // the group whose popover is open
     this.live = [];     // the open popover's refreshers
     const el = this.el;
-    el.setAttribute('role', 'toolbar'); el.setAttribute('aria-label', 'Viewport header: snap, gizmo, cables');
+    el.setAttribute('role', 'toolbar'); el.setAttribute('aria-label', 'Viewport header: wiring, snap, gizmo, cables');
     this.groups = {};
+    this._group('wiring', icons.flow, 'Wiring', () => this.toggleWiring());
     this._group('snap', icons.magnet, 'Snap', () => this.toggleSnap());
     this._group('gizmo', icons.move, 'Gizmo', () => this.setGizmo(!this.gizmo.enabled));
     this._group('cables', icons.cableSmooth, 'Cables', () => this.toggle('cables'), false);
@@ -41,7 +43,7 @@ export class ViewportHeader {
   /* ---------- the bar ---------- */
   _group(id, icon, label, onClick, isToggle = true) {
     const g = h('div', 'vph-group'); g.dataset.group = id;
-    const b = h('button', 'vph-btn'); b.type = 'button'; b.innerHTML = `<i>${icon}</i>`; b.setAttribute('aria-label', label);
+    const b = h('button', 'vph-btn'); b.type = 'button'; b.id = `vph-${id}`; b.innerHTML = `<i>${icon}</i>`; b.setAttribute('aria-label', label);
     if (isToggle) b.setAttribute('aria-pressed', 'false'); else b.setAttribute('aria-haspopup', 'true');
     b.addEventListener('click', onClick);
     const c = h('button', 'vph-caret'); c.type = 'button'; c.innerHTML = icons.chevron; c.title = `${label} settings`;
@@ -53,6 +55,9 @@ export class ViewportHeader {
   /** Re-read snap / gizmo / cable state into the buttons and the open popover. */
   sync() {
     const { snap, gizmo, cables } = this, plan = this.isPlanOn();
+    const wr = this.groups.wiring, wOn = this.isWiringOn();
+    wr.b.classList.toggle('on', wOn); wr.b.setAttribute('aria-pressed', String(wOn));
+    wr.b.title = 'Wiring — show or hide ports and cables (P). Cables are optional: drop a component onto another to link them';
     const sn = this.groups.snap;
     sn.b.classList.toggle('on', snap.on); sn.b.setAttribute('aria-pressed', String(snap.on));
     sn.b.title = `${snap.summary()} · M toggles · Shift while dragging skips it, Ctrl halves the grid`;
@@ -74,7 +79,7 @@ export class ViewportHeader {
     if (id === 'gizmo' && this.isPlanOn()) return;
     this.open = id; this.live = [];
     this.pop.innerHTML = ''; this.pop.dataset.group = id; this.pop.setAttribute('aria-label', `${id} settings`);
-    ({ snap: this._popSnap, gizmo: this._popGizmo, cables: this._popCables })[id].call(this, this.pop);
+    ({ wiring: this._popWiring, snap: this._popSnap, gizmo: this._popGizmo, cables: this._popCables })[id].call(this, this.pop);
     this.pop.hidden = false; this.el.classList.add('open');
     for (const [k, gr] of Object.entries(this.groups)) { gr.g.classList.toggle('open', k === id); gr.c.setAttribute('aria-expanded', String(k === id)); }
     this._place(); this.sync();
@@ -110,11 +115,11 @@ export class ViewportHeader {
     this.live.push(() => { const on = !!get(); b.classList.toggle('checked', on); b.setAttribute('aria-checked', String(on)); });
     return b;
   }
-  _seg(p, label, options, get, set, { stack = false } = {}) {
+  _seg(p, label, options, get, set, { stack = false, enabled = () => true } = {}) {
     const r = this._row(p, label), g = h('div', 'btn-group'); if (stack) r.classList.add('stack'); g.setAttribute('role', 'group'); g.setAttribute('aria-label', label);
     const btns = options.map(([value, text, title]) => { const b = h('button', null, text); b.type = 'button'; b.title = title || text; b.dataset.value = String(value); b.addEventListener('click', () => set(value)); g.appendChild(b); return b; });
     r.appendChild(g);
-    this.live.push(() => { const v = String(get()); btns.forEach((b) => { const on = b.dataset.value === v; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }); });
+    this.live.push(() => { const v = String(get()), en = enabled(); r.classList.toggle('off', !en); btns.forEach((b) => { const on = b.dataset.value === v; b.disabled = !en; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }); });
     return g;
   }
   _num(p, label, get, set, { step, min, max, enabled = () => true }) {
@@ -126,6 +131,15 @@ export class ViewportHeader {
     return i;
   }
 
+  _popWiring(p) {
+    const PORTS = { follow: null, show: true, hide: false };
+    this._title(p, 'Wiring');
+    this._check(p, 'Wiring (P)', () => this.isWiringOn(), () => this.toggleWiring(), 'show or hide every port and cable');
+    this._seg(p, 'ports on selection', [['follow', 'Follow the switch', 'the selected blocks show ports when Wiring is on'], ['show', 'Always show', 'the selected blocks keep their ports'], ['hide', 'Always hide', 'the selected blocks never show ports']],
+      () => { const { v } = this.portsOnSelection(); return v === true ? 'show' : v === false ? 'hide' : 'follow'; }, (k) => this.setPortsOnSelection(PORTS[k]), { stack: true, enabled: () => this.portsOnSelection().n > 0 });
+    this._check(p, 'Flow animation', () => this.isFlowEnabled(), (v) => this.setFlowEnabled(v), 'animated flow along the cables');
+    this._note(p, 'Cables are optional: drop a component onto another to link them');
+  }
   _popSnap(p) {
     const S = this.snap, set = (k) => (v) => this.setSnapOption(k, v), deg = this.fmtDeg, sc = this.fmtScale;
     this._title(p, 'Snap to');

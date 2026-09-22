@@ -187,7 +187,7 @@ export class Panel {
     this._check(s, 'flow animation', () => flow.isEnabled(), (v) => flow.setEnabled(v));
     this._num(s, 'flow speed', () => flow.getSpeed(), (v) => flow.setSpeed(v), { step: 0.1, min: 0, max: 5 });
     this._num(s, 'LOD distance', () => sizes.lod.far, (v) => { sizes.lod.far = Math.max(10, v); }, { step: 2, min: 10, max: 200 });
-    s.appendChild(this._h('div', 'panel-note', 'Snap, the gizmo and the cable settings are in the header at the top of the viewport (and under View).'));
+    s.appendChild(this._h('div', 'panel-note', 'Wiring, snap, the gizmo and the cable settings are in the header at the top of the viewport (and under View).'));
     this._buildControls();
     const sum = this._section('Scene');
     this._readonly(sum, 'components', () => `${world.nodes.length} (${world.nodes.filter((b) => b.kind === 'device').length} devices)`);
