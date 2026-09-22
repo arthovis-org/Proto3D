@@ -844,7 +844,7 @@ of the tour reads the preset's orbit / pan bindings; steps 2, 3 and 5 set the wi
 and `finish()` restores it.
 
 **Cable drags** share one state object `connect = { need, fixed, side, preview, plane, detached,
-origin, snapped, reject }`: `fixed` is the real port the cable stays attached to, `need` the
+origin, snapped, reject, point }` (`point` is the preview's free end on the drag plane): `fixed` is the real port the cable stays attached to, `need` the
 direction being looked for (`'in'` when dragging from an output, `'out'` when dragging backwards
 from an input), `side` the preview's free end. `_beginConnect(port)` starts a new cable from an
 output or from an empty / multi input. Pressing a connected single input, or the tube / ring near
@@ -857,6 +857,19 @@ pin as `reject`, colours the preview and writes the drag label; `_endConnect` th
 empty space, with a toast) or puts the link back with no history (dropped on its own port, on an
 incompatible pin, or `Esc` via `cancel()`); a cancelled new cable fades over 0.28 s
 (`fading`). An incompatible drop never creates a link.
+
+**Add a node from a link** (`ui/port-chooser.js`): a *new* cable (`detached` null) released on empty
+space with no port under it does not fade: `_openPortChooser` lists `candidates(fixed, need)` — every
+registry definition · port whose `compatiblePorts` with the dragged end is not `invalid`, ranked exact
+type / subtype (0) → `number → text` coercion (1) → `any` (2), then same label / key, then name;
+grouped by category, hint from `describePorts` (a fake owner built from the definition) or the port
+type text — in a `.chooser.port-chooser` popover at the pointer, clamped inside the canvas, with the
+command palette's `scoreItem` search and ↑ ↓ Enter Esc. The preview stays frozen at the drop point
+while it is open and fades on cancel. A pick runs `_addFromLink`: a new instance is placed so the
+matching pin's `basePos` lands on the drop point (x / z grid-snapped when `snap.on && snap.grid`, y
+never under the floor), and one `cmd.composite("Add <Label> and connect", [addNode, connect])` goes
+through the history; the block is selected and the toast says what the link means. Detached
+cables dropped on empty space still disconnect.
 
 **Selection emphasis** (`applySelectionEmphasis`, on every selection and world change): the
 selected nodes (plus members of selected groups) keep their cables at full brightness, show all
@@ -1165,17 +1178,17 @@ thumbnail pair and a row in this table.
 ## 9h. Viewport header (`ui/viewport-header.js`)
 
 A compact floating bar centred at the top of the viewport (`#vp-header`, 8 px under the tab strip,
-on the menu bar's translucent surface), modelled on Blender's 3D-viewport header. Four groups,
+on the menu bar's translucent surface), modelled on Blender's 3D-viewport header. Three groups,
 each an icon button plus a caret that opens a popover (one at a time; Esc, a click outside or the
 caret closes it; it clamps inside the viewport): **Wiring** (`#vph-wiring`) — the switch (`P`,
 `toggleWiring` + its toast); the popover has *Ports on selection* (Follow the switch / Always
-show / Always hide → `setPortsOnSelection`, disabled with nothing selected) and *Flow animation*
-(`setFlowEnabled`). **Snap** — the magnet is the master switch (`M`);
+show / Always hide → `setPortsOnSelection`, disabled with nothing selected), *Flow animation*
+(`setFlowEnabled`) and, under a small-caps *Cables* label, the cable settings: Style, Corner
+rounding (orthogonal only), Thickness, Bundle parallel cables + Bundle distance, Show waypoints
+(`setCableOption`). **Snap** — the magnet is the master switch (`M`);
 the popover is Blender's *Snap to* panel: Grid with grid-size pills, Objects, Ports, Rotation with
 step pills and a scrubbable custom field, Scale likewise. **Gizmo** — the toggle (`G`) whose icon
-shows the mode; the popover picks Move / Rotate / Scale (disabled in the 2D plan). **Cables** —
-the button shows the style's icon and opens Style, Corner rounding (orthogonal only), Thickness,
-Bundle parallel cables + Bundle distance, Show waypoints. Every control calls the same functions
+shows the mode; the popover picks Move / Rotate / Scale (disabled in the 2D plan). Every control calls the same functions
 the View menu and the keys call (`toggleWiring`, `toggleSnap`, `setSnapOption`, `setGizmo`,
 `gizmo.setMode`, `setCableOption` in `main.js`), and `sync()` re-reads the state from
 `onWiringChange` (via `syncToolbar`), `selection.onChange`, `world.onChange('wiring')`,

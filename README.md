@@ -465,11 +465,11 @@ Everything else is the same in every preset:
 | Edit in place | **double-click a block** (or select it and press `Enter`, or the pencil in the mini toolbar, or *Edit → Edit content*) to enter **edit mode**: the block gets a frame in its category colour and every editable text on its face — a Sticky Note, a Prompt (and each of its variable chips), a Text, a Data node's JSON, a Person's name or role, a Display caption, an Input button's label, a Checklist item, a Kanban card or column title, a Timeline bar, a Milestone's title or date, a flow shape's label — is marked; click one and type where it is, in perspective: `Enter` saves (`Shift+Enter` for a new line), `Esc` closes, `Tab` / `Shift+Tab` move to the next / previous field, `↑` / `↓` nudge a number · a double-click on text opens it straight away · the camera glides to face the text when it is too small or too oblique to read and comes back after (*View → Glide to text when editing*) · `Esc`, a click elsewhere or the pencil (*Done*) leaves edit mode; nothing drags while it is on · every edit undoes and the panel follows |
 | 2D | `2` (or the menu bar toggle, *View → 2D editing mode*) flips to a **top-down plan**: every block is a flat card with its face and pins, cables are flat splines under the cards, left-drag on empty space box-selects, middle-drag or `Space`+drag pans, the wheel zooms about the cursor; `2` again flies back to the 3D pose you left |
 | Arrange | `L` or *Edit → Auto-layout* arranges the selection (two or more) or everything as a left-to-right graph along the cables — groups stay together, unconnected blocks go in a grid below; one undoable, animated step, in 2D or 3D |
-| Link | **drop a component onto another** (a sentence shows what it will mean; a chooser appears when several links fit) · with wiring on: drag from an **OUT** pin to a lit **IN** pin (or backwards from an empty input); the cable snaps within ~1.2 units |
-| Wiring | `P` or the **Wiring** button in the viewport header shows / hides every pin and cable · its caret sets *Ports on selection* (follow the switch / always show / always hide) and the flow animation · the eye icon in a block's panel header overrides it for that block |
+| Link | **drop a component onto another** (a sentence shows what it will mean; a chooser appears when several links fit) · with wiring on: drag from an **OUT** pin to a lit **IN** pin (or backwards from an empty input); the cable snaps within ~1.2 units · **drop the cable on empty space** to pick a component that fits the pin (searchable, grouped, exact types first): it is added with its pin at the drop point and connected, one undo step |
+| Wiring | `P` or the **Wiring** button in the viewport header shows / hides every pin and cable · its caret sets *Ports on selection* (follow the switch / always show / always hide), the flow animation and the cable settings · the eye icon in a block's panel header overrides it for that block |
 | Re-route | grab a cable near either end (hand cursor) and drop it on another compatible pin · drop on empty space to **disconnect** · `Esc` puts it back |
 | Route | **drag the middle of a cable** to add a waypoint there and move it (the cable passes through it) · drag a handle to move it (snaps to the grid and to other waypoints) · drop it on another cable's handle or on a bundle trunk to **share** it (the cables run together through it) · `Alt`+click a handle removes it (unpins a shared one) · double-click a handle resets the cable · handles show on hover and selection, always with *View → Cables → Show waypoints* |
-| Cables | the **Cables** button in the viewport header (also *View → Cables ▸*; remembered like the theme): **Style** Smooth / Orthogonal (90° turns, *Corner rounding* 0–1) / Straight · **Thickness** · **Bundle parallel cables** with a *Bundle distance* (cables running side by side merge into one neutral trunk and split near the pins; hover the trunk to list them, click it to select them) |
+| Cables | the *Cables* rows of the viewport header's **Wiring** popover (also *View → Cables ▸*; remembered like the theme): **Style** Smooth / Orthogonal (90° turns, *Corner rounding* 0–1) / Straight · **Thickness** · **Bundle parallel cables** with a *Bundle distance* (cables running side by side merge into one neutral trunk and split near the pins; hover the trunk to list them, click it to select them) |
 | Inspect | hover a pin: tooltip with name, type, value and links; compatible pins glow, others dim · hover a block: label + description · click a block: its cables stay bright with far-end labels · click a cable: midpoint label, both pins pulse, panel shows from → to |
 | Edit | `Ctrl+D` duplicate (with internal connections) · `Delete` · `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) undo / redo · the menu bar's quick toggles have undo / redo |
 | Group | `Ctrl+G` group the selection · `C` collapse / expand · `Ctrl+Shift+G` ungroup · drag the frame to move the whole group · rename in the panel |
@@ -658,7 +658,12 @@ follows the pointer, compatible targets glow and the cable **snaps** to the near
 label beside the pointer reads `type · from Node.port` (or `into Node.port` when dragging
 backwards) plus the target it will connect to (or why it does not fit: *person is not a tasks*).
 Dropping on a compatible pin connects (undoable *Connect*) and a toast says what the new link
-means; dropping on empty space or an incompatible pin creates nothing and the preview fades.
+means; dropping on an incompatible pin creates nothing and the preview fades. Dropping a **new**
+cable on **empty space** opens a chooser at the pointer (Blender / Unreal "add node from link"):
+every component · port that fits the dragged end, grouped by category, exact type and subtype
+matches first, then number → text, then `any`, with a search field and ↑ ↓ Enter Esc; a pick adds
+the component with its matching pin on the drop point (grid-snapped when snapping is on) and
+connects it as one undo step (*Add Display and connect*); Esc or a click outside fades the preview.
 Dragging from an already connected output adds another cable (fan-out); pressing a connected
 single input picks up its existing cable instead (multi inputs start a new one).
 
@@ -765,7 +770,7 @@ dashboard** has stat tiles, a ring, bars, a burndown and people / checklist bars
 palette. The HTML shell (menu bar, left rail, flyout, panel, tooltips, toasts, chooser, tour cards,
 menus) uses the same type stack, 8-pt spacing, 10–12 px radii, subtle borders, 18 px stroke icons,
 hover states and focus rings; the menu bar's right end groups the quick toggles *Undo/Redo |
-2D | Theme · Frame all | Help · Properties*, and the viewport header holds *Wiring · Snap · Gizmo · Cables*.
+2D | Theme · Frame all | Help · Properties*, and the viewport header holds *Wiring (with the cable settings) · Snap · Gizmo*.
 
 **States** are derived by the engine, never hard-coded: `disabled` (unchecked *enabled*) >
 `error` (invalid link attached or `evaluate` threw) > `active` (an output changed / pulsed within

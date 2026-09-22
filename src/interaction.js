@@ -50,6 +50,7 @@ import { describeLink, dropLinkCandidates } from './pm/relations.js';
 import { nav } from './controls/navigation.js';
 import { isPlanOn, snap } from './plan.js';
 import { RouteNode } from './routing.js';
+import { candidates as portCandidates, openPortChooser } from './ui/port-chooser.js';
 
 /** True when the key event comes from a text field (panel) — ignore shortcuts then. */
 export const isTyping = (e) => {
@@ -81,7 +82,8 @@ export class Interaction {
     this.hoveredEnd = null;  // 'from' | 'to' while over a cable's grab handle
     this.hoveredWaypoint = null; // index of the waypoint handle under the pointer
     this.drag = null;        // { nodes, plane, offsets, before, moved }
-    this.connect = null;     // cable drag: { need, fixed, side, preview, plane, detached, origin, snapped, reject }
+    this.connect = null;     // cable drag: { need, fixed, side, preview, plane, detached, origin, snapped, reject, point }
+    this.portChooser = null; // the "add a node from a link" popover while a dropped cable waits for a pick (ui/port-chooser.js)
     this.pendingDetach = null; // { conn, end } pressed but not yet moved
     this.pendingWaypoint = null; // { conn, point } the cable body pressed: the first movement adds a waypoint there
     this.wpDrag = null;      // { conn, node, index, plane, offset, before, moved, target } a waypoint handle being dragged
@@ -788,7 +790,7 @@ export class Interaction {
     if (snapped) { C.preview.setPreviewPort(C.side, snapped); C.preview.setDerivedState('idle'); }
     else {
       const p = new THREE.Vector3();
-      if (this.ray.ray.intersectPlane(C.plane, p)) C.preview.setPreviewPoint(C.side, p);
+      if (this.ray.ray.intersectPlane(C.plane, p)) { C.preview.setPreviewPoint(C.side, p); C.point = p; }
       C.preview.setDerivedState(reject ? 'invalid' : 'idle');
     }
     this._recomputeEmphasis();
@@ -799,7 +801,7 @@ export class Interaction {
       const pair = (p) => (C.need === 'in' ? [C.fixed, p] : [p, C.fixed]);
       if (reject) html += `<br><em>${reject.dir !== C.need ? (reject.owner === C.fixed.owner ? 'same block' : `needs an ${C.need === 'in' ? 'input' : 'output'}`) : esc(mismatchReason(...pair(reject)))}</em>`;
       else if (snapped) html += `<br>→ ${esc(portName(snapped))}${compatiblePorts(...pair(snapped)) === 'coerce' ? ' (converted)' : ''}`;
-      else html += `<br><span class="d">${C.detached ? 'drop on empty space to disconnect · Esc puts it back' : 'drop on a lit port'}</span>`;
+      else html += `<br><span class="d">${C.detached ? 'drop on empty space to disconnect · Esc puts it back' : 'drop on a lit port · or on empty space to add a component'}</span>`;
       this.overlays.dragLabel(html, e.clientX, e.clientY, reject ? 'bad' : '');
     }
   }
@@ -832,11 +834,50 @@ export class Interaction {
       if (reject) { putBack(); this.overlays?.toast('Not connected: incompatible port'); drop(false); }
       else { this.history.execute(cmd.disconnect(this.world, detached)); this.overlays?.toast('Disconnected · Ctrl+Z to undo'); drop(true); }
     } else {
-      if (reject) this.overlays?.toast(reject.dir !== need ? 'Connect an output to an input' : mismatchReason(...(need === 'in' ? [fixed, reject] : [reject, fixed])));
-      drop(true);
+      if (reject) { this.overlays?.toast(reject.dir !== need ? 'Connect an output to an input' : mismatchReason(...(need === 'in' ? [fixed, reject] : [reject, fixed]))); drop(true); }
+      else if (C.point && this._openPortChooser(C, e)) { /* the preview stays, frozen at the drop point, until a pick or a cancel */ }
+      else drop(true);
     }
     this._recomputeEmphasis();
     this._cursor('');
+  }
+  /**
+   * A new cable dropped on empty space: list every component · port that fits the dragged end
+   * (Blender / Unreal "add node from link"). A pick adds the component with its matching pin at the
+   * drop point and connects it, as one undoable step; a cancel fades the preview.
+   */
+  _openPortChooser(C, e) {
+    const { fixed, need, preview, point } = C;
+    const items = portCandidates(fixed, need);
+    if (!items.length) return false;
+    this.portChooser?.close();
+    const fade = () => { this.fading.push({ preview, k: 0 }); };
+    const bounds = this.renderer.domElement.getBoundingClientRect();
+    this.portChooser = openPortChooser(items, { x: e.clientX, y: e.clientY, title: need === 'in' ? `Connect ${portName(fixed)} to…` : `Connect into ${portName(fixed)} from…`, bounds }, (item) => {
+      this.portChooser = null;
+      this.world.scene.remove(preview); preview.dispose();
+      this._addFromLink(C, item, point);
+    }, () => { this.portChooser = null; fade(); });
+    return true;
+  }
+  _addFromLink(C, item, point) {
+    const { fixed, need } = C;
+    const node = this.createInstance(item.def);
+    const port = node.getPort(item.portDef.key, need);
+    if (!port) return;
+    // the new block's matching pin lands on the drop point; snap the block to the grid when snapping is on
+    const [bx, by, bz] = port.basePos || [0, 0, 0];
+    let x = point.x - bx, y = point.y - by, z = point.z - bz;
+    if (snap.on && snap.grid) { const g = snap.gridSize; x = Math.round(x / g) * g; z = Math.round(z / g) * g; }
+    const floor = node.kind === 'device' ? 0 : node.height / 2 + 0.4;
+    if (node.kind === 'device') y = 0; else y = Math.max(floor, y);
+    const from = need === 'in' ? fixed : port, to = need === 'in' ? port : fixed;
+    this.history.execute(cmd.composite(`Add ${item.def.label} and connect`, [cmd.addNode(this.world, node, [x, y, z]), cmd.connect(this.world, from, to)]));
+    this.lastLinkDrop = { point: point.clone(), node, port };
+    this.selection.set([node]);
+    const made = this.world.connections.find((c) => c.from === from && c.to === to);
+    this.overlays?.toast((made && describeLink(made)) || `Added ${item.def.label} · connected ${portName(from)} → ${portName(to)}`, 2200);
+    this._recomputeEmphasis();
   }
 
   onUp(e) {

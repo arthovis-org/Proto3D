@@ -1,5 +1,5 @@
 // ui/viewport-header.js — the viewport header: a compact floating bar centred at the top of the
-// viewport (Blender's 3D-viewport header) that holds Wiring, Snap, Gizmo and Cables. Each group is an
+// viewport (Blender's 3D-viewport header) that holds Wiring (with the cable settings), Snap and Gizmo. Each group is an
 // icon button plus a caret that opens a popover with that group's settings (Blender's "Snap To"
 // panel). Every control calls the same functions the View menu and the keys call (main.js
 // toggleSnap / setSnapOption / setGizmo / gizmo.setMode / setCableOption), so the menu, the keys
@@ -9,7 +9,6 @@ import { icons } from '../icons.js';
 import { attachScrub } from './scrub.js';
 
 const MODES = [['translate', 'Move', 'W', 'move'], ['rotate', 'Rotate', 'E', 'rotate'], ['scale', 'Scale', 'R', 'scale']];
-const CABLE_ICON = { smooth: 'cableSmooth', orthogonal: 'cableOrthogonal', straight: 'cableStraight' };
 const MARGIN = 8;
 const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
@@ -24,12 +23,11 @@ export class ViewportHeader {
     this.open = null;   // the group whose popover is open
     this.live = [];     // the open popover's refreshers
     const el = this.el;
-    el.setAttribute('role', 'toolbar'); el.setAttribute('aria-label', 'Viewport header: wiring, snap, gizmo, cables');
+    el.setAttribute('role', 'toolbar'); el.setAttribute('aria-label', 'Viewport header: wiring, snap, gizmo');
     this.groups = {};
     this._group('wiring', icons.flow, 'Wiring', () => this.toggleWiring());
     this._group('snap', icons.magnet, 'Snap', () => this.toggleSnap());
     this._group('gizmo', icons.move, 'Gizmo', () => this.setGizmo(!this.gizmo.enabled));
-    this._group('cables', icons.cableSmooth, 'Cables', () => this.toggle('cables'), false);
     this.pop = h('div', 'vph-pop'); this.pop.hidden = true; this.pop.setAttribute('role', 'group');
     el.appendChild(this.pop);
     document.addEventListener('pointerdown', (e) => { if (this.open && !el.contains(e.target)) this.close(); }, true);
@@ -67,9 +65,7 @@ export class ViewportHeader {
     gz.b.querySelector('i').innerHTML = icons[mode[3]];
     gz.b.title = plan ? 'Gizmo — hidden in the 2D editing mode: drag blocks to move them' : `${mode[1]} gizmo (G) · W move, E rotate, R scale`;
     if (plan && this.open === 'gizmo') this.close();
-    const cb = this.groups.cables;
-    cb.b.querySelector('i').innerHTML = icons[CABLE_ICON[cables.style]] || icons.cableSmooth;
-    cb.b.title = `${cables.summary()} · click for the settings`;
+    if (this.open === 'wiring') this.groups.wiring.c.title = `Wiring settings · ${cables.summary()}`;
     this.live.forEach((f) => f());
   }
 
@@ -79,7 +75,7 @@ export class ViewportHeader {
     if (id === 'gizmo' && this.isPlanOn()) return;
     this.open = id; this.live = [];
     this.pop.innerHTML = ''; this.pop.dataset.group = id; this.pop.setAttribute('aria-label', `${id} settings`);
-    ({ wiring: this._popWiring, snap: this._popSnap, gizmo: this._popGizmo, cables: this._popCables })[id].call(this, this.pop);
+    ({ wiring: this._popWiring, snap: this._popSnap, gizmo: this._popGizmo })[id].call(this, this.pop);
     this.pop.hidden = false; this.el.classList.add('open');
     for (const [k, gr] of Object.entries(this.groups)) { gr.g.classList.toggle('open', k === id); gr.c.setAttribute('aria-expanded', String(k === id)); }
     this._place(); this.sync();
@@ -138,7 +134,20 @@ export class ViewportHeader {
     this._seg(p, 'ports on selection', [['follow', 'Follow switch', 'the selected blocks show ports when Wiring is on'], ['show', 'Always show', 'the selected blocks keep their ports'], ['hide', 'Always hide', 'the selected blocks never show ports']],
       () => { const { v } = this.portsOnSelection(); return v === true ? 'show' : v === false ? 'hide' : 'follow'; }, (k) => this.setPortsOnSelection(PORTS[k]), { stack: true, enabled: () => this.portsOnSelection().n > 0 });
     this._check(p, 'Flow animation', () => this.isFlowEnabled(), (v) => this.setFlowEnabled(v), 'animated flow along the cables');
-    this._note(p, 'Cables are optional: drop a component onto another to link them');
+    this._sep(p);
+    this._title(p, 'Cables');
+    this._cableRows(p);
+    this._note(p, 'Cables are optional: drop a component onto another to link them · drop a cable on empty space to add a component');
+  }
+  /** The cable settings (cables.js) as rows of the Wiring popover; every write goes through setCableOption like View → Cables. */
+  _cableRows(p) {
+    const C = this.cables, set = (k) => (v) => this.setCableOption(k, v);
+    this._seg(p, 'style', this.CABLE_STYLES.map(([id, l, d]) => [id, l, d]), () => C.style, set('style'), { stack: true });
+    this._num(p, 'corner rounding', () => C.cornerRadius, set('cornerRadius'), { step: 0.05, min: 0, max: 1, enabled: () => C.style === 'orthogonal' });
+    this._seg(p, 'thickness', this.THICKNESSES.map(([id, l]) => [id, l, `${l} cables`]), () => C.thickness, set('thickness'));
+    this._check(p, 'Bundle parallel cables', () => C.bundle, set('bundle'), 'cables running side by side merge into one trunk');
+    this._num(p, 'bundle distance', () => C.bundleDistance, set('bundleDistance'), { step: 0.1, min: 0.2, max: 4, enabled: () => !!C.bundle });
+    this._check(p, 'Show waypoints', () => C.showWaypoints, set('showWaypoints'), 'always show the route handles · else on hover and selection');
   }
   _popSnap(p) {
     const S = this.snap, set = (k) => (v) => this.setSnapOption(k, v), deg = this.fmtDeg, sc = this.fmtScale;
@@ -164,16 +173,5 @@ export class ViewportHeader {
     this._seg(p, 'mode', MODES.map(([m, l, k]) => [m, l, `${l} (${k})`]), () => G.mode, (m) => this.setGizmoMode(m));
     this._note(p, 'W move · E rotate · R scale');
   }
-  _popCables(p) {
-    const C = this.cables, set = (k) => (v) => this.setCableOption(k, v);
-    this._title(p, 'Cables');
-    this._seg(p, 'style', this.CABLE_STYLES.map(([id, l, d]) => [id, l, d]), () => C.style, set('style'), { stack: true });
-    this._num(p, 'corner rounding', () => C.cornerRadius, set('cornerRadius'), { step: 0.05, min: 0, max: 1, enabled: () => C.style === 'orthogonal' });
-    this._seg(p, 'thickness', this.THICKNESSES.map(([id, l]) => [id, l, `${l} cables`]), () => C.thickness, set('thickness'));
-    this._sep(p);
-    this._check(p, 'Bundle parallel cables', () => C.bundle, set('bundle'), 'cables running side by side merge into one trunk');
-    this._num(p, 'bundle distance', () => C.bundleDistance, set('bundleDistance'), { step: 0.1, min: 0.2, max: 4, enabled: () => !!C.bundle });
-    this._check(p, 'Show waypoints', () => C.showWaypoints, set('showWaypoints'), 'always show the route handles · else on hover and selection');
-    this._note(p, 'Drag the middle of a cable to add a waypoint · Alt+click removes it · double-click resets the cable');
-  }
+
 }
