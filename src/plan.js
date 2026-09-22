@@ -7,7 +7,7 @@
 // plan's x / z are the room's x / z, y is left untouched. Nothing about it is saved in a document.
 //
 // Snapping is a separate, persisted group of settings (View → Snap ▸, the magnet toggle in the
-// menu bar, the M key, localStorage["proto3d.snap.v1"]) that applies in 3D and 2D alike: a master
+// menu bar, the M key, localStorage["proto3d.snap.v1"]) that applies in 3D and 2D alike: a master (off by default for a new visitor; a stored record keeps the choice)
 // switch plus independent toggles — grid (a dragged block's centre lands on `gridSize` units, Ctrl
 // halves the pitch), objects (its edges / centres line up with neighbours', with guides, and win
 // over the grid within their tolerance), ports (a pin lands level with the pin it is wired to so
@@ -38,7 +38,7 @@ export const ROTATION_STEP = Math.PI / 12, SCALE_STEP = 0.25;
 export const ROTATION_STEPS = [5, 10, 15, 30, 45, 90], SCALE_STEPS = [0.05, 0.1, 0.25, 0.5, 1];
 /** Bounds of the free increments: rotation 0.5°..180°, scale 0.01..4 (the gizmo clamps a block's scale to 0.2..4). */
 const ROTATION_RANGE = [0.5, 180], SCALE_RANGE = [0.01, 4];
-const SNAP_DEFAULTS = { on: true, grid: true, gridSize: 1, objects: true, ports: true, rotation: true, scale: true, rotationStep: 15, scaleStep: 0.25 };
+const SNAP_DEFAULTS = { on: false, grid: true, gridSize: 1, objects: true, ports: true, rotation: true, scale: true, rotationStep: 15, scaleStep: 0.25 };
 const clampStep = (v, [lo, hi]) => (Number.isFinite(v) && v > 0 ? Math.min(hi, Math.max(lo, +(+v).toFixed(4))) : null);
 /** "15°", "7.5°" — an increment in degrees for menus, tooltips and the summary. */
 export const fmtDeg = (d) => `${+(+d).toFixed(2)}°`;

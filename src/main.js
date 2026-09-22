@@ -830,7 +830,7 @@ const menubar = new MenuBar({
       { sep: true },
       { label: '2D editing mode', hint: 'top-down plan: box-select, snap, wire and arrange', shortcut: '2', checked: isPlanOn(), run: () => setPlanView(!isPlanOn()) },
       { label: 'Snap', hint: snap.summary().replace(/^Snap( ·)? ?/, '') || undefined, items: () => [
-        { label: 'Snap on / off', shortcut: 'M', hint: 'the master switch · Shift while dragging skips it', checked: snap.on, run: toggleSnap },
+        { label: 'Snap on / off', shortcut: 'M', hint: 'the master switch, off by default · Shift while dragging skips it', checked: snap.on, run: toggleSnap },
         { sep: true },
         { label: 'Grid', hint: `blocks land on ${snap.gridSize}-unit steps · Ctrl halves it`, checked: snap.grid, run: () => setSnapOption('grid', !snap.grid) },
         { label: 'Grid size', hint: `${snap.gridSize} units`, items: () => GRID_SIZES.map((g) => ({ label: `${g} unit${g === 1 ? '' : 's'}`, radio: true, checked: snap.gridSize === g, run: () => setSnapOption('gridSize', g) })) },
