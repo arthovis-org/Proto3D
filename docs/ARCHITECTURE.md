@@ -31,7 +31,6 @@ document describes the layers, the invariants each one keeps and how they fit to
 │ PM layer    pm/model.js (data)  pm/relations.js (links → meaning)  pm/board-ops.js  pm/panel-pm.js │
 │             pm/people.js (the people directory, IndexedDB `people`)                         │
 │ AI layer    ai/providers/* (openrouter, fal, kie, demo)  ai/vault.js  ai/jobs.js  ai/pricing.js  ai/store.js  ai/http.js │
-│ Import      import/comfyui.js (a ComfyUI workflow → a document + report)  ui/import-report.js │
 │             ui/connections.js  ui/model-browser.js  ui/jobs-tray.js  (reached through ai/ui-hooks.js) │
 │ Examples    examples/showcase.js (the full scene)  examples/project-board.js · ai-pipeline.js · │
 │             device-flow.js (the starter templates)  examples/index.js (builder API)               │
@@ -1473,10 +1472,6 @@ Home steps aside. Edit writes through `tabs.patchProject`. `main.js` exposes `ho
   `src/examples/`, listed in `templates` (`examples/index.js`), plus its thumbnails (§9g).
 - **An AI provider or model**: `registerProvider({...})` in a file under `ai/providers/` (import it
   in `providers/index.js`), or a row in `FAL_MODELS` / `KIE_MODELS` — see `AI-GENERATION.md` §6.
-- **A ComfyUI class mapping**: a row in `CLASS_MAP` (`import/comfyui.js`): `pass` with the input
-  it forwards, `silent` when another rule reads it, or `node` with a builder that adds Proto3D
-  nodes and links through the `Ctx` (`add`, `link`, `resolve`, `widget`, `chain`); widget names
-  for the editor's bare `widgets_values` array go in `WIDGETS` — see `AI-GENERATION.md` §9.
 - **A body**: build it from `panelGeometry` / `slabGeometry` (`h.panelGeometry` inside `body3d`)
   and `materials.panel`; use `outlineGeometry` for its rim.
 - **A param control**: extend `PARAM_TYPES` in `core/component.js` and `_buildBlock` in `panel.js`.

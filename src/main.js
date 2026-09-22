@@ -35,8 +35,6 @@ import { VersionHistory } from './ui/version-history.js';
 import { confirmDialog, promptDialog, isDialogOpen } from './ui/confirm.js';
 import { MenuBar, shortcutText } from './ui/menubar.js';
 import { ShortcutsSheet, AboutDialog, REPO_URL } from './ui/help-dialogs.js';
-import { ImportReportDialog } from './ui/import-report.js';
-import { isComfyWorkflow, comfyToProto3D } from './import/comfyui.js';
 import { StatsOverlay } from './ui/stats.js';
 import { MiniToolbar } from './ui/mini-toolbar.js';
 import { ViewportHeader } from './ui/viewport-header.js';
@@ -274,34 +272,7 @@ function openDoc(doc, name) {
   return tab;
 }
 function openProject() {
-  pickJSONFile({ withName: true }).then(({ doc, name }) => (isComfyWorkflow(doc) ? importComfy(doc, name) : openDoc(doc, name))).catch((e) => { if (e.message !== 'cancelled') overlays.toast(`Could not open: ${e.message}`, 2600); });
-}
-/**
- * A ComfyUI workflow (the editor's JSON or the API format) → a new project: import/comfyui.js maps
- * it onto Prompt / Settings / Guide / Mask / Image Edit / Enhance / Generate nodes, the document
- * opens like an example (an untouched empty tab is reused), every block is lifted onto the floor
- * and auto-arranged along its cables, and the report dialog says what was mapped, folded or skipped.
- */
-function importComfy(json, name = 'ComfyUI workflow') {
-  let out;
-  try { out = comfyToProto3D(json, { name }); } catch (e) { overlays.toast(`Could not import: ${e.message}`, 2600); return null; }
-  const tab = tabs.replaceActive(() => {
-    lastLoad = loadWorld(world, out.doc, { camera: ws.camera, controls: ws.controls });
-    world.nodes.forEach((n) => { n.position.y = n.kind === 'device' ? 0 : n.height / 2 + 0.4; });
-    const plan = layoutPlan(world, null);
-    plan.nodes.forEach((n, i) => n.position.fromArray(plan.positions[i]));
-    world.bumpLayout();
-    engine.evaluate();
-  }, { name: String(name || 'ComfyUI workflow').replace(/\.json$/i, '') });
-  if (!tab) return null;
-  start.hide('load');
-  frameAll({ instant: true });
-  syncHint(tab);
-  importReport.open(out.report, { name: tabs.displayName(tab) });
-  return { tab, report: out.report, doc: out.doc };
-}
-function importComfyFile() {
-  pickJSONFile({ withName: true }).then(({ doc, name }) => (isComfyWorkflow(doc) ? importComfy(doc, name) : overlays.toast('That file is not a ComfyUI workflow — File → Import → Proto3D JSON… merges a Proto3D document', 3000))).catch((e) => { if (e.message !== 'cancelled') overlays.toast(`Could not import: ${e.message}`, 2600); });
+  pickJSONFile({ withName: true }).then(({ doc, name }) => openDoc(doc, name)).catch((e) => { if (e.message !== 'cancelled') overlays.toast(`Could not open: ${e.message}`, 2600); });
 }
 /** File → Open recent: a stored project comes to the front when it is open, else opens in a tab. */
 async function openRecent(id) {
@@ -327,7 +298,7 @@ function importDoc(doc, label) {
   overlays.toast(`${label || 'Imported'} · ${c.nodes.length} component${c.nodes.length > 1 ? 's' : ''}${c.skipped.length ? ` · ${c.skipped.length} unknown skipped` : ''}`, 1800);
   return c;
 }
-function importFile() { pickJSONFile({ withName: true }).then(({ doc, name }) => (isComfyWorkflow(doc) ? importComfy(doc, name) : importDoc(doc))).catch((e) => { if (e.message !== 'cancelled') alert(`Could not import: ${e.message}`); }); }
+function importFile() { pickJSONFile().then((doc) => importDoc(doc)).catch((e) => { if (e.message !== 'cancelled') alert(`Could not import: ${e.message}`); }); }
 function exportSelection() {
   const nodes = selectedNodes(); if (!nodes.length) return;
   downloadJSON(serializeSelection(world, nodes, { name: `${project.name || 'proto3d'} selection` }), safeFileName(`${project.name || 'proto3d'}-selection`));
@@ -376,7 +347,7 @@ document.addEventListener('drop', (e) => {
   const file = e.dataTransfer?.files?.[0];
   if (!file || anyModalOpen()) return;
   e.preventDefault();
-  if (/\.json$/i.test(file.name) || file.type === 'application/json') { file.text().then((t) => { const json = JSON.parse(t); const nm = file.name.replace(/\.json$/i, ''); return isComfyWorkflow(json) ? importComfy(json, nm) : openDoc(json, nm); }).catch((err) => overlays.toast(`Could not open ${file.name}: ${err.message}`, 2600)); return; }
+  if (/\.json$/i.test(file.name) || file.type === 'application/json') { file.text().then((t) => openDoc(JSON.parse(t), file.name.replace(/\.json$/i, ''))).catch((err) => overlays.toast(`Could not open ${file.name}: ${err.message}`, 2600)); return; }
   const block = blockAt(e.clientX, e.clientY);
   if (block?.def.onFileDrop) dropFileOn(block, file);
   else if (block) overlays.toast(`${block.def.label} does not take files — drop it on a Media block`, 2200);
@@ -520,11 +491,10 @@ setUIHooks({
 });
 const shortcutsSheet = new ShortcutsSheet({ controls: ws.controls });
 const aboutDialog = new AboutDialog();
-const importReport = new ImportReportDialog({ toast: (t, ms) => overlays.toast(t, ms) });
 const versions = new VersionHistory({ tabs, toast: (t, ms) => overlays.toast(t, ms) });
 const stats = new StatsOverlay({ el: $('stats'), ws, world });
 let palette = null;   // the command palette, built after the menu bar (it reads the menu model)
-const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen || importReport.isOpen || !!palette?.isOpen || isDialogOpen() || projectDialog.isOpen;
+const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen || !!palette?.isOpen || isDialogOpen() || projectDialog.isOpen;
 // with an OpenRouter key present, fetch its model list once so estimates and the panel price are live
 vault.ready.then(() => { if (providerStatus('openrouter') === 'connected') providerRegistry.get('openrouter').listModels({ key: vault.keyFor('openrouter'), proxy: vault.proxyFor('openrouter') }).then(() => panel.refresh()).catch(() => {}); });
 
@@ -797,10 +767,7 @@ const menubar = new MenuBar({
       { label: 'Version history…', hint: `${tabs.active?.preview ? 'previewing an earlier version' : 'snapshots of this project, in this browser'}`, checked: versions.isOpen, run: () => versions.toggle() },
       { label: 'Close tab', shortcut: 'Alt+W', hint: tabs.active?.dirty ? 'asks about unsaved changes' : tabs.tabs.length === 1 ? 'leaves an empty project' : undefined, run: () => closeTab() },
       { sep: true },
-      { label: 'Import', items: () => [
-        { label: 'Proto3D JSON…', hint: 'merge a Proto3D document into this scene', run: importFile },
-        { label: 'ComfyUI workflow…', hint: 'the editor\'s JSON or the API format → a new project of Prompt, Settings, Guide, Mask and Generate nodes', run: importComfyFile },
-      ] },
+      { label: 'Import…', hint: 'merge a JSON file into this scene', run: importFile },
       { label: 'Export', items: () => [
         { label: 'Selection as JSON…', hint: 'the selected components and their links', disabled: !selectedNodes().length, run: exportSelection },
         { label: 'Screenshot (PNG)', hint: 'the viewport as an image', run: exportScreenshot },
@@ -1038,7 +1005,7 @@ window.__proto = {
   plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
   cables, setCableOption, bundles,
   layout: { arrange: autoLayoutSelection, plan: (nodes) => layoutPlan(world, nodes), tweening },
-  newProject, closeTab, renameProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot, toggleBypass, dropFileOn, blockAt, importComfy, importComfyFile, importReport, comfy: { isComfyWorkflow, comfyToProto3D },
+  newProject, closeTab, renameProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot, toggleBypass, dropFileOn, blockAt,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },
   ai: { vault, jobs, spend, store, providers: providerRegistry, providerStatus, connections, modelBrowser, jobsTray },
   serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls, pose: cameraPose(), project: tabs.active?.meta || null }),

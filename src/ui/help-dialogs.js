@@ -27,7 +27,7 @@ export const GLOBAL_SHORTCUTS = [
   { group: 'Mini toolbar (above the selection)', rows: [['Edit / Done (edit mode)', 'Enter / Esc'], ['Duplicate', 'Ctrl+D'], ['Delete', 'Delete'], ['Collapse / expand group', 'C'], ['Frame', 'F'], ['Properties panel', 'N']] },
 ];
 
-export class Dialog {
+class Dialog {
   constructor(id) {
     this.el = document.createElement('div'); this.el.className = 'modal-backdrop'; this.el.id = id; this.el.hidden = true;
     this.el.setAttribute('role', 'dialog'); this.el.setAttribute('aria-modal', 'true');
