@@ -78,7 +78,8 @@ named after it, framed, with a one-line hint bar saying what to try first:
 | **Interactive device flow** | an Input button and a Phone's tap → an Action that counts → Compare (≥ 3) and Gate (NOT) → a Display; the count's pulse through a decision: *yes* → an Action writes *Unlocked* on the Laptop, *no* → a Log; the Phone shows the count | press the button (or tap the phone) three times |
 
 The **Showcase** stays under **File → Examples** and behind *More examples* on the panel.
-Thumbnails are rendered headless and committed under `assets/templates/`.
+Thumbnails are rendered headless and committed under `assets/templates/`. *All projects →* at
+the foot of the recent list opens the Home page.
 
 ## Try it in one minute
 
@@ -460,6 +461,37 @@ the project as one undoable step, **Duplicate as tab** makes a new project of it
 much of the browser's storage quota this site uses, with a warning near the limit. **File → Open
 recent** lists every project in the browser with a thumbnail and when it was last opened; open
 ones come to the front.
+
+## Home: projects, tasks, calendar
+
+The **Home** tab is the permanent first tab of the strip (also **Alt+H** and **File → Projects**):
+a full page over the viewport, the rail and the panel staying put, that lists every project in
+this browser. A project is one room of components plus a card of metadata — a **key** (2–6
+letters derived from the name, *Website relaunch* → `WR`), description, status (*planning ·
+active · on hold · done · archived*), colour, tags, members with a role (*owner · manager ·
+member · viewer*), start and due dates — stored with the record and written into the JSON as
+`project`, so a saved file brings it along.
+
+- **Projects** — a grid of cards: thumbnail or colour, name and key, status chip, tags, member
+  avatars, a progress ring from the project's cards (done = in the last column), next due, when it
+  was last opened, a dot when it is open in a tab. Search, status chips (archived projects hide
+  until you ask for them), a tag and a member select, sort by last opened, name, due or progress.
+  Click a card to open it; its **⋯** menu offers *Open · Edit… · Duplicate · Archive · Delete*.
+- **Tasks** — a sortable table over every card and timeline task of *this project* or *all
+  projects*: task, project, column, assignee, due (overdue in red), priority. A row opens the
+  project and selects the card on its board. Read-only for now.
+- **Calendar** — a placeholder; the next round fills it.
+
+**New project** (Home, or **File → New project…**) opens the Create Project dialog: name, key,
+description, colour, status, dates, tags (Enter or comma adds), **People** from the browser's
+directory with a role each (an inline row adds someone new) and **Start from** — blank, a starter
+template or the Showcase. **File → Project settings…** and a card's *Edit…* reopen it for an
+existing project. The **You are …** picker at the right of the Home header says who you are in
+the directory. The **Person** component's panel gets a *from directory* select that fills a
+Person from a directory entry (undoable) and *Add to directory* for a new name.
+
+There is no server: projects and the people directory live in this browser (IndexedDB); share a
+project with **File → Save**, and open the file elsewhere. Live sync is a later step.
 
 ## Cable management
 

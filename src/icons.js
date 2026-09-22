@@ -76,6 +76,7 @@ export const icons = {
   node: svg('<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 9h18"/><circle cx="3" cy="14" r="1.2" fill="currentColor"/><circle cx="21" cy="14" r="1.2" fill="currentColor"/>'),
   connection: svg('<circle cx="4" cy="16" r="2"/><circle cx="20" cy="8" r="2"/><path d="M6 16c6 0 6-8 12-8"/>'),
   workspace: svg('<path d="M3 20l9-16 9 16z"/><path d="M3 20h18"/>'),
+  home: svg('<path d="M4 10.5L12 4l8 6.5"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-6h4v6"/>'),
   chevron: svg('<path d="M9 6l6 6-6 6"/>'),
   help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 015 0c0 1.8-2.5 2-2.5 4M12 17.5v.01"/>'),
   menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),

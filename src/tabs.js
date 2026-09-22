@@ -14,10 +14,13 @@
 //   untouched empty  a new, unnamed, never edited tab: Open / Open recent / Examples load into it
 //            instead of opening another tab
 //   preview  a read-only tab showing an old version (history locked, never persisted)
+//   meta     the project's metadata (key, status, colour, tags, members, dates — project-store.js
+//            `normalizeMeta`): stored on the record, written into the document as `project`,
+//            edited through `setMeta` / `patchProject` (the Home page and the project dialog)
 import { World } from './core/world.js';
 import { FORMAT_VERSION } from './serialize.js';
 import { isWiringOn, setWiring } from './wiring.js';
-import { projectStore as defaultStore, makeRecord, docHash, docBytes, summarizeDiff, newId, TABS_KEY, AUTOSAVE_ON_KEY, AUTO_SNAPSHOT_LIMIT, LEGACY_KEYS } from './project-store.js';
+import { projectStore as defaultStore, makeRecord, docHash, docBytes, summarizeDiff, newId, normalizeMeta, indexDoc, uniqueKey, TABS_KEY, AUTOSAVE_ON_KEY, AUTO_SNAPSHOT_LIMIT, LEGACY_KEYS } from './project-store.js';
 
 export const TAB_LIMIT = 8;
 export const AUTOSAVE_DELAY = 1500;
@@ -103,11 +106,12 @@ export class Tabs {
       live: null, history: null, view: rec.view || null, wiring: typeof rec.doc?.wiring === 'boolean' ? rec.doc.wiring : null, selectionUids: [], preview: false,
       savedAt: rec.savedAt || 0, autosavedAt: rec.autosavedAt || 0, openedAt: rec.openedAt || Date.now(), createdAt: rec.createdAt || Date.now(),
       lastSnapshotAt: rec.lastSnapshotAt || 0, lastSnapshotHash: rec.lastSnapshotHash || '', lastSnapshotDoc: undefined, thumb: rec.thumb || null, thumbAt: 0, bytes: rec.bytes || docBytes(rec.doc),
+      meta: normalizeMeta(rec.meta || rec.doc?.project || {}, { id: rec.id, name: rec.name }),
     };
   }
   _record(tab) {
     if (tab === this.active) { tab.view = this.hooks.captureView?.() || tab.view; }
-    const rec = makeRecord({ id: tab.id, name: tab.name, doc: tab.doc, baseDoc: tab.baseDoc, dirty: tab.dirty, view: tab.view, savedAt: tab.savedAt, openedAt: tab.openedAt, createdAt: tab.createdAt, thumb: tab.thumb, lastSnapshotAt: tab.lastSnapshotAt, lastSnapshotHash: tab.lastSnapshotHash });
+    const rec = makeRecord({ id: tab.id, name: tab.name, doc: tab.doc, baseDoc: tab.baseDoc, dirty: tab.dirty, view: tab.view, savedAt: tab.savedAt, openedAt: tab.openedAt, createdAt: tab.createdAt, thumb: tab.thumb, lastSnapshotAt: tab.lastSnapshotAt, lastSnapshotHash: tab.lastSnapshotHash, meta: tab.meta, index: indexDoc(tab.doc) });
     rec.autosavedAt = tab.autosavedAt;
     return rec;
   }
@@ -123,6 +127,7 @@ export class Tabs {
     return {
       id, name, doc, baseDoc: base, baseHash, dirty: docHash(doc) !== baseHash, live: null, history: null, view, wiring: typeof doc.wiring === 'boolean' ? doc.wiring : isWiringOn(), selectionUids: [], preview, sourceId, snapshotId,
       savedAt: 0, autosavedAt: 0, openedAt: Date.now(), createdAt: Date.now(), lastSnapshotAt: 0, lastSnapshotHash: '', lastSnapshotDoc: null, thumb: null, thumbAt: 0, bytes: docBytes(doc),
+      meta: normalizeMeta(doc.project || {}, { id, name }),   // a file saved with metadata brings it along
     };
   }
 
@@ -252,6 +257,48 @@ export class Tabs {
     if (tab === this.active) this.hooks.afterSwitch?.(tab);
     this._persist(tab); this._notify();
     return true;
+  }
+
+  /* ---------- project metadata (Home page, project dialog) ---------- */
+  /** Merge `patch` into an open tab's metadata (`patch.name` renames it too); persists and notifies. */
+  setMeta(id, patch = {}) {
+    const tab = this.byId(id); if (!tab || tab.preview) return false;
+    const { name, ...meta } = patch;
+    if (name !== undefined) { tab.name = name ? String(name).trim() || null : null; if (tab === this.active) this.hooks.afterSwitch?.(tab); }
+    tab.meta = normalizeMeta({ ...tab.meta, ...meta }, { id: tab.id, name: tab.name });
+    if (tab.doc) tab.doc = { ...tab.doc, name: tab.name || tab.doc.name, project: tab.meta };
+    this._persist(tab); this._notify();
+    return true;
+  }
+  /** Metadata of any project: an open tab through `setMeta`, a closed one straight in the store. Resolves true when something was written. */
+  async patchProject(id, patch = {}) {
+    if (this.byId(id)) return this.setMeta(id, patch);
+    const rec = await this.store.patchProject(id, patch);
+    this._notify();
+    return !!rec;
+  }
+  /** Every project key in the browser (uniqueness in the dialog), except `exceptId`'s. */
+  async projectKeys(exceptId = null) { const list = await this.store.listProjects(); return list.filter((p) => p.id !== exceptId).map((p) => p.meta?.key).filter(Boolean); }
+  /** A stored copy of a project (open or closed) under "<name> (copy)" with a fresh key; not opened. Resolves the new record, or null. */
+  async duplicateProject(id) {
+    const tab = this.byId(id);
+    const rec = tab ? this._record(tab) : await this.store.getProject(id);
+    if (!rec || !rec.doc) return null;
+    if (tab === this.active) rec.doc = this.hooks.serialize(tab.name);
+    const name = `${rec.name || 'Untitled'} (copy)`;
+    const keys = await this.projectKeys();
+    const copy = makeRecord({ id: newId(), name, doc: { ...rec.doc, name }, baseDoc: null, dirty: true, view: rec.view, thumb: rec.thumb, meta: { ...rec.meta, key: uniqueKey(rec.meta?.key, keys) } });
+    copy.doc.project = copy.meta;
+    try { await this.store.putProject(copy); } catch (_) { return null; }
+    this._notify();
+    return copy;
+  }
+  /** Remove a project from the browser: its tab (without asking) and its record with every version. */
+  async deleteProject(id) {
+    if (this.byId(id)) await this.close(id, { force: true });
+    const ok = await this.store.removeProject(id);
+    this._notify();
+    return ok;
   }
 
   /* ---------- close ---------- */

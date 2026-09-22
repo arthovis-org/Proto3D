@@ -6,6 +6,8 @@
 // Connections page, model browser and job tray, the performance stats, the project tabs (each with
 // its own scene, history and view), autosave into IndexedDB with its indicator, version history, recent projects,
 // the Start panel (blank project, three starter templates with a hint bar, recent projects, open a file),
+// the Home page (every project in this browser with its metadata and task index, the people
+// directory, the Create / Edit Project dialog),
 // the 2D editing mode (plan view, key 2) with grid snapping and Auto-layout (L), inline editing of
 // face fields (double-click text on a face), cable management (styles, waypoints, bundles: View →
 // Cables), the Showcase scene and the render loop. Exposes window.__proto for debugging / tests.
@@ -46,6 +48,9 @@ import { BundleManager } from './bundles.js';
 import { layoutPlan, layoutCommand, updateTweens, tweening } from './layout.js';
 import { examples, templates, exampleById, buildExample, DEFAULT_EXAMPLE } from './examples/index.js';
 import { StartPanel, startOnLaunch } from './ui/start-panel.js';
+import { Home } from './ui/home.js';
+import { ProjectDialog } from './ui/project-dialog.js';
+import { people } from './pm/people.js';
 import { HintBar } from './ui/hint-bar.js';
 import { NavHint } from './ui/nav-hint.js';
 import { setFlowEnabled, isFlowEnabled, setFlowSpeed, getFlowSpeed } from './connection3d.js';
@@ -143,7 +148,7 @@ const v3 = (a) => new THREE.Vector3().fromArray(a);
 const arr = (v) => v.toArray().map((x) => +x.toFixed(2));
 /** The active tab's name (null while untitled); `document.title` follows it. */
 const project = { get name() { return tabs.active?.name || null; } };
-function currentDoc(name = project.name || 'untitled') { return serializeWorld(world, { camera: ws.camera, controls: ws.controls, pose: cameraPose(), name }); }
+function currentDoc(name = project.name || 'untitled') { return serializeWorld(world, { camera: ws.camera, controls: ws.controls, pose: cameraPose(), name, project: tabs.active?.meta || null }); }
 function syncTitle(tab = tabs.active) { document.title = `${tab?.name || 'Untitled'}${tab?.preview ? ' (preview)' : ''} — Proto3D`; }
 function setProjectName(name) { if (tabs.active) tabs.rename(tabs.activeId, name); syncTitle(); }
 let lastLoad = null;   // what the last loadWorld reported (unknown components skipped)
@@ -223,6 +228,7 @@ function loadExample(id) {
 function syncHint(tab = tabs.active) { if (tab?.hint && !tab.hint.dismissed && !tab.preview) hintBar.show(tab.hint.text); else hintBar.hide(); }
 /** File → New: an empty project in a new tab (an untouched empty tab is already one), with the Start panel over it. */
 function newProject() {
+  home.hide('new');
   let t = tabs.active;
   if (t && tabs.isUntouchedEmpty(t)) overlays.toast('This tab is already an empty project', 1400);
   else { t = tabs.newTab(); if (t) overlays.toast('New project · Save as… names it, Alt+W closes the tab', 1600); }
@@ -320,15 +326,52 @@ document.addEventListener('paste', (e) => {
   if (doc || clipboard.doc) { e.preventDefault(); pasteClipboard(doc || clipboard.doc); }
 });
 
+/* ---- Home page (ui/home.js), the Create / Edit Project dialog (ui/project-dialog.js) and the people directory (pm/people.js) ---- */
+/**
+ * Create from the dialog: the template through the same path as the Start panel (`loadExample`,
+ * into the untouched empty tab else a new one), Blank into an empty tab; then the name and the
+ * metadata, Home steps aside and the scene is framed.
+ */
+function createProject({ name, meta, template }) {
+  home.hide('create');
+  let tab = null;
+  if (template && template !== 'blank' && exampleById(template)) { loadExample(template); tab = tabs.active; }
+  else { tab = tabs.active && tabs.isUntouchedEmpty(tabs.active) ? tabs.active : tabs.newTab(); if (tab) start.hide('create'); }
+  if (!tab) return null;
+  tabs.setMeta(tab.id, { name, ...meta });
+  if (!world.nodes.length) frameAll({ instant: true });
+  overlays.toast(`${name} created · ${meta.key} · Home lists it`, 1800);
+  return tab;
+}
+/** A row in Home's Tasks view: open the project (its tab) and select the card on its board, like the Person panel does. */
+async function openTask({ projectId, boardUid, taskId }) {
+  const rec = await projectStore.getProject(projectId);
+  if (!rec) { overlays.toast('That project is no longer in this browser', 1800); return; }
+  const tab = tabs.openRecord(rec); if (!tab) return;
+  home.hide('task');
+  const node = world.nodeByUid(boardUid);
+  if (node?.selectSub) { node.selectSub({ kind: node.typeId === 'timeline' ? 'task' : 'card', id: taskId }, selection); ws.frameBlocks([node], { fill: 0.7, insetLeft: insetLeft() }); togglePanel(true); }
+}
+const home = new Home({
+  el: $('home'), tabs, people, store: projectStore,
+  onNew: () => projectDialog.create(), onEdit: (rec) => projectDialog.edit(rec), onOpenTask: openTask,
+  onChange: () => { tabStrip?.renderHome(); syncEmptyHint(); },
+  toast: (t, ms) => overlays.toast(t, ms),
+});
+const projectDialog = new ProjectDialog({ tabs, people, templates, showcase: exampleById(DEFAULT_EXAMPLE), onCreate: createProject, toast: (t, ms) => overlays.toast(t, ms) });
+/** File → Project settings…: the active project's card. */
+function projectSettings() { const t = tabs.active; if (!t || t.preview) return; projectDialog.edit({ id: t.id, name: t.name, meta: t.meta }); }
+
 /* ---- Start panel and the template hint bar ---- */
 const hintBar = new HintBar({ el: $('hint-bar'), onDismiss: () => { if (tabs.active?.hint) tabs.active.hint.dismissed = true; } });
 const navHint = new NavHint({ controls: ws.controls, toast: (t, ms) => overlays.toast(t, ms) });   // trackpad suggestion + first-run navigation hint (ui/nav-hint.js)
-/** The empty-scene arrow shows only while the room is empty and the Start panel is not over it. */
-const syncEmptyHint = () => overlays.setEmptyHint(world.nodes.length === 0 && !start?.isOpen);
+/** The empty-scene arrow shows only while the room is empty and neither the Start panel nor Home is over it. */
+const syncEmptyHint = () => overlays.setEmptyHint(world.nodes.length === 0 && !start?.isOpen && !home?.isOpen);
 const start = new StartPanel({
   el: $('start'), templates, showcase: exampleById(DEFAULT_EXAMPLE), recent: () => tabs.recent(),
   onBlank: () => { if (!(tabs.active && tabs.isUntouchedEmpty(tabs.active))) tabs.newTab(); overlays.toast('Blank project · add a component from the left', 1600); },
   onTemplate: (id) => loadExample(id), onExample: (id) => loadExample(id), onOpenFile: () => openProject(), onOpenRecent: (id) => openRecent(id),
+  onAllProjects: () => home.open('projects', 'start'),
   onChange: () => { syncEmptyHint(); syncToolbar(); },
 });
 world.onChange(() => { if (start.isOpen && world.nodes.length) start.hide('added'); else syncEmptyHint(); });   // anything landing in the room dismisses the card
@@ -348,7 +391,7 @@ const aboutDialog = new AboutDialog();
 const versions = new VersionHistory({ tabs, toast: (t, ms) => overlays.toast(t, ms) });
 const stats = new StatsOverlay({ el: $('stats'), ws, world });
 let palette = null;   // the command palette, built after the menu bar (it reads the menu model)
-const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen || !!palette?.isOpen || isDialogOpen();
+const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen || !!palette?.isOpen || isDialogOpen() || projectDialog.isOpen;
 // with an OpenRouter key present, fetch its model list once so estimates and the panel price are live
 vault.ready.then(() => { if (providerStatus('openrouter') === 'connected') providerRegistry.get('openrouter').listModels({ key: vault.keyFor('openrouter'), proxy: vault.proxyFor('openrouter') }).then(() => panel.refresh()).catch(() => {}); });
 
@@ -547,6 +590,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'BracketRight' || e.code === 'BracketLeft') { e.preventDefault(); e.stopPropagation(); tabs.cycle(e.code === 'BracketRight' ? 1 : -1); }
     else if (e.code === 'KeyW') { e.preventDefault(); e.stopPropagation(); closeTab(); }
     else if (e.code === 'KeyN') { e.preventDefault(); e.stopPropagation(); newProject(); }
+    else if (e.code === 'KeyH') { e.preventDefault(); e.stopPropagation(); home.toggle(); }
     return;
   }
   if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') { e.preventDefault(); e.stopPropagation(); closeTab(); }
@@ -598,6 +642,8 @@ const menubar = new MenuBar({
   menus: [
     { id: 'file', label: 'File', items: () => [
       { label: 'New project', shortcut: 'Alt+N', hint: 'in a new tab', run: newProject },
+      { label: 'New project…', hint: 'name, key, people, dates, a template', run: () => projectDialog.create() },
+      { label: 'Projects', shortcut: 'Alt+H', hint: 'all projects, tasks, calendar', checked: home.isOpen, run: () => home.toggle() },
       { label: 'Open…', shortcut: sc('Ctrl+O'), hint: 'a JSON file, in a new tab', run: openProject },
       { label: 'Open recent', items: () => {
         const list = recentCache;
@@ -612,6 +658,7 @@ const menubar = new MenuBar({
       { label: 'Save', shortcut: sc('Ctrl+S'), hint: project.name ? `${safeFileName(project.name)}` : 'downloads JSON', disabled: !!tabs.active?.preview, run: saveProject },
       { label: 'Save as…', shortcut: sc('Ctrl+Shift+S'), disabled: !!tabs.active?.preview, run: saveProjectAs },
       { label: 'Rename project…', disabled: !!tabs.active?.preview, run: renameProject },
+      { label: 'Project settings…', hint: tabs.active?.meta ? `${tabs.active.meta.key} · ${tabs.active.meta.status}` : undefined, disabled: !!tabs.active?.preview, run: projectSettings },
       { sep: true },
       { label: 'Version history…', hint: `${tabs.active?.preview ? 'previewing an earlier version' : 'snapshots of this project, in this browser'}`, checked: versions.isOpen, run: () => versions.toggle() },
       { label: 'Close tab', shortcut: 'Alt+W', hint: tabs.active?.dirty ? 'asks about unsaved changes' : tabs.tabs.length === 1 ? 'leaves an empty project' : undefined, run: () => closeTab() },
@@ -776,7 +823,7 @@ world.onChange((what) => { if (what === 'wiring') vpHeader.sync(); });
 syncToolbar();
 
 /* ---- First scene: the saved tabs (IndexedDB; the round-5 localStorage autosave migrates once), otherwise an empty tab with the Start panel over it ---- */
-const tabStrip = new TabStrip({ el: $('tabstrip'), tabs, onNew: newProject, onDownload: saveProject, onVersions: () => versions.open() });
+const tabStrip = new TabStrip({ el: $('tabstrip'), tabs, onNew: newProject, onDownload: saveProject, onVersions: () => versions.open(), onHome: () => home.open('projects', 'tab'), isHome: () => home.isOpen, onActivate: () => home.hide('tab') });
 const tour = new Tour({ ws, world, el: $('tour'), onDone: () => frameAll() });
 let restored = false;
 try { restored = await tabs.init(); } catch (e) { console.warn('project store unavailable:', e.message); }
@@ -813,6 +860,7 @@ function updateConnectionLabel() {
   connLabel.innerHTML = `<b style="color:${hex(c.color.getHex())}">${typeText}</b> ${meaning}`;
 }
 function frame() {
+  if (home.isOpen && !thumbResolve) { requestAnimationFrame(frame); return; }   // Home covers the viewport: no render, no per-frame work (a pending thumbnail still gets its frame)
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
   ws.updateFlight(dt);
@@ -847,6 +895,7 @@ frame();
 // Exposed for debugging / automated tests
 window.__proto = {
   ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, vpHeader, fieldEditor, glideSetting, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, navHint, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  home, projectDialog, people, createProject, projectSettings,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
   plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
   cables, setCableOption, bundles,
@@ -854,6 +903,6 @@ window.__proto = {
   newProject, closeTab, renameProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },
   ai: { vault, jobs, spend, store, providers: providerRegistry, providerStatus, connections, modelBrowser, jobsTray },
-  serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls, pose: cameraPose() }),
+  serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls, pose: cameraPose(), project: tabs.active?.meta || null }),
   load: (doc) => loadWorld(world, doc, { camera: ws.camera, controls: ws.controls }),
 };

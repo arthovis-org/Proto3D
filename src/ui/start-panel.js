@@ -4,7 +4,7 @@
 // on File → New, reopens from Help → Start panel, closes on any pick, Esc, × or when something
 // lands in the scene; "Show on startup" is persisted in localStorage.
 //
-//   new StartPanel({ el, templates, showcase, recent, onBlank, onTemplate, onExample, onOpenFile, onOpenRecent, onChange })
+//   new StartPanel({ el, templates, showcase, recent, onBlank, onTemplate, onExample, onOpenFile, onOpenRecent, onAllProjects, onChange })
 //   open() / hide(reason) / toggle() / isOpen · onChange(open, reason)
 //   thumbnails: assets/templates/<id>-<theme>.png (rendered headless, committed), a component icon when missing
 import { icons } from '../icons.js';
@@ -20,8 +20,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const TEMPLATE_ICON = { 'project-board': 'project', 'ai-pipeline': 'generate', 'device-flow': 'devices' };
 
 export class StartPanel {
-  constructor({ el, templates = [], showcase = null, recent = async () => [], onBlank = () => {}, onTemplate = () => {}, onExample = () => {}, onOpenFile = () => {}, onOpenRecent = () => {}, onChange = () => {} }) {
-    Object.assign(this, { el, templates, showcase, recent, onBlank, onTemplate, onExample, onOpenFile, onOpenRecent, onChange });
+  constructor({ el, templates = [], showcase = null, recent = async () => [], onBlank = () => {}, onTemplate = () => {}, onExample = () => {}, onOpenFile = () => {}, onOpenRecent = () => {}, onAllProjects = null, onChange = () => {} }) {
+    Object.assign(this, { el, templates, showcase, recent, onBlank, onTemplate, onExample, onOpenFile, onOpenRecent, onAllProjects, onChange });
     this.el.hidden = true;
     this.el.setAttribute('aria-hidden', 'true');
     this._recent = [];
@@ -68,6 +68,7 @@ export class StartPanel {
         else if (act === 'example') this.onExample(id);
         else if (act === 'file') this.onOpenFile();
         else if (act === 'recent') this.onOpenRecent(id);
+        else if (act === 'all') this.onAllProjects?.();
       });
     }
   }
@@ -87,6 +88,7 @@ export class StartPanel {
       <aside class="start-side">
         <h3>Open recent</h3>
         <div class="start-recent-wrap">${this._recentHtml()}</div>
+        ${this.onAllProjects ? `<button type="button" class="start-all" data-act="all">All projects <span aria-hidden="true">→</span></button>` : ''}
         <div class="start-side-btns">
           <button type="button" class="start-open" data-act="file">${icons.file}<span>Open file…</span></button>
           ${this.showcase ? `<button type="button" class="start-open" data-act="example" data-id="${esc(this.showcase.id)}">${icons.sparkle}<span>More examples · ${esc(this.showcase.label)}</span></button>` : ''}

@@ -1,13 +1,14 @@
-// ui/tab-strip.js — the slim strip under the menu bar: one tab per open project (name, a dot
-// while it has unsaved changes, × to close, a preview badge for a read-only version), a "+" for a
-// new project and, at the right end, the autosave indicator ("Saved · 2 min ago", "Saving…",
+// ui/tab-strip.js — the slim strip under the menu bar: a permanent Home tab first (the Home page,
+// ui/home.js: not closable, not draggable, `aria-current` while Home is shown), one tab per open
+// project (name, a dot while it has unsaved changes, × to close, a preview badge for a read-only
+// version), a "+" for a new project and, at the right end, the autosave indicator ("Saved · 2 min ago", "Saving…",
 // "Unsaved changes", "Autosave off") whose hover card shows when and where the last save went
 // and offers Save now, Download JSON and Version history. Presentation only: it renders from the
 // Tabs model (tabs.js) and calls back into it. The DOM is reconciled by tab id so a tab element
 // survives re-renders — a pointer drag to reorder keeps its capture, an inline rename its focus.
 //
 //   click / Enter activates · middle-click or × closes · double-click renames · drag reorders
-//   ← → move focus between tabs · Delete closes the focused tab
+//   ← → move focus between tabs · Delete closes the focused tab · the Home tab opens Home (Alt+H)
 import { icons } from '../icons.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -15,9 +16,9 @@ export const timeAgo = (t) => { if (!t) return 'never'; const s = Math.max(0, (D
 const clock = (t) => (t ? new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—');
 
 export class TabStrip {
-  /** @param {object} o { el, tabs, onNew, onDownload, onVersions } */
-  constructor({ el, tabs, onNew, onDownload, onVersions }) {
-    Object.assign(this, { el, tabs, onNew, onDownload, onVersions });
+  /** @param {object} o { el, tabs, onNew, onDownload, onVersions, onHome?, isHome?, onActivate? } — `onActivate` fires on every click on a project tab (also the active one), so Home can step aside */
+  constructor({ el, tabs, onNew, onDownload, onVersions, onHome = null, isHome = () => false, onActivate = () => {} }) {
+    Object.assign(this, { el, tabs, onNew, onDownload, onVersions, onHome, isHome, onActivate });
     this.els = new Map();          // tab id → element
     this.drag = null;
     this._build();
@@ -29,6 +30,11 @@ export class TabStrip {
   _build() {
     this.el.innerHTML = '';
     this.el.setAttribute('role', 'tablist'); this.el.setAttribute('aria-label', 'Open projects');
+    // the Home tab: fixed before the project tabs (not in the Tabs model)
+    this.home = document.createElement('button'); this.home.type = 'button'; this.home.className = 'ptab home'; this.home.title = 'Home · projects, tasks, calendar (Alt+H)'; this.home.setAttribute('aria-label', 'Home'); this.home.innerHTML = `${icons.home}<span class="ptab-name">Home</span>`;
+    this.home.addEventListener('click', () => this.onHome?.());
+    this.home.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') { e.preventDefault(); this.els.get(this.tabs.tabs[0]?.id)?.focus(); } });
+    if (this.onHome) this.el.appendChild(this.home);
     this.list = document.createElement('div'); this.list.className = 'ptabs';
     this.add = document.createElement('button'); this.add.type = 'button'; this.add.className = 'ptab-add'; this.add.title = 'New project (Alt+N)'; this.add.setAttribute('aria-label', 'New project'); this.add.innerHTML = icons.plus;
     this.add.addEventListener('click', () => this.onNew?.());
@@ -67,7 +73,7 @@ export class TabStrip {
       if (e.target !== el) return;
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.tabs.activate(tab.id); }
       else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.tabs.close(tab.id); }
-      else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); const i = this.tabs.indexOf(tab.id) + (e.key === 'ArrowRight' ? 1 : -1); const t = this.tabs.tabs[i]; if (t) this.els.get(t.id)?.focus(); }
+      else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); const i = this.tabs.indexOf(tab.id) + (e.key === 'ArrowRight' ? 1 : -1); const t = this.tabs.tabs[i]; if (t) this.els.get(t.id)?.focus(); else if (i < 0 && this.onHome) this.home.focus(); }
       else if (e.key === 'F2') { e.preventDefault(); this.rename(tab.id); }
     });
     return el;
@@ -75,6 +81,7 @@ export class TabStrip {
   render() {
     const seen = new Set();
     let prev = null;
+    this.renderHome();
     for (const tab of this.tabs.tabs) {
       let el = this.els.get(tab.id);
       if (!el) { el = this._tabEl(tab); this.els.set(tab.id, el); }
@@ -98,6 +105,13 @@ export class TabStrip {
     if (active && this.list.scrollWidth > this.list.clientWidth) active.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     this.renderStatus(this.tabs.status);
   }
+  /** The Home tab's state: current while the Home page is shown (the active project tab keeps `aria-selected`). */
+  renderHome() {
+    if (!this.onHome) return;
+    const on = !!this.isHome();
+    this.home.classList.toggle('current', on);
+    if (on) this.home.setAttribute('aria-current', 'page'); else this.home.removeAttribute('aria-current');
+  }
   /** Inline rename of a tab (double-click, F2). */
   rename(id) {
     const el = this.els.get(id), tab = this.tabs.byId(id); if (!el || !tab || el.classList.contains('renaming')) return;
@@ -120,6 +134,7 @@ export class TabStrip {
     this._onMove = (ev) => this._move(ev); this._onUp = (ev) => this._up(ev);
     window.addEventListener('pointermove', this._onMove, true); window.addEventListener('pointerup', this._onUp, true); window.addEventListener('pointercancel', this._onUp, true);
     this.tabs.activate(id);
+    this.onActivate(id);
   }
   _move(e) {
     const d = this.drag; if (!d || e.pointerId !== d.pointerId) return;

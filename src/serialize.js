@@ -39,11 +39,17 @@ export function applyRoute(conn, route, shared) {
 /** The shared-node map for a document's `routeNodes`. */
 const sharedNodes = (doc) => new Map((doc.routeNodes || []).filter((r) => r && Array.isArray(r.p) && r.p.length === 3).map((r) => [r.id, new RouteNode(r.p, r.id)]));
 
-/** `pose` = { position, target } replaces the live camera (the remembered 3D pose while the 2D editing mode is on — the mode itself is never saved). */
+/**
+ * `pose` = { position, target } replaces the live camera (the remembered 3D pose while the 2D editing
+ * mode is on — the mode itself is never saved). `project` is the tab's metadata (key, status, colour,
+ * tags, members, dates; tabs.js), written as `doc.project` so an exported file carries it.
+ */
 export function serializeWorld(world, { camera, controls, pose = null, name = 'untitled' } = {}) {
+  const project = arguments[1]?.project || null;   // read beside the destructuring: the SDK contract pins the signature line above
   const cam = pose ? { position: pose.position, target: pose.target } : camera && controls ? { position: camera.position, target: controls.target } : null;
   return {
     app: 'proto3d', version: FORMAT_VERSION, name, savedAt: new Date().toISOString(),
+    ...(project ? { project } : {}),
     nodes: world.nodes.map((n) => n.serialize()),
     connections: world.connections.filter((c) => c.to).map((c) => c.serialize()),
     ...routeNodesDoc(world.connections.filter((c) => c.to), world),

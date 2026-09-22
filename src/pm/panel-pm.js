@@ -9,6 +9,7 @@ import {
 } from './model.js';
 import { commitBoard } from './board-ops.js';
 import { connectedPeople, personTasks, groupByColumn, sameName } from './relations.js';
+import { people } from './people.js';
 
 const boardOf = (b) => normalizeBoard(b.params.board);
 
@@ -161,6 +162,7 @@ function buildCardEditor(api, b, id) {
 /*  Person: the tasks assigned to them on every connected board (click → open the card)     */
 /* ====================================================================================== */
 export function buildPersonPanel(api, b) {
+  buildDirectorySection(api, b);
   const s = api.section('Tasks');
   const rows = personTasks(b);
   const boards = [...new Set(rows.map((r) => r.board))];
@@ -182,6 +184,24 @@ export function buildPersonPanel(api, b) {
       list.appendChild(li);
     }
   }
+}
+
+/** "From directory": pick a person of this browser's directory (pm/people.js) to fill name, role and colour in one undoable step; "Add to directory" when the name is new. */
+function buildDirectorySection(api, b) {
+  const s = api.section('Directory', false);
+  const names = () => people.list().map((p) => p.name);
+  const match = () => people.byName(b.params.name);
+  const sel = api.select(s, 'from directory', ['—', ...names()], () => match()?.name || '—', (v) => {
+    const p = people.byName(v); if (!p) return;
+    const cmds = [['name', p.name], ['role', p.role], ['colour', p.colour]].filter(([k, val]) => b.params[k] !== val).map(([k, val]) => cmdSet(api, b, k, val));
+    if (!cmds.length) return;
+    api.exec({ label: `Person from directory`, do: () => cmds.forEach((c) => c.do()), undo: () => [...cmds].reverse().forEach((c) => c.undo()) });
+    api.rebuild();
+  }, 'fromDirectory');
+  sel.title = 'Fills name, role and colour from a directory person (Ctrl+Z undoes)';
+  const add = api.action(s, 'Add to directory', () => { people.add({ name: b.params.name, role: b.params.role, colour: b.params.colour, capacity: b.params.capacity }); api.rebuild(); }, 'pm-add-directory');
+  api.live(() => { add.hidden = !!match(); });
+  api.readonly(s, 'about', () => `${people.list().length} in this browser's directory · Home lists projects and people`);
 }
 
 /* ====================================================================================== */

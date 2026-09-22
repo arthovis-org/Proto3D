@@ -13,6 +13,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 │             ui/tab-strip.js (project tabs + autosave indicator)  ui/version-history.js  ui/confirm.js │
 │             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
 │             ui/start-panel.js (first run, File → New, Help → Start panel)  ui/hint-bar.js  ui/nav-hint.js │
+│             ui/home.js (the Home page: projects, tasks, calendar)  ui/project-dialog.js (Create / Edit Project) │
 │             ui/guides.js (snap guides)  layout.js (Auto-layout)  plan.js (2D mode + snap settings) │
 │             controls/presets.js + controls/navigation.js (camera + bindings, trackpad + touch) │
 │             main.js (boot + render loop)                                     │
@@ -28,6 +29,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Components  components/<category>/<name>.js  (17 core + 10 project + 5 generate) │
 │ PM layer    pm/model.js (data)  pm/relations.js (links → meaning)  pm/board-ops.js  pm/panel-pm.js │
+│             pm/people.js (the people directory, IndexedDB `people`)                         │
 │ AI layer    ai/providers/* (openrouter, fal, kie, demo)  ai/vault.js  ai/jobs.js  ai/pricing.js  ai/store.js  ai/http.js │
 │             ui/connections.js  ui/model-browser.js  ui/jobs-tray.js  (reached through ai/ui-hooks.js) │
 │ Examples    examples/showcase.js (the full scene)  examples/project-board.js · ai-pipeline.js · │
@@ -1240,19 +1242,33 @@ card, `localStorage["proto3d.autosave.v1"]`), *No browser storage*, *Could not s
 still downloads JSON and marks the tab saved (a manual snapshot follows). A late save never
 reports *Saved* over a newer change (a change sequence number).
 
-**IndexedDB `proto3d-projects` v1** (`project-store.js`, best effort — without IndexedDB the app
+**IndexedDB `proto3d-projects` v2** (`project-store.js`, best effort — without IndexedDB the app
 runs in memory and says so):
 
 ```
 projects   keyPath id, index openedAt
            { id, name, doc, baseDoc, dirty, view: { camera: { position, target }, ortho, plan, planCamera },
              savedAt, autosavedAt, openedAt, createdAt, thumb (256 px JPEG data URL), bytes, nodes, connections,
-             lastSnapshotAt, lastSnapshotHash }
+             lastSnapshotAt, lastSnapshotHash,
+             meta:  { key, description, status, colour, tags: [], members: [{ personId, role }], start, due, owner },
+             index: { tasks: [{ id, title, boardUid, board, column, columnIndex, done, assignee, due, start, priority, estimate }],
+                      milestones: [{ uid, title, date }], updatedAt } }
 snapshots  keyPath id, index project (projectId)
            { id, projectId, at, kind: 'auto' | 'manual' | 'before', label, doc, bytes, name, nodes, connections,
              summary: { added, removed, renamed, connections, params, moved, groups, first, text } }
+people     keyPath id   (v2)  { id, name, email, role, colour, capacity }   — the people directory (pm/people.js)
 localStorage["proto3d.tabs.v1"]  { open: [projectId…], active }   — the open tab set (small settings stay in localStorage)
+localStorage["proto3d.me.v1"]    the viewer's directory id (the "You are …" picker)
 ```
+
+`meta` is `normalizeMeta` of whatever the record holds (a v1 record gets defaults on first read —
+status *active*, a colour from a stable hash of its id, the key derived from the name — through
+`withMeta` in `getProject` / `listProjects`; nothing is rewritten until the project is saved).
+`index` is `indexDoc(doc)`, pure: every card of every `kanban-board` (`params.board.columns`, done
+= the last column), a `timeline`'s own `params.tasks`, the `milestone` nodes; `Tabs._record`
+recomputes it on every persist, so the Home page lists and counts tasks from the listing alone.
+`projectStats(rec)` turns the index into `{ total, done, doneRatio, overdue, nextDue, people }`.
+The DB upgrade from v1 only adds the `people` store.
 
 The round-5 keys `proto3d.world.v2` (autosave) and `proto3d.recent.v1` (recents) are migrated
 once on boot (`readLegacy`: the autosave becomes the first tab, each recent entry a closed
@@ -1276,9 +1292,83 @@ canvas right after a render (`captureThumb` in the render loop), at most every 1
 
 **Keys**: `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle tabs and `Ctrl+W` closes when the browser hands the
 key to the page (Chrome keeps both for its own tabs); the fallbacks that always work are `Alt+]`
-/ `Alt+[` and `Alt+W`, `Alt+N` opens a new project. In the strip: click activates, middle-click or
+/ `Alt+[` and `Alt+W`, `Alt+N` opens a new project, `Alt+H` toggles Home (§10c). In the strip: click activates, middle-click or
 × closes, double-click or F2 renames inline, a pointer drag reorders (window listeners: moving a
 captured element in the DOM would drop its capture), ← → move focus, Delete closes.
+
+## 10c. Home and project metadata (`ui/home.js`, `ui/project-dialog.js`, `pm/people.js`)
+
+**Principle.** A project is one Proto3D document (a room in a tab) plus metadata. There is no
+server: everything is per browser, "invites" are entries in a local people directory, sharing is
+export / import. The UI says so once, in the dialog and the picker (a small note), not everywhere.
+
+**Metadata** lives on the tab (`tab.meta`, filled by `_fromRecord` / `_makeTab` from the record's
+`meta` or the document's `project`) and goes three ways: into the record on every persist, into
+the document as `doc.project` (`serializeWorld({ project })`, `main.js → currentDoc` passes the
+active tab's meta; `loadWorld` ignores it, `Tabs._makeTab` reads it back when a file is opened),
+and to listeners through `tabs.onChange`. `tabs.setMeta(id, patch)` merges into an open tab
+(`patch.name` renames it too), `tabs.patchProject(id, patch)` reaches closed projects through
+`store.patchProject`; `tabs.duplicateProject(id)` stores a copy under "<name> (copy)" with a fresh
+key (`uniqueKey`) without opening it, `tabs.deleteProject(id)` closes the tab without asking and
+removes the record with its versions; `tabs.projectKeys()` feeds the dialog's uniqueness check.
+`canonical()` does not count `project`, so editing metadata never marks a tab dirty or makes a
+version.
+
+**People directory** (`pm/people.js`, a singleton `people`): the `people` store mirrored in
+memory once (`people.ready`) so the panel, the dialog and Home read it synchronously — `list()`,
+`byId`, `byName`, `add({ name, email, role, colour, capacity })` (a `createPerson` from
+`pm/model.js` plus an email), `update`, `remove`, `onChange`, `me` / `setMe(id)`
+(`localStorage["proto3d.me.v1"]`). A project's `members` refer to directory ids; a card's
+`assignee` stays a name (the board's own model), and the Home card shows members first, then any
+assignee not among them, in a neutral colour. The Person component's panel (`pm/panel-pm.js →
+buildDirectorySection`) adds a collapsed *Directory* section: *from directory* fills name, role
+and colour as one undoable command, *Add to directory* appears while the name is unknown.
+
+**Home** (`#home`, `ui/home.js`): a fixed view with the viewport's box (`top: var(--top-h)`, the
+rail on the left, the panel on the right, `z-index` 4 so it covers the selection readout, the mini
+toolbar and the hint bar; the Start panel, the drawers and the modals stay above). While it is
+open the render loop skips its frame unless a thumbnail is pending (`frame()` in `main.js`): the
+canvas is covered and the IndexedDB reads Home makes stay snappy. It opens from the permanent
+**Home** tab (`ui/tab-strip.js`: a fixed `.ptab.home` before the project tabs, not closable, not
+draggable, `aria-current="page"` while shown; the project tab keeps `aria-selected`), `Alt+H`,
+**File → Projects** and the Start panel's *All projects →*; it hides on Esc, on a click on any
+project tab (`TabStrip.onActivate`) and whenever the active tab changes — except when Home caused
+the change itself (deleting the active project closes its tab; `_own`). Data is
+`store.listProjects()` (metadata, index and thumbnail, no documents) merged with the open tabs
+(their live `meta`, `dirty`, `open`, `active`), refreshed on `tabs.onChange`, on every *Saved*
+status and on directory changes (debounced); untouched empty tabs are not listed.
+
+- *Projects*: search over name, key, description and tags; status chips (*All* hides archived);
+  tag and member selects built from the data; sort by last opened, name, due (`meta.due`, else
+  the index's next due) or progress. A card is `article.pcard[data-id]` with `--pc` (the project
+  colour): thumbnail or a colour gradient, the key badge, the open dot, name, description, the
+  status chip (`.chip.st-*`), tag chips, up to four avatars + "+n", a progress ring (an SVG
+  circle with `stroke-dashoffset`), next due, opened `timeAgo`. Click / Enter opens it
+  (`tabs.openRecord` of the full record); the ⋯ menu (`.home-menu`, arrow keys, Esc) runs *Open ·
+  Edit… · Duplicate · Archive / Unarchive · Delete* (`confirmDialog`).
+- *Tasks*: the scope toggle defaults to *This project* when Home opened over a project with
+  content, else *All projects*; rows come from the open tab's live document when it has one,
+  else the stored index (archived projects are left out). Headers sort (a second click flips);
+  overdue dues use `--danger`; a row (click / Enter) calls `onOpenTask({ projectId, boardUid,
+  taskId })`, which `main.js` answers by opening the record, `node.selectSub({ kind: 'card' |
+  'task', id }, selection)` on the board or timeline, framing it and showing the panel — the same
+  path the Person panel uses. Read-only in this round.
+- *Calendar*: a placeholder card; the switcher tab is there so the next round only fills it.
+- *You are …*: an avatar button listing the directory (`role="listbox"`) plus *Add me…* (an
+  inline name / email row); picking sets `people.setMe`.
+
+**Create / Edit Project** (`ui/project-dialog.js`, a `.modal` on the shared shell like
+Connections): name (required), key (auto from the name through `deriveKey` while untouched,
+uppercased, unique through `uniqueKey` — a digit is suffixed otherwise), description, colour
+(`PROJECT_COLOURS` swatches + a custom `<input type="color">`), status, start / due (due before
+start is refused), tags (a chip input: Enter or comma adds, × or Backspace removes), People (the
+directory with a checkbox and a role per checked person, searchable; an inline *Add person* row
+creates the entry and checks it) and, for Create only, *Start from* (Blank, the starter
+templates, the Showcase). Create hands `{ name, meta, template }` to `main.js → createProject`:
+a template goes through `loadExample` (the Start panel's path: into the untouched empty tab, else
+a new one), Blank reuses the untouched empty tab or opens one, then `tabs.setMeta` names it and
+Home steps aside. Edit writes through `tabs.patchProject`. `main.js` exposes `home`,
+`projectDialog`, `people`, `createProject` and `projectSettings` on `window.__proto`.
 
 ## 11. Adding to the platform
 
