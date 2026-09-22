@@ -9,7 +9,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ UI          ui/menubar.js (menus + quick toggles)  ui/toolbar-left.js  panel.js  interaction.js  ui/field-editor.js │
-│             ui/mini-toolbar.js (above the selection)  ui/command-palette.js (Ctrl+K)          │
+│             ui/mini-toolbar.js (above the selection)  ui/viewport-header.js (snap · gizmo · cables)  ui/command-palette.js (Ctrl+K) │
 │             ui/tab-strip.js (project tabs + autosave indicator)  ui/version-history.js  ui/confirm.js │
 │             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
 │             ui/start-panel.js (first run, File → New, Help → Start panel)  ui/hint-bar.js  ui/nav-hint.js │
@@ -1070,7 +1070,7 @@ never saved, off at boot). Turning it on does four things at once:
   the flat card's projected box, the block tooltip sits past its top edge, `Shift` while dragging
   means "no snap" instead of "lift".
 
-**Snapping** (`snap` in `plan.js`, *View → Snap ▸*, the magnet toggle `#btn-snap`, the `M` key, the
+**Snapping** (`snap` in `plan.js`, *View → Snap ▸*, the viewport header's magnet (§9h), the `M` key, the
 *Snap* section of the Workspace panel, `localStorage["proto3d.snap.v1"]`, 2D and 3D alike). The
 settings are a **master switch** (`snap.on`, `set / toggle`) plus independent, persisted toggles
 (`snap.setOption(key, v)`, `snap.active(kind)` = master and toggle both on): `grid` with `gridSize`
@@ -1155,6 +1155,24 @@ falls back to the category icon (`<img onerror>`). Re-render them when a templat
 **Adding a template**: a file under `src/examples/` built like the three above, an import and a
 row in `templates` in `examples/index.js`, its icon in `TEMPLATE_ICON` (`ui/start-panel.js`), a
 thumbnail pair and a row in this table.
+
+## 9h. Viewport header (`ui/viewport-header.js`)
+
+A compact floating bar centred at the top of the viewport (`#vp-header`, 8 px under the tab strip,
+on the menu bar's translucent surface), modelled on Blender's 3D-viewport header. Three groups,
+each an icon button plus a caret that opens a popover (one at a time; Esc, a click outside or the
+caret closes it; it clamps inside the viewport): **Snap** — the magnet is the master switch (`M`);
+the popover is Blender's *Snap to* panel: Grid with grid-size pills, Objects, Ports, Rotation with
+step pills and a scrubbable custom field, Scale likewise. **Gizmo** — the toggle (`G`) whose icon
+shows the mode; the popover picks Move / Rotate / Scale (disabled in the 2D plan). **Cables** —
+the button shows the style's icon and opens Style, Corner rounding (orthogonal only), Thickness,
+Bundle parallel cables + Bundle distance, Show waypoints. Every control calls the same functions
+the View menu and the keys call (`toggleSnap`, `setSnapOption`, `setGizmo`, `gizmo.setMode`,
+`setCableOption` in `main.js`), and `sync()` re-reads the state from `snap.onChange`,
+`cables.onChange` and `syncToolbar()`, so nothing can disagree. The properties panel's Workspace
+no longer lists Snap, Cables or Gizmo sections (it keeps the 2D checkbox and the navigation
+Controls); the menu bar's quick toggles lost `#btn-gizmo` and `#btn-snap`. `#hint-bar` sits under
+the header and the mini toolbar's `avoid()` list includes the header.
 
 ## 10. Serialization (`serialize.js`)
 

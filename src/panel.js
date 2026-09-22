@@ -174,7 +174,7 @@ export class Panel {
   }
 
   _buildWorkspace() {
-    const { world, ws, gizmo, flow, engine, history } = this;
+    const { world, ws, flow, engine, history } = this;
     this._header('workspace', 'Workspace', 'nothing selected');
     const s = this._section('Workspace');
     this._select(s, 'theme', ['dark', 'light'], () => getTheme(), (v) => setTheme(v));
@@ -187,12 +187,8 @@ export class Panel {
     this._check(s, 'flow animation', () => flow.isEnabled(), (v) => flow.setEnabled(v));
     this._num(s, 'flow speed', () => flow.getSpeed(), (v) => flow.setSpeed(v), { step: 0.1, min: 0, max: 5 });
     this._num(s, 'LOD distance', () => sizes.lod.far, (v) => { sizes.lod.far = Math.max(10, v); }, { step: 2, min: 10, max: 200 });
-    if (this.cables) this._buildCables();
-    if (this.plan) this._buildSnap();
+    s.appendChild(this._h('div', 'panel-note', 'Snap, the gizmo and the cable settings are in the header at the top of the viewport (and under View).'));
     this._buildControls();
-    const g = this._section('Gizmo');
-    this._check(g, 'enabled (G)', () => gizmo.enabled, (v) => { gizmo.setEnabled(v); this.onGizmoToggle?.(); });
-    this._buttons(g, 'mode', [['translate', 'Move', 'W'], ['rotate', 'Rotate', 'E'], ['scale', 'Scale', 'R']], () => gizmo.mode, (v) => gizmo.setMode(v));
     const sum = this._section('Scene');
     this._readonly(sum, 'components', () => `${world.nodes.length} (${world.nodes.filter((b) => b.kind === 'device').length} devices)`);
     this._readonly(sum, 'connections', () => `${world.connections.length} (${world.connections.filter((c) => !c.valid).length} invalid)`);
@@ -205,39 +201,6 @@ export class Panel {
     registry.categories().forEach((c) => this._readonly(reg, c.label, () => c.components.map((d) => d.label).join(', ')));
   }
 
-  /** Cable settings (cables.js): style, corner rounding, thickness, bundling and the route handles; global and persisted, the same state the View → Cables menu shows. */
-  _buildCables() {
-    const C = this.cables, S = C.cables;
-    const set = (k) => (v) => (C.setOption ? C.setOption(k, v) : S.setOption(k, v));
-    const s = this._section('Cables');
-    this._buttons(s, 'style', (C.CABLE_STYLES || []).map(([id, l, d]) => [id, l, d]), () => S.style, set('style'));
-    this._num(s, 'corner rounding', () => S.cornerRadius, set('cornerRadius'), { step: 0.05, min: 0, max: 1, attr: 'cableCorner' });
-    this._buttons(s, 'thickness', (C.THICKNESSES || []).map(([id, l]) => [id, l, `${l} cables`]), () => S.thickness, set('thickness'));
-    this._check(s, 'bundle parallel cables', () => S.bundle, set('bundle'), 'cableBundle');
-    this._num(s, 'bundle distance', () => S.bundleDistance, set('bundleDistance'), { step: 0.1, min: 0.2, max: 4, attr: 'cableBundleDistance' });
-    this._check(s, 'show waypoints', () => S.showWaypoints, set('showWaypoints'), 'cableWaypoints');
-    s.appendChild(this._h('div', 'panel-note', 'Drag the middle of a cable to add a waypoint and route it by hand; drag a handle to move it, drop it on another handle or on a bundle to share it, Alt+click removes it, double-click resets the cable. Cables running side by side within the bundle distance merge into one trunk and split near the pins. Orthogonal cables turn at 90°; corner rounding is their radius (0 = sharp).'));
-  }
-  /** Snap settings (plan.js): the master switch and one toggle per kind, persisted; the menu, the magnet toggle and this section never disagree. */
-  _buildSnap() {
-    const P = this.plan, S = P.snap;
-    const s = this._section('Snap');
-    this._check(s, 'snap (M)', () => S.on, () => (P.toggleSnap ? P.toggleSnap() : S.toggle()), 'snapOn');
-    const set = (k) => (v) => (P.setSnapOption ? P.setSnapOption(k, v) : S.setOption(k, v));
-    this._check(s, 'grid', () => S.grid, set('grid'), 'snapGrid');
-    const sizes = (P.GRID_SIZES || [0.25, 0.5, 1, 2]).map(String);
-    this._select(s, 'grid size (units)', sizes, () => String(S.gridSize), (v) => set('gridSize')(parseFloat(v)), 'snapGridSize');
-    this._check(s, 'objects (edges, centres)', () => S.objects, set('objects'), 'snapObjects');
-    this._check(s, 'ports (straight cables)', () => S.ports, set('ports'), 'snapPorts');
-    const deg = P.fmtDeg || ((d) => `${d}°`), sc = P.fmtScale || String;
-    this._check(s, 'rotation', () => S.rotation, set('rotation'), 'snapRotation');
-    this._buttons(s, 'rotation step', (P.ROTATION_STEPS || [5, 10, 15, 30, 45, 90]).map((d) => [String(d), deg(d), `${deg(d)} per gizmo step`]), () => String(S.rotationStep), (v) => set('rotationStep')(parseFloat(v)));
-    this._num(s, 'rotation step (°)', () => S.rotationStep, (v) => set('rotationStep')(v), { step: 5, min: 0.5, max: 180, attr: 'snapRotationStep' });
-    this._check(s, 'scale', () => S.scale, set('scale'), 'snapScale');
-    this._buttons(s, 'scale step', (P.SCALE_STEPS || [0.05, 0.1, 0.25, 0.5, 1]).map((x) => [String(x), sc(x), `${sc(x)} per gizmo step`]), () => String(S.scaleStep), (v) => set('scaleStep')(parseFloat(v)));
-    this._num(s, 'scale step', () => S.scaleStep, (v) => set('scaleStep')(v), { step: 0.05, min: 0.01, max: 4, attr: 'snapScaleStep' });
-    s.appendChild(this._h('div', 'panel-note', 'While dragging: Shift skips snapping, Ctrl halves the grid. Objects and ports win over the grid within their reach. The rotation and scale steps apply to the gizmo (E / R) as soon as they change.'));
-  }
   /** Navigation presets (Blender default, Unreal, Maya, Simple) and their per-preset settings. */
   _buildControls() {
     const c = this._section('Controls');

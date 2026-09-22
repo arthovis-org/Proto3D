@@ -89,6 +89,14 @@ export const icons = {
   collapse: svg('<path d="M4 9l8 5 8-5M4 15l8 5 8-5" transform="translate(0 -3)"/>'),
   expand: svg('<path d="M4 14l8-5 8 5M4 20l8-5 8 5" transform="translate(0 -2)"/>'),
   command: svg('<path d="M4 17l6-5-6-5M12 19h8"/>'),
+  // viewport header: the snap magnet, the gizmo modes, the cable styles
+  magnet: svg('<path d="M6 3v8a6 6 0 0012 0V3"/><path d="M6 3h4v8a2 2 0 004 0V3h4"/><path d="M6 7h4M14 7h4"/>'),
+  move: svg('<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>'),
+  rotate: svg('<path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>'),
+  scale: svg('<path d="M4 20h6M4 20v-6M4 20l16-16M20 4h-6M20 4v6"/><rect x="4" y="12" width="8" height="8" rx="1" stroke-dasharray="2 2"/>'),
+  cableSmooth: svg('<path d="M3 17c7 0 5-10 12-10h6"/><circle cx="3" cy="17" r="1.6" fill="currentColor" stroke="none"/><circle cx="21" cy="7" r="1.6" fill="currentColor" stroke="none"/>'),
+  cableOrthogonal: svg('<path d="M3 17h8.5a1.5 1.5 0 001.5-1.5v-7A1.5 1.5 0 0114.5 7H21"/><circle cx="3" cy="17" r="1.6" fill="currentColor" stroke="none"/><circle cx="21" cy="7" r="1.6" fill="currentColor" stroke="none"/>'),
+  cableStraight: svg('<path d="M3 17L21 7"/><circle cx="3" cy="17" r="1.6" fill="currentColor" stroke="none"/><circle cx="21" cy="7" r="1.6" fill="currentColor" stroke="none"/>'),
   // 2D editing mode, snapping, auto-layout
   snap: svg('<path d="M6 3v8a6 6 0 0012 0V3"/><path d="M6 3h4v8a2 2 0 004 0V3h4"/><path d="M6 7h4M14 7h4"/>'),
   plan: svg('<rect x="3" y="4" width="8" height="6" rx="1.5"/><rect x="13" y="14" width="8" height="6" rx="1.5"/><path d="M11 7h1.5a2 2 0 012 2v6a2 2 0 002 2H13" stroke-dasharray="0"/><path d="M3 20h5M18 4h3"/>'),

@@ -35,6 +35,7 @@ import { MenuBar, shortcutText } from './ui/menubar.js';
 import { ShortcutsSheet, AboutDialog, REPO_URL } from './ui/help-dialogs.js';
 import { StatsOverlay } from './ui/stats.js';
 import { MiniToolbar } from './ui/mini-toolbar.js';
+import { ViewportHeader } from './ui/viewport-header.js';
 import { CommandPalette, menuCommands } from './ui/command-palette.js';
 import { CableChips } from './cable-chips.js';
 import { Guides } from './ui/guides.js';
@@ -78,7 +79,7 @@ world.history = history;      // components with 3D editing (cards, checklists) 
 world.selection = selection;
 
 /* ---- Gizmo + interaction ---- */
-const gizmo = new Gizmo({ camera: ws.camera, renderer: ws.renderer, scene: ws.scene, controls: ws.controls, world, history, onModeChange: () => panel.refresh() });
+const gizmo = new Gizmo({ camera: ws.camera, renderer: ws.renderer, scene: ws.scene, controls: ws.controls, world, history, onModeChange: () => { panel.refresh(); vpHeader?.sync(); } });
 const connLabel = $('conn-label');
 let hoveredConnection = null;
 const overlays = new Overlays({ camera: ws.camera, renderer: ws.renderer, world, els: { tip: $('tip'), dragLabel: $('drag-label'), toast: $('toast'), endLabels: $('cable-labels'), emptyHint: $('empty-hint') } });
@@ -413,7 +414,9 @@ function refreshAllText() {
 }
 if (document.fonts?.ready) document.fonts.ready.then(() => { if (document.fonts.check('600 16px Inter')) refreshAllText(); }).catch(() => {});
 
-/* ---- Quick toggles: icon buttons at the right end of the menu bar (the MenuBar appends `tools`). Each runs the same code as its key or menu item ---- */
+/* ---- Quick toggles: icon buttons at the right end of the menu bar (the MenuBar appends `tools`). Each runs the same code as its key or menu item.
+   Snap, the gizmo and the cable settings live in the viewport header (ui/viewport-header.js, built below), not here ---- */
+let vpHeader = null;   // the viewport header, once built; syncToolbar refreshes it
 document.querySelectorAll('[data-icon]').forEach((el) => { el.innerHTML = icons[el.dataset.icon] || ''; });
 const tools = document.createElement('span'); tools.className = 'mnu-tools'; tools.setAttribute('role', 'toolbar'); tools.setAttribute('aria-label', 'Quick toggles');
 const tb = {};   // the toggles by id (they join the DOM when the MenuBar is built below)
@@ -424,9 +427,7 @@ tool('btn-redo', 'redo', 'Redo (Ctrl+Shift+Z or Ctrl+Y)', 'Redo');
 toolSep();
 tool('btn-wiring', 'flow', 'Wiring — show or hide ports and cables (P). Cables are optional: drop a component onto another to link them', 'Wiring').setAttribute('aria-pressed', 'false');
 tool('btn-flow', 'connection', 'Flow animation on cables', 'Flow animation');
-tool('btn-gizmo', 'gizmo', 'Move / rotate / scale gizmo (G) · W move, E rotate, R scale', 'Gizmo');
 tool('btn-plan', 'plan', '2D editing mode (2) · a top-down plan: drag to box-select, middle-drag or Space+drag pans, the wheel zooms, blocks snap to the grid · press again for 3D', '2D editing mode').setAttribute('aria-pressed', 'false');
-tool('btn-snap', 'snap', 'Snap (M)', 'Snap').setAttribute('aria-pressed', 'false');
 toolSep();
 tool('btn-theme', 'sun', 'Switch light / dark theme (T)', 'Theme');
 tool('btn-frame', 'frame', 'Frame everything (Home) · F frames the selection', 'Frame all');
@@ -440,15 +441,8 @@ function syncToolbar() {
   tb['btn-flow'].classList.toggle('off', !isFlowEnabled());
   tb['btn-wiring'].classList.toggle('on', isWiringOn());
   tb['btn-wiring'].setAttribute('aria-pressed', String(isWiringOn()));
-  tb['btn-gizmo'].classList.toggle('on', gizmo.enabled);
-  tb['btn-gizmo'].setAttribute('aria-pressed', String(gizmo.enabled));
-  tb['btn-gizmo'].disabled = isPlanOn();
-  tb['btn-gizmo'].title = isPlanOn() ? 'Gizmo — hidden in the 2D editing mode: drag blocks to move them' : 'Move / rotate / scale gizmo (G) · W move, E rotate, R scale';
   tb['btn-plan'].classList.toggle('on', isPlanOn());
   tb['btn-plan'].setAttribute('aria-pressed', String(isPlanOn()));
-  tb['btn-snap'].classList.toggle('on', snap.on);
-  tb['btn-snap'].setAttribute('aria-pressed', String(snap.on));
-  tb['btn-snap'].title = `${snap.summary()} · M toggles · Shift while dragging skips it, Ctrl halves the grid · View → Snap for the kinds`;
   tb['btn-theme'].title = getTheme() === 'dark' ? 'Switch to the light theme (T)' : 'Switch to the dark theme (T)';
   tb['btn-theme'].querySelector('i').innerHTML = getTheme() === 'dark' ? icons.sun : icons.moon;
   const panelShown = !document.body.classList.contains('panel-hidden');
@@ -458,15 +452,14 @@ function syncToolbar() {
   tb['btn-help'].classList.toggle('on', helpShown);
   tb['btn-help'].setAttribute('aria-pressed', String(helpShown));
   tb['btn-undo'].disabled = !history.canUndo; tb['btn-redo'].disabled = !history.canRedo;
+  vpHeader?.sync();
 }
 history.onChange(syncToolbar);
 onWiringChange(() => { syncToolbar(); panel.refresh(); });
 tb['btn-flow'].addEventListener('click', () => { setFlowEnabled(!isFlowEnabled()); syncToolbar(); panel.refresh(); });
 tb['btn-wiring'].addEventListener('click', () => { toggleWiring(); overlays.toast(isWiringOn() ? 'Wiring on · ports and cables shown' : 'Wiring off · drop a component onto another to link them', 1800); });
 tb['btn-theme'].addEventListener('click', () => toggleTheme());
-tb['btn-gizmo'].addEventListener('click', () => setGizmo(!gizmo.enabled));
 tb['btn-plan'].addEventListener('click', () => setPlanView(!isPlanOn()));
-tb['btn-snap'].addEventListener('click', () => toggleSnap());
 snap.onChange(() => { syncToolbar(); panel.refresh(); });
 cables.onChange(() => panel.refresh());
 tb['btn-panel'].addEventListener('click', () => togglePanel());
@@ -770,10 +763,19 @@ window.addEventListener('keydown', (e) => {
 /* ---- Mini toolbar: floats above the selection, every action is the same code path as its key or menu item ---- */
 const miniBar = new MiniToolbar({
   el: $('mini-toolbar'), ws, world, engine, selection, interaction, history, gizmo,
-  avoid: () => [$('bottom-right'), $('selection')],
+  avoid: () => [$('bottom-right'), $('selection'), $('vp-header')],
   onLayout: (blocks) => autoLayoutSelection(blocks),
   onMore: () => { togglePanel(true); const body = $('panel'); body.scrollTop = 0; const f = body.querySelector('#prop-name, #panel-body input, #panel-body select, #panel-body textarea'); f?.focus({ preventScroll: true }); },
 });
+
+/* ---- Viewport header: Snap · Gizmo · Cables at the top of the viewport; every control is the same code path as the View menu and the keys ---- */
+vpHeader = new ViewportHeader({
+  el: $('vp-header'), viewport: $('viewport'), snap, cables, gizmo, isPlanOn,
+  toggleSnap: () => toggleSnap(), setSnapOption: (k, v) => setSnapOption(k, v), setGizmo: (on) => setGizmo(on),
+  setGizmoMode: (m) => { if (!gizmo.enabled) setGizmo(true); gizmo.setMode(m); syncToolbar(); }, setCableOption: (k, v) => setCableOption(k, v),
+  GRID_SIZES, ROTATION_STEPS, SCALE_STEPS, CABLE_STYLES, THICKNESSES, fmtDeg, fmtScale,
+});
+syncToolbar();
 
 /* ---- First scene: the saved tabs (IndexedDB; the round-5 localStorage autosave migrates once), otherwise an empty tab with the Start panel over it ---- */
 const tabStrip = new TabStrip({ el: $('tabstrip'), tabs, onNew: newProject, onDownload: saveProject, onVersions: () => versions.open() });
@@ -846,7 +848,7 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
-  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, fieldEditor, glideSetting, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, navHint, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
+  ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, vpHeader, fieldEditor, glideSetting, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, navHint, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,
   plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
   cables, setCableOption, bundles,

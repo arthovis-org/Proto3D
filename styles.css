@@ -279,6 +279,50 @@ ul.ports .pcount, ul.ports .pdir { font-size: 11px; }
 #viewport canvas:focus { outline: none; }
 
 /* Mini toolbar: floats above the selection (ui/mini-toolbar.js), 32 px tall, fades in over 120 ms once the camera and the pointer are still */
+/* ---- Viewport header: Snap · Gizmo · Cables centred at the top of the viewport, each an icon button + a caret that opens a settings popover (ui/viewport-header.js) ---- */
+#vp-header {
+  position: fixed; top: calc(var(--top-h) + 8px); left: calc(var(--rail-w) + (100% - var(--rail-w) - var(--panel-w)) / 2); transform: translateX(-50%); z-index: 4;
+  display: inline-flex; align-items: center; gap: 2px; height: 30px; padding: 0 3px; box-sizing: border-box;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-m); box-shadow: var(--shadow); backdrop-filter: blur(10px);
+  user-select: none; white-space: nowrap;
+}
+body.panel-hidden #vp-header { left: calc(var(--rail-w) + (100% - var(--rail-w)) / 2); }
+#vp-header.open { z-index: 5; }   /* an open popover paints over the hint bar and the mini toolbar */
+body.touring #vp-header { opacity: 0; pointer-events: none; }
+.vph-group { display: inline-flex; align-items: center; border-radius: 7px; }
+.vph-group + .vph-group { margin-left: 3px; padding-left: 3px; border-left: 1px solid var(--border-strong); }
+.vph-btn, .vph-caret { height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--text); }
+.vph-btn { width: 28px; }
+.vph-btn i { display: grid; }
+.vph-btn svg { width: 16px; height: 16px; }
+.vph-caret { width: 14px; color: var(--dim); }
+.vph-caret svg { width: 11px; height: 11px; transform: rotate(90deg); }
+.vph-btn:hover, .vph-caret:hover { background: var(--field-hover); }
+.vph-btn.on { color: var(--accent); background: var(--accent-soft); }
+.vph-group.open .vph-caret { color: var(--accent); background: var(--accent-soft); }
+.vph-btn:disabled, .vph-caret:disabled { opacity: 0.35; }
+.vph-btn:disabled:hover, .vph-caret:disabled:hover { background: none; }
+.vph-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; width: 280px; max-width: calc(100vw - 32px); max-height: calc(100vh - var(--top-h) - 72px); overflow: auto; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 1px; padding: 6px; text-align: left; white-space: normal;
+  background: var(--panel-solid); border: 1px solid var(--border); border-radius: var(--r-l); box-shadow: var(--shadow);
+}
+.vph-title { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim); font-weight: 600; padding: 4px 8px 2px; }
+.vph-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+.vph-note { font-size: 11px; color: var(--dim); padding: 4px 8px 2px; line-height: 1.4; }
+.vph-pop .vph-row { grid-template-columns: 100px 1fr; padding: 0 8px; font-size: 13px; border-radius: var(--r-s); }
+.vph-pop .vph-row.stack { grid-template-columns: 1fr; gap: 2px; padding-top: 4px; padding-bottom: 4px; }
+.vph-pop .vph-row label { font-size: 12px; }
+.vph-pop .vph-row.off { opacity: 0.45; }
+.vph-pop .vph-check { display: grid; grid-template-columns: 16px 1fr; justify-items: start; align-items: center; gap: 8px; min-height: 28px; padding: 0 8px; width: 100%; border: 0; border-radius: var(--r-s); background: none; color: var(--text); text-align: left; font-size: 13px; font-weight: 450; cursor: default; }
+.vph-pop .vph-check:hover, .vph-pop .vph-check:focus-visible { background: var(--field-hover); outline: none; }
+.vph-tick { display: grid; place-items: center; color: var(--accent); visibility: hidden; }
+.vph-tick svg { width: 13px; height: 13px; }
+.vph-check.checked .vph-tick { visibility: visible; }
+.vph-check .vph-lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vph-pop .btn-group button { padding: 4px 2px; font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vph-pop input[type="number"] { min-height: 24px; }
+
 #mini-toolbar {
   position: fixed; left: 0; top: 0; z-index: 4; height: 32px; padding: 3px; display: inline-flex; align-items: center; gap: 1px;
   background: var(--panel-solid); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow);
@@ -473,7 +517,7 @@ body.panel-hidden #start { right: 0; }
 
 /* ---- Hint bar (ui/hint-bar.js): what to try first in a starter template ---- */
 #hint-bar {
-  position: fixed; top: calc(var(--top-h) + 12px); left: calc(var(--rail-w) + (100% - var(--rail-w) - var(--panel-w)) / 2); transform: translateX(-50%); z-index: 4;
+  position: fixed; top: calc(var(--top-h) + 46px);   /* under the viewport header (8 px + 30 px + 8 px) */ left: calc(var(--rail-w) + (100% - var(--rail-w) - var(--panel-w)) / 2); transform: translateX(-50%); z-index: 4;
   display: flex; align-items: center; gap: 8px; max-width: min(680px, calc(100% - var(--rail-w) - var(--panel-w) - 48px)); padding: 5px 6px 5px 12px;
   background: var(--panel); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow); backdrop-filter: blur(10px); font-size: 12px; color: var(--text);
 }
@@ -504,6 +548,12 @@ body.touring #hint-bar { opacity: 0; pointer-events: none; }   /* the tour card 
   details.sec > summary, #help > summary { min-height: 40px; align-items: center; }
   #panel button.wide, .btn-group button { min-height: 40px; }
   #hint-bar, #nav-hint { padding: 6px 8px 6px 14px; gap: 10px; }
+  #hint-bar { top: calc(var(--top-h) + 60px); }
+  #vp-header { height: 44px; padding: 0 4px; }
+  .vph-btn, .vph-caret { height: 40px; }
+  .vph-btn { width: 40px; }
+  .vph-caret { width: 22px; }
+  .vph-pop .vph-row, .vph-pop .vph-check { min-height: 40px; }
   #hint-bar .hb-close, #nav-hint .nh-close { min-width: 40px; min-height: 40px; }
   #nav-hint .nh-action { height: 40px; padding: 0 16px; }
   .tour-next, .tour-skip { min-height: 40px; }
