@@ -135,7 +135,7 @@ export class ViewportHeader {
     const PORTS = { follow: null, show: true, hide: false };
     this._title(p, 'Wiring');
     this._check(p, 'Wiring (P)', () => this.isWiringOn(), () => this.toggleWiring(), 'show or hide every port and cable');
-    this._seg(p, 'ports on selection', [['follow', 'Follow the switch', 'the selected blocks show ports when Wiring is on'], ['show', 'Always show', 'the selected blocks keep their ports'], ['hide', 'Always hide', 'the selected blocks never show ports']],
+    this._seg(p, 'ports on selection', [['follow', 'Follow switch', 'the selected blocks show ports when Wiring is on'], ['show', 'Always show', 'the selected blocks keep their ports'], ['hide', 'Always hide', 'the selected blocks never show ports']],
       () => { const { v } = this.portsOnSelection(); return v === true ? 'show' : v === false ? 'hide' : 'follow'; }, (k) => this.setPortsOnSelection(PORTS[k]), { stack: true, enabled: () => this.portsOnSelection().n > 0 });
     this._check(p, 'Flow animation', () => this.isFlowEnabled(), (v) => this.setFlowEnabled(v), 'animated flow along the cables');
     this._note(p, 'Cables are optional: drop a component onto another to link them');
