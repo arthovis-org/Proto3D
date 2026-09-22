@@ -3,6 +3,7 @@
 import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { clear, drawMediaGrid, gridShape } from '../../faces.js';
+import { downloadMedia } from '../generate/common.js';
 
 export default registry.register({
   id: 'media-grid', category: 'media', label: 'Media Grid', icon: icons['media-grid'], size: 'L',
@@ -21,6 +22,11 @@ export default registry.register({
     return { layout: { items, cols, rows, gap: params.gap, fit: params.fit } };
   },
   footer: ({ outputs }) => { const L = outputs.layout; return L && L.items.length ? `${L.items.length} items · ${L.cols} × ${L.rows}` : 'connect media'; },
+  panel(api, b) {
+    const s = api.section('Gallery');
+    api.readonly(s, 'items', () => String(b.rt?.outputs?.layout?.items?.length || 0));
+    api.action(s, 'Download all', async () => { const items = b.rt?.outputs?.layout?.items || []; for (let i = 0; i < items.length; i++) await downloadMedia(items[i], `${items[i].title || 'media'}-${i + 1}`); if (!items.length) api.world.overlays?.toast?.('Nothing to download yet', 1400); }, 'grid-download-all');
+  },
   face: {
     live: true, fps: 6,
     render(g, w, h, { outputs, time }) {

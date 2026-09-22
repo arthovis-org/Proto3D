@@ -6,13 +6,14 @@ import { registry } from '../../core/registry.js';
 import { icons } from '../../icons.js';
 import { isMedia } from '../../core/types.js';
 import { asText } from '../util.js';
-import { evaluateCommon, drawGenerateFace, drawTextBody, facePointer, buildGeneratePanel, usageOf, contextText, hydrateState, generateAnchors } from './common.js';
+import { evaluateCommon, drawGenerateFace, drawTextBody, facePointer, buildGeneratePanel, usageOf, contextText, hydrateState, generateAnchors, applySettings, modelInfo } from './common.js';
 
 const KIND = 'text';
 function buildSpec({ inputs, params }) {
   const prompt = inputs.prompt !== undefined ? asText(inputs.prompt) : String(params.prompt || '');
   const images = isMedia(inputs.image) && inputs.image.kind === 'image' ? [inputs.image.src] : [];
-  return { kind: KIND, model: params.model, prompt, system: params.system || '', context: contextText(inputs.context), images, temperature: +params.temperature, maxTokens: Math.round(+params.maxTokens) || 1024, json: !!params.json };
+  const spec = { kind: KIND, model: params.model, prompt, system: params.system || '', context: contextText(inputs.context), images, temperature: +params.temperature, maxTokens: Math.round(+params.maxTokens) || 1024, json: !!params.json };
+  return applySettings(spec, inputs.settings, modelInfo(params.provider, params.model), { textOnly: true });   // a Settings node lends only its seed to a language model
 }
 
 export default registry.register({
@@ -22,6 +23,7 @@ export default registry.register({
     { key: 'prompt', label: 'prompt', type: 'text', optional: true },
     { key: 'context', label: 'context', type: 'any', multi: true, optional: true },
     { key: 'image', label: 'image', type: 'media', optional: true },
+    { key: 'settings', label: 'settings', type: 'data', subtype: 'settings', optional: true },
     { key: 'run', label: 'run', type: 'event', optional: true },
   ],
   outputs: [

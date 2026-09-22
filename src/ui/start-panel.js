@@ -17,7 +17,7 @@ export function startOnLaunch() { try { return localStorage.getItem(START_KEY) !
 export function setStartOnLaunch(on) { try { if (on) localStorage.removeItem(START_KEY); else localStorage.setItem(START_KEY, '0'); } catch (_) { /* private mode */ } }
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const TEMPLATE_ICON = { 'project-board': 'project', 'ai-pipeline': 'generate', 'device-flow': 'devices' };
+const TEMPLATE_ICON = { 'project-board': 'project', 'ai-pipeline': 'generate', 'device-flow': 'devices', 'image-studio': 'image-edit' };
 
 export class StartPanel {
   constructor({ el, templates = [], showcase = null, recent = async () => [], onBlank = () => {}, onTemplate = () => {}, onExample = () => {}, onOpenFile = () => {}, onOpenRecent = () => {}, onAllProjects = null, onChange = () => {} }) {

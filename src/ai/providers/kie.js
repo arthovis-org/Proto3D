@@ -32,14 +32,25 @@ export const KIE_MODELS = [
   { id: 'elevenlabs/text-to-speech', label: 'ElevenLabs TTS', kind: 'audio', price: 0.03, priceText: '≈ $0.03 / run', unverified: true, promptField: 'text', params: [{ key: 'voice', label: 'voice', type: 'text', default: 'Rachel' }, { key: 'model_id', label: 'model', type: 'select', options: ['eleven_multilingual_v2', 'eleven_turbo_v2_5'], default: 'eleven_multilingual_v2' }] },
 ];
 const byId = new Map(KIE_MODELS.map((m) => [m.id, m]));
-const toInfo = (m) => ({ id: m.id, label: m.label, kind: m.kind, provider: 'kie', pricing: { run: m.price, text: m.priceText }, params: m.params, recommended: !!m.recommended, note: m.note || '', unverified: !!m.unverified, needsReference: !!m.needsReference });
+const toInfo = (m) => ({ id: m.id, label: m.label, kind: m.kind, provider: 'kie', pricing: { run: m.price, text: m.priceText }, params: m.params, recommended: !!m.recommended, note: m.note || '', unverified: !!m.unverified, needsReference: !!m.needsReference, negativeField: m.negativeField || null, tool: m.tool || null });
 
-function buildInput(spec) {
-  const m = byId.get(spec.model) || {};
+/**
+ * The curated kie rows have no ControlNet, inpainting or upscaling entries, so a guide, a mask or
+ * an Enhance task is refused in plain words before anything is sent (fal or Demo offer them).
+ */
+export function pickEndpoint(spec) {
+  if (spec.task) throw new ProviderError('bad-request', `kie.ai: "${spec.task}" is not offered by the curated kie models — use fal.ai, the browser or Demo`);
+  if (spec.mask?.src) throw new ProviderError('bad-request', 'kie.ai: inpainting with a mask is not offered by the curated kie models — use fal.ai or Demo');
+  if ((spec.guides || []).some((g) => g && g.mode && g.image?.src)) throw new ProviderError('bad-request', 'kie.ai: image guides (image to image, edges, depth, pose, style) are not offered by the curated kie models — use fal.ai or Demo');
+  return spec.model;
+}
+export function buildInput(spec) {
+  const m = byId.get(pickEndpoint(spec)) || {};
   const input = { [m.promptField || 'prompt']: spec.prompt || '' };
   for (const p of m.params || []) { const v = spec.options?.[p.key]; if (v !== undefined && v !== null && v !== '') input[p.key] = p.type === 'number' ? +v : v; }
   if (spec.reference?.src) input.image_urls = [spec.reference.src];
   if (spec.seed !== undefined && spec.seed !== null && spec.seed !== '') input.seed = +spec.seed;
+  if (spec.negative && m.negativeField) input[m.negativeField] = spec.negative;   // no curated kie row declares one yet: the field is dropped
   return input;
 }
 const check = (r) => { if (r && typeof r.code === 'number' && r.code !== 200) { const msg = r.msg || r.message || `code ${r.code}`; if (r.code === 401 || r.code === 403) throw new ProviderError('auth', `kie.ai rejected the key (${msg})`, { fix: 'connections' }); if (r.code === 402) throw new ProviderError('auth', `kie.ai: not enough credits (${msg})`, { fix: 'connections' }); if (r.code === 429) throw new ProviderError('rate', `kie.ai is rate-limiting (${msg})`, { fix: 'retry' }); throw new ProviderError('bad-request', `kie.ai: ${msg}`); } return r; };
@@ -64,9 +75,10 @@ export const kie = registerProvider({
   estimateCost(spec) { const m = byId.get(spec.model); return m ? m.price * (m.kind === 'image' ? Math.max(1, spec.count || 1) : 1) : null; },
 
   async run(spec, job, { key, proxy, signal }) {
-    const model = spec.model;
+    const model = pickEndpoint(spec);
+    const input = buildInput(spec);
     job.update({ stage: 'submitting', log: `POST jobs/createTask · ${model}` });
-    const r = check(await requestJSON(`${BASE}/jobs/createTask`, { method: 'POST', headers: headers(key), body: { model, input: buildInput(spec) }, proxy, signal, label: LABEL, timeout: 30000 }));
+    const r = check(await requestJSON(`${BASE}/jobs/createTask`, { method: 'POST', headers: headers(key), body: { model, input }, proxy, signal, label: LABEL, timeout: 30000 }));
     const taskId = r.data?.taskId || r.data?.task_id || r.taskId;
     if (!taskId) throw new ProviderError('parse', 'kie.ai did not return a task id');
     job.requestId = taskId;

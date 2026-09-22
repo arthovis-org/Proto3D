@@ -141,6 +141,23 @@ const TABLE = {
   '*>prompt.text': (n) => `${n.from} is the {text} of ${n.to}`,
   'input.trigger>*': (n, f, t) => (t.key === 'run' ? `Pressing ${n.from} runs ${n.to}` : `Pressing ${n.from} fires ${n.to}`),
   '*>kanban-board.cover': (n) => `${n.fromPoss} media becomes a card cover on ${n.to}`,
+  // generate round: settings, guides and masks shape a generator; images go through edits and enhancement
+  '*>generate-text.settings': (n) => `${n.fromPoss} settings drive ${n.to}`,
+  '*>generate-image.settings': (n) => `${n.fromPoss} settings drive ${n.to}`,
+  '*>generate-video.settings': (n) => `${n.fromPoss} settings drive ${n.to}`,
+  '*>generate-audio.settings': (n) => `${n.fromPoss} settings drive ${n.to}`,
+  '*>generate-image.guides': (n) => `${n.from} guides ${n.to}`,
+  '*>generate-video.guides': (n) => `${n.from} guides ${n.to}`,
+  '*>generate-image.mask': (n) => `${n.to} paints only inside ${n.from}`,
+  '*>generate-image.negative': (n) => `${n.from} is what ${n.to} avoids`,
+  '*>generate-video.negative': (n) => `${n.from} is what ${n.to} avoids`,
+  '*>image-edit.image': (n) => `${n.to} edits ${n.fromPoss} image`,
+  '*>image-edit.imageB': (n) => `${n.from} is image B of ${n.to}`,
+  '*>image-edit.mask': (n) => `${n.from} decides where ${n.to} shows B over A`,
+  '*>generate-guide.image': (n) => `${n.fromPoss} image guides through ${n.to}`,
+  '*>generate-mask.image': (n) => `${n.fromPoss} image sizes the mask of ${n.to}`,
+  '*>enhance.image': (n) => `${n.to} enhances ${n.fromPoss} image`,
+  'action.index>*': (n) => `${n.fromPoss} position goes to ${n.to}`,
 };
 
 /* ---------------- drop-to-link: relationships without cables ---------------- */
@@ -169,6 +186,15 @@ export const DROP_LINKS = [
   'generate-audio.media>media-grid.items', 'generate-audio.media>*.screen', 'generate-audio.media>display.in',
   'media.media>kanban-board.cover', 'media.media>generate-image.reference', 'media.media>generate-text.image',
   'input.trigger>generate-text.run', 'input.trigger>generate-image.run', 'input.trigger>generate-video.run', 'input.trigger>generate-audio.run',
+  // generate round: a Settings on any generator, a Guide / Mask on a Generate Image (Video), images into Image Edit / Guide / Mask / Enhance, edited and enhanced images on to grids, screens, displays, covers and references
+  'generate-settings.settings>generate-text.settings', 'generate-settings.settings>generate-image.settings', 'generate-settings.settings>generate-video.settings', 'generate-settings.settings>generate-audio.settings',
+  'generate-guide.guide>generate-image.guides', 'generate-guide.guide>generate-video.guides',
+  'generate-mask.mask>generate-image.mask', 'generate-mask.mask>image-edit.mask',
+  'media.media>image-edit.image', 'media.media>generate-guide.image', 'media.media>generate-mask.image', 'media.media>enhance.image',
+  'generate-image.media>image-edit.image', 'generate-image.media>generate-guide.image', 'generate-image.media>generate-mask.image', 'generate-image.media>enhance.image',
+  'image-edit.image>media-grid.items', 'image-edit.image>*.screen', 'image-edit.image>display.in', 'image-edit.image>kanban-board.cover', 'image-edit.image>generate-image.reference', 'image-edit.image>generate-video.reference', 'image-edit.image>enhance.image', 'image-edit.image>generate-mask.image', 'image-edit.image>generate-guide.image',
+  'enhance.media>media-grid.items', 'enhance.media>*.screen', 'enhance.media>display.in', 'enhance.media>kanban-board.cover', 'enhance.media>generate-image.reference', 'enhance.media>generate-video.reference', 'enhance.media>image-edit.image',
+  'text.text>generate-image.negative', 'text.text>generate-video.negative', 'input.trigger>enhance.run', 'action.result>prompt.variables',
 ];
 const FLOW_OUT = new Set(['out', 'next', 'yes', 'no', 'done', 'tap', 'trigger', 'reached']);
 const FLOW_IN = new Set(['in', 'start', 'trigger']);

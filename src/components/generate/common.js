@@ -7,7 +7,12 @@
 // Per instance: `params` hold the configuration, `state` the serialisable results
 // ({ current, history[≤8], lastPrompt }); live handles stay on the instance (`_job`, `_approval`,
 // `_err`, `_partial`, `_pendingDone`, `_hits`) and are never written to the world JSON.
+// A Settings node's object is mapped onto a spec by `applySettings` (only the keys the model's
+// schema knows), and after each finished job the Settings nodes feeding the component advance
+// their seed (`advanceSeed`, fixed · increment · decrement · random). `downloadRecord` saves a
+// result through an anchor (text as .txt); the face shows a ↓ chip beside the history strip.
 import { palette } from '../../theme.js';
+import { isMedia } from '../../core/types.js';
 import { clear, drawCaps, drawDivider, drawTile, drawChip, drawBar, drawMedia, drawMediaGrid, drawText, wrapLines, fitLine, font, roundRect, tabular, PAD, beginFields } from '../../faces.js';
 import { providerRegistry, providerStatus, createJob } from '../../ai/providers/index.js';
 import { ProviderError, request } from '../../ai/http.js';
@@ -78,6 +83,122 @@ export async function switchToFreeOpenRouter(inst, kind) {
 }
 
 /* ------------------------------------------------------------------ */
+/* settings (a Settings node's object → spec fields)                     */
+/* ------------------------------------------------------------------ */
+/** Size presets a Settings node offers: [w, h, ratio, fal image_size name]. */
+export const SIZE_PRESETS = {
+  square: [1024, 1024, '1:1', 'square_hd'],
+  'portrait 3:4': [896, 1152, '3:4', 'portrait_4_3'],
+  'portrait 9:16': [768, 1344, '9:16', 'portrait_16_9'],
+  'landscape 4:3': [1152, 896, '4:3', 'landscape_4_3'],
+  'landscape 16:9': [1344, 768, '16:9', 'landscape_16_9'],
+};
+export const isSettings = (v) => !!(v && typeof v === 'object' && !Array.isArray(v) && v.size && typeof v.size === 'object' && 'seedMode' in v);
+const RATIO_RE = /^\d+:\d+$/;
+const ratioOf = (s) => { const [a, b] = String(s).split(':').map(Number); return a && b ? a / b : NaN; };
+/** The option of a select param that fits a w/h best: an exact fal size name, else the nearest ratio option. */
+function sizeOption(p, size) {
+  const opts = (p.options || []).map(String);
+  if (!opts.length) return undefined;
+  const preset = SIZE_PRESETS[size.preset];
+  if (preset && opts.includes(preset[3])) return preset[3];
+  const ratios = opts.filter((o) => RATIO_RE.test(o));
+  if (ratios.length) { const want = size.w / size.h; return ratios.reduce((best, o) => (Math.abs(ratioOf(o) - want) < Math.abs(ratioOf(best) - want) ? o : best), ratios[0]); }
+  const named = opts.find((o) => /^\d+×\d+$/.test(o) && Math.abs(ratioOf(o.replace('×', ':')) - size.w / size.h) < 0.05);   // the Demo painter's "640×400" presets
+  return named;
+}
+/**
+ * Override a spec with a Settings object where the model's schema has a matching key:
+ * image_size / aspect_ratio (or any size-like select) from `size`, num_inference_steps | steps,
+ * guidance_scale | cfg | cfg_scale | guidance, strength, seed, num_images | count; a LoRA rides
+ * as `spec.lora` (the adapter sends it when the row declares `loraField`), the style prefix is
+ * appended to the prompt. For text only the seed (when the model supports one). The settings
+ * object stays on the spec (`spec.settings`) so a job can be traced back to it.
+ */
+export function applySettings(spec, settings, info, { textOnly = false } = {}) {
+  if (!isSettings(settings)) return spec;
+  const S = settings;
+  spec.settings = S;
+  const schema = info?.params || [];
+  const has = (k) => schema.some((p) => p.key === k);
+  const opt = (k, v) => { spec.options = { ...(spec.options || {}), [k]: v }; };
+  const seedOk = S.seed !== null && S.seed !== undefined && S.seed !== '' && Number.isFinite(+S.seed);
+  if (textOnly) { if (seedOk && (has('seed') || info?.seed)) spec.seed = +S.seed; return spec; }
+  if (S.size?.w && S.size?.h) {
+    spec.size = { w: +S.size.w, h: +S.size.h, preset: S.size.preset || 'custom' };
+    for (const key of ['image_size', 'aspect_ratio', 'size']) {
+      const p = schema.find((x) => x.key === key); if (!p) continue;
+      const o = p.type === 'select' ? sizeOption(p, spec.size) : undefined;
+      if (o !== undefined) opt(key, o);
+      else if (key === 'image_size') opt(key, { width: spec.size.w, height: spec.size.h });   // fal takes an explicit size object
+    }
+  }
+  const num = (v) => (v === null || v === undefined || v === '' ? null : +v);
+  const steps = num(S.steps), guidance = num(S.guidance), strength = num(S.strength);
+  if (steps !== null) for (const k of ['num_inference_steps', 'steps']) if (has(k)) opt(k, Math.round(steps));
+  if (guidance !== null) for (const k of ['guidance_scale', 'cfg', 'cfg_scale', 'guidance']) if (has(k)) opt(k, guidance);
+  if (strength !== null) { spec.strength = strength; if (has('strength')) opt('strength', strength); }
+  if (seedOk) spec.seed = +S.seed;
+  if (S.count && spec.kind === 'image') { spec.count = Math.max(1, Math.min(4, Math.round(+S.count) || 1)); if (has('num_images')) opt('num_images', spec.count); }
+  if (S.lora?.url) spec.lora = { url: String(S.lora.url), scale: +S.lora.scale || 1 };
+  if (S.stylePrefix && spec.prompt) spec.prompt = `${spec.prompt}, ${String(S.stylePrefix).trim()}`;
+  return spec;
+}
+export const randomSeed = () => Math.floor(Math.random() * 2147483647);
+/**
+ * ComfyUI's control_after_generate: after a job finished on a node this Settings node feeds, move
+ * its seed on — increment, decrement, a fresh random one (a blank seed starts from the seed the
+ * provider used, else a random one); `fixed` leaves it. Written straight to the param (not a
+ * history entry: it happens on its own, the panel says so).
+ */
+export function advanceSeed(node, usedSeed) {
+  if (!node || node.typeId !== 'generate-settings') return false;
+  const mode = node.params.seedMode || 'fixed';
+  if (mode === 'fixed') return false;
+  const blank = node.params.seed === '' || node.params.seed === null || node.params.seed === undefined;
+  const cur = blank ? (Number.isFinite(+usedSeed) && usedSeed !== null && usedSeed !== undefined ? +usedSeed : randomSeed()) : +node.params.seed;
+  const next = mode === 'increment' ? cur + 1 : mode === 'decrement' ? Math.max(0, cur - 1) : randomSeed();
+  node.params.seed = String(next); node.faceDirty = true; node.world?.changed?.('param');
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* downloads                                                            */
+/* ------------------------------------------------------------------ */
+const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'video/mp4': 'mp4', 'video/webm': 'webm', 'audio/wav': 'wav', 'audio/mpeg': 'mp3', 'audio/ogg': 'ogg', 'text/plain': 'txt' };
+const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'proto3d';
+/** Save a blob through a temporary anchor (the browser's download UI takes it from here). */
+export function saveBlob(blob, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.style.display = 'none';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return true;
+}
+/** Download a media record as a file named after its title (fetches hosted / blob URLs into a blob first). */
+export async function downloadMedia(m, name = null) {
+  if (!isMedia(m)) return false;
+  let blob;
+  try { blob = await (await fetch(m.src)).blob(); } catch (_) { window.open(m.src, '_blank', 'noopener'); return true; }
+  const ext = EXT[blob.type] || (m.kind === 'image' ? 'png' : m.kind === 'video' ? 'mp4' : 'wav');
+  return saveBlob(blob, `${slug(name || m.title || m.kind)}.${ext}`);
+}
+/** Download a result record: text as .txt, media as its file. */
+export function downloadRecord(rec) {
+  if (!rec) return false;
+  if (rec.kind === 'text' || typeof rec.text === 'string') return saveBlob(new Blob([rec.text || ''], { type: 'text/plain' }), `${slug(rec.prompt || 'text')}.txt`);
+  return downloadMedia(rec.media?.[0], rec.media?.[0]?.title || rec.prompt);
+}
+/** The ↓ chip (26 px) that downloads the current result; registers a `download` hit. Returns its width. */
+export function drawDownloadChip(g, x, y, hits, { enabled = true } = {}) {
+  const s = 26;
+  g.fillStyle = palette.faceCard; roundRect(g, x, y, s, s, 8); g.fill();
+  g.strokeStyle = enabled ? palette.faceText : palette.faceDim; g.lineWidth = 2; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath(); g.moveTo(x + 13, y + 6); g.lineTo(x + 13, y + 15); g.moveTo(x + 8.5, y + 11); g.lineTo(x + 13, y + 15.5); g.lineTo(x + 17.5, y + 11); g.moveTo(x + 7, y + 20); g.lineTo(x + 19, y + 20); g.stroke();
+  if (enabled) hits.push({ x, y, w: s, h: s, action: 'download' });
+  return s;
+}
+
+/* ------------------------------------------------------------------ */
 /* job lifecycle                                                        */
 /* ------------------------------------------------------------------ */
 /** Start a run for `spec`; handles the approval threshold, the no-key error and the job events. */
@@ -126,6 +247,7 @@ async function finishJob(inst, job, kind) {
   inst.state.history = [rec, ...(inst.state.history || []).filter((h) => h.id !== rec.id)].slice(0, HISTORY_MAX);
   inst._pendingDone = rec;
   inst.faceDirty = true;
+  for (const s of inst._settingsNodes || []) advanceSeed(s, rec.seed ?? job.spec?.seed);   // control_after_generate
   inst.world?.changed?.('generate');
 }
 /** A provider media item ({ src } hosted or { blob }) → a persisted media record. */
@@ -171,6 +293,7 @@ export function evaluateCommon(ctx, kind, buildSpec) {
   const { inputs, params, state, instance: inst, time, emit } = ctx;
   ensureModel(inst, kind);
   state.history = state.history || [];
+  inst._settingsNodes = inst.getPort?.('settings', 'in') ? ctx.upstream('settings').map((u) => u.node) : [];   // who advances their seed when a job finishes
   if (inputs.run) { const spec = buildSpec(ctx); if (spec.prompt) startRun(inst, spec, { kind }); else { inst._err = { message: 'Nothing to send — connect or type a prompt', fix: null }; inst.faceDirty = true; } }
   if (params.autoRun && !inst._job?.active && !inst._approval) {
     const spec = buildSpec(ctx);
@@ -201,7 +324,7 @@ const providerTag = (id) => (id === 'demo' ? 'DEMO' : providerRegistry.get(id)?.
 export function generateAnchors({ h }) {
   const py = PAD - 4 + 44, by = py + 30, bh = h - by - BTN.h - PAD - 16, yb = h - PAD - BTN.h / 2;
   return {
-    in: { prompt: py, context: by + bh * 0.3, image: by + bh * 0.6, reference: by + bh * 0.6, run: yb },
+    in: { prompt: py, negative: py + 14, settings: PAD + 9, context: by + bh * 0.3, image: by + bh * 0.6, reference: by + bh * 0.6, guides: by + bh * 0.45, mask: by + bh * 0.8, run: yb },
     out: { text: by + bh * 0.4, media: by + bh * 0.4, data: by + bh * 0.75, all: by + bh * 0.75, done: yb, usage: yb },
   };
 }
@@ -210,7 +333,7 @@ export function generateAnchors({ h }) {
  * Draw the whole face. `body(g, x, y, w, h, rec, inst)` draws the result area for the kind.
  * Fills `inst._hits` with clickable regions.
  */
-export function drawGenerateFace(g, w, h, ctx, { kind, body, promptText = '' }) {
+export function drawGenerateFace(g, w, h, ctx, { kind, body, promptText = '', noPrompt = false }) {
   const { params, state, instance: inst, time } = ctx;
   clear(g, w, h);
   const hits = []; inst._hits = hits;
@@ -223,16 +346,17 @@ export function drawGenerateFace(g, w, h, ctx, { kind, body, promptText = '' }) 
   let x = PAD, y = PAD - 4;
   const isDemo = params.provider === 'demo';
   x += drawChip(g, providerTag(params.provider), x, y, { h: 26, bg: isDemo ? palette.faceCard : acc, color: isDemo ? dim : '#fff', size: 11, weight: 700, padX: 10 }) + 6;
-  const ml = fitLine(g, modelLabel(params.provider, params.model), w * 0.42);
+  const inpaint = kind === 'image' && isMedia(ctx.inputs?.mask);
+  const ml = fitLine(g, modelLabel(params.provider, params.model) + (inpaint ? ' · inpaint' : ''), w * 0.42);
   x += drawChip(g, ml, x, y, { h: 26, bg: palette.faceCard, color: text, size: 12, weight: 600, padX: 10 }) + 6;
   if (modelIsFree(params.provider, params.model)) x += drawChip(g, 'FREE', x, y, { h: 26, bg: palette.faceCard, color: palette.faceGood, size: 10, weight: 700, padX: 8 }) + 6;
   hits.push({ x: PAD, y, w: x - PAD, h: 26, action: 'model' });
   F.add({ id: 'model', kind: 'action', label: 'model', mode: 'through', rect: { x: PAD, y, w: x - PAD, h: 26 }, run: () => openModelPicker(inst, kind) });
   drawStatus(g, w - PAD, y + 13, { inst, job, rec, err, running, time });
 
-  /* prompt preview: the connected prompt, or the fallback typed here (editable in place) */
+  /* prompt preview: the connected prompt, or the fallback typed here (editable in place); a component without a prompt (Enhance) shows its task line */
   const py = y + 44;
-  const connected = ctx.inputs?.prompt !== undefined;
+  const connected = noPrompt || ctx.inputs?.prompt !== undefined;
   const fallback = connected ? null : F.add({ id: 'prompt', kind: 'multiline', param: 'prompt', label: 'prompt', rect: { x: PAD, y: py - 11, w: w - 2 * PAD, h: 22 }, placeholder: 'Type a prompt, or connect a Prompt component', font: { size: 14, weight: 500, color: dim, align: 'left' } });
   if (!fallback?.editing) {
     g.font = font(14, 500); g.fillStyle = dim; g.textAlign = 'left'; g.textBaseline = 'middle';
@@ -257,10 +381,12 @@ export function drawGenerateFace(g, w, h, ctx, { kind, body, promptText = '' }) 
   else { g.fillStyle = '#fff'; g.beginPath(); g.moveTo(PAD + 20, yb + 12); g.lineTo(PAD + 33, yb + 20); g.lineTo(PAD + 20, yb + 28); g.closePath(); g.fill(); }
   g.font = font(15, 600); g.fillStyle = running ? text : '#fff'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(label, PAD + 42, yb + BTN.h / 2 + 1);
   hits.push({ x: PAD, y: yb, w: BTN.w, h: BTN.h, action: running || appr ? 'stop' : 'run' });
-  // cost / usage line
+  // cost / usage line, the ↓ download chip, the history strip
+  const hx = w - PAD - (HISTORY_MAX * TILE + (HISTORY_MAX - 1) * TILE_GAP);
   g.font = font(13, 500); g.fillStyle = dim; tabular(g);
   const usageText = costLine(rec, job, running);
-  if (usageText) g.fillText(fitLine(g, usageText, w - 2 * PAD - BTN.w - 14 - (HISTORY_MAX * (TILE + TILE_GAP))), PAD + BTN.w + 14, yb + BTN.h / 2 + 1);
+  if (usageText) g.fillText(fitLine(g, usageText, hx - 40 - (PAD + BTN.w + 14)), PAD + BTN.w + 14, yb + BTN.h / 2 + 1);
+  drawDownloadChip(g, hx - 36, yb + BTN.h / 2 - 13, hits, { enabled: !!(rec && (rec.text !== undefined || rec.media?.length)) });
   drawHistory(g, w - PAD, yb - 2, state.history || [], rec, hits, time);
 }
 function drawStatus(g, right, cy, { inst, job, rec, err, running, time }) {
@@ -380,7 +506,7 @@ export function openModelPicker(inst, kind) {
   return ui.openModelBrowser({ kind, providerId: inst.params.provider, current: inst.params.model, onPick: (id, providerId) => { if (providerId && providerId !== inst.params.provider) { inst.params.provider = providerId; } inst.params.model = id; inst.faceDirty = true; inst.world?.changed?.('param'); } });
 }
 /** Map a face click to an action; returns true when handled. */
-export function facePointer(ctx, ev, kind) {
+export function facePointer(ctx, ev, kind, { run = null } = {}) {
   if (ev.type !== 'click') return false;
   const inst = ctx.instance;
   const cw = inst.face.cw, ch = inst.face.ch;   // logical face px (the bitmap may be scaled)
@@ -388,7 +514,7 @@ export function facePointer(ctx, ev, kind) {
   const hit = (inst._hits || []).find((r) => px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h);
   if (!hit) return false;
   switch (hit.action) {
-    case 'run': { const spec = inst._buildSpec?.(); if (!spec || !spec.prompt) { inst._err = { message: 'Nothing to send — connect or type a prompt', fix: null }; } else startRun(inst, spec, { kind }); break; }
+    case 'run': { const spec = inst._buildSpec?.(); if (run) run(inst, spec); else if (!spec || !spec.prompt) { inst._err = { message: 'Nothing to send — connect or type a prompt', fix: null }; } else startRun(inst, spec, { kind }); break; }
     case 'stop': cancelRun(inst); break;
     case 'approve': approveRun(inst); break;
     case 'retry': inst._err = null; retryRun(inst, kind); break;
@@ -396,6 +522,7 @@ export function facePointer(ctx, ev, kind) {
     case 'connections': ui.openConnections(inst.params.provider); break;
     case 'history': selectHistory(inst, hit.arg); break;
     case 'model': openModelPicker(inst, kind); break;
+    case 'download': downloadRecord(inst.state.current); break;
     default: return false;
   }
   inst.faceDirty = true;

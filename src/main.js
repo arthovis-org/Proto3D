@@ -321,10 +321,44 @@ function cutSelection() { if (copySelection()) interaction.deleteSelection(); }
 function pasteClipboard(doc = clipboard.doc) { if (doc) importDoc(doc, 'Paste'); }
 document.addEventListener('paste', (e) => {
   if (isTyping(e) || anyModalOpen()) return;
+  // an image in the clipboard lands on the selected block that takes files (a Media node)
+  const file = [...(e.clipboardData?.items || [])].find((it) => it.kind === 'file' && /^(image|video|audio)\//.test(it.type))?.getAsFile();
+  if (file) { const target = selectedNodes().find((n) => n.def.onFileDrop); if (target) { e.preventDefault(); dropFileOn(target, file); return; } }
   let doc = null;
   try { const p = JSON.parse(e.clipboardData?.getData('text/plain') || ''); if (p && p.app === 'proto3d' && Array.isArray(p.nodes)) doc = p; } catch (_) { /* not ours */ }
   if (doc || clipboard.doc) { e.preventDefault(); pasteClipboard(doc || clipboard.doc); }
 });
+/* ---- Files onto blocks: a file dragged from the desktop onto a block that declares `onFileDrop` (a Media node) becomes its source; the write is one undoable step ---- */
+function dropFileOn(block, file) {
+  const api = { setParam: (key, value) => history.executeCoalesced(`file:${block.uid}:${file.name}`, cmd.setParam(world, block, key, value)) };
+  return Promise.resolve(block.def.onFileDrop(block, file, api)).then((rec) => { if (rec) { selection.set([block]); overlays.toast(`${file.name} → ${block.title}`, 1800); } return rec; }).catch((err) => overlays.toast(`Could not use ${file.name}: ${err.message}`, 2600));
+}
+/** The block under a screen position (its body or face), or null. */
+function blockAt(clientX, clientY) {
+  interaction._setPointer({ clientX, clientY });
+  const hit = interaction.pick();
+  return hit && (hit.kind === 'face' || hit.kind === 'block' || hit.kind === 'sub') ? hit.target : null;
+}
+document.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+document.addEventListener('drop', (e) => {
+  const file = e.dataTransfer?.files?.[0];
+  if (!file || anyModalOpen()) return;
+  e.preventDefault();
+  if (/\.json$/i.test(file.name) || file.type === 'application/json') { file.text().then((t) => openDoc(JSON.parse(t), file.name.replace(/\.json$/i, ''))).catch((err) => overlays.toast(`Could not open ${file.name}: ${err.message}`, 2600)); return; }
+  const block = blockAt(e.clientX, e.clientY);
+  if (block?.def.onFileDrop) dropFileOn(block, file);
+  else if (block) overlays.toast(`${block.def.label} does not take files — drop it on a Media block`, 2200);
+  else { const media = addComponent(registry.get('media'), null); if (media) dropFileOn(media, file); }   // empty space: a new Media block takes the file
+});
+/* ---- Bypass (Ctrl+B): mute the selected blocks; the engine carries each one's first input of a type straight to its output (core/engine.js passThrough) ---- */
+function toggleBypass(nodes = selectedNodes()) {
+  if (!nodes.length) return false;
+  const on = nodes.some((n) => n.enabled !== false);   // any enabled → bypass all; all bypassed → enable all
+  const cmds = nodes.map((n) => cmd.setEnabled(world, n, !on));
+  history.execute({ label: on ? `Bypass ${nodes.length > 1 ? `${nodes.length} blocks` : nodes[0].title}` : `Enable ${nodes.length > 1 ? `${nodes.length} blocks` : nodes[0].title}`, do: () => cmds.forEach((c) => c.do()), undo: () => cmds.forEach((c) => c.undo()) });
+  overlays.toast(on ? `Bypassed · ${nodes.length > 1 ? `${nodes.length} blocks` : nodes[0].title} passes its input through` : `Enabled · ${nodes.length > 1 ? `${nodes.length} blocks` : nodes[0].title}`, 1600);
+  return true;
+}
 
 /* ---- Home page (ui/home.js), the Create / Edit Project dialog (ui/project-dialog.js) and the people directory (pm/people.js) ---- */
 /**
@@ -604,6 +638,7 @@ window.addEventListener('keydown', (e) => {
     else if (k === 'o' && !e.shiftKey) { e.preventDefault(); openProject(); }
     else if (k === 'c' && !e.shiftKey && selectedNodes().length && !window.getSelection()?.toString()) { e.preventDefault(); copySelection(); }
     else if (k === 'x' && !e.shiftKey && selectedNodes().length) { e.preventDefault(); cutSelection(); }
+    else if (k === 'b' && !e.shiftKey && selectedNodes().length) { e.preventDefault(); toggleBypass(); }
     return;
   }
   if (e.shiftKey && e.key === '?') { e.preventDefault(); shortcutsSheet.toggle(); return; }
@@ -682,6 +717,7 @@ const menubar = new MenuBar({
       { label: 'Paste', shortcut: sc('Ctrl+V'), disabled: !clipboard.doc, run: () => pasteClipboard() },
       { label: 'Duplicate', shortcut: sc('Ctrl+D'), disabled: !selection.nodes.length, run: () => interaction.duplicateSelection() },
       { label: 'Delete', shortcut: 'Del', disabled: !selection.size, run: () => interaction.deleteSelection() },
+      { label: 'Bypass', shortcut: sc('Ctrl+B'), hint: 'mute the selected blocks · their input passes straight through', checked: selectedNodes().length > 0 && selectedNodes().every((n) => n.enabled === false), disabled: !selectedNodes().length, run: () => toggleBypass() },
       { sep: true },
       { label: 'Select all', shortcut: sc('Ctrl+A'), disabled: !world.nodes.length, run: () => selection.set(world.nodes.filter((n) => n.visible)) },
       { label: 'Deselect', shortcut: 'Esc', disabled: !selection.size, run: () => selection.clear() },
@@ -900,7 +936,7 @@ window.__proto = {
   plan: { isOn: isPlanOn, set: setPlanView, toggle: () => setPlanView(!isPlanOn()), snap, toggleSnap, setSnapOption, GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
   cables, setCableOption, bundles,
   layout: { arrange: autoLayoutSelection, plan: (nodes) => layoutPlan(world, nodes), tweening },
-  newProject, closeTab, renameProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot,
+  newProject, closeTab, renameProject, saveProject, saveProjectAs, openProject, openRecent, openDoc, importDoc, copySelection, cutSelection, pasteClipboard, exportSelection, exportScreenshot, toggleBypass, dropFileOn, blockAt,
   wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring },
   ai: { vault, jobs, spend, store, providers: providerRegistry, providerStatus, connections, modelBrowser, jobsTray },
   serialize: () => serializeWorld(world, { camera: ws.camera, controls: ws.controls, pose: cameraPose(), project: tabs.active?.meta || null }),

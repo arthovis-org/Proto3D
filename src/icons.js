@@ -46,6 +46,12 @@ export const icons = {
   'generate-image': svg('<rect x="3" y="5" width="18" height="15" rx="2.5"/><circle cx="8.5" cy="10.5" r="1.5"/><path d="M21 17l-5-5-7 8"/><path d="M17 2.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>'),
   'generate-video': svg('<rect x="3" y="6" width="13" height="12" rx="2.2"/><path d="M16 10l5-3v10l-5-3"/><path d="M8 3l.6 1.6L10.2 5.2l-1.6.6L8 7.4l-.6-1.6L5.8 5.2l1.6-.6z"/>'),
   'generate-audio': svg('<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/>'),
+  // generate round: a settings sheet with sliders, a guide (image with edge trace), a mask (image with a cut-out), image edit (crop marks), enhance (arrow up with a sparkle)
+  'generate-settings': svg('<path d="M4 7h3M11 7h9M4 12h9M17 12h3M4 17h1M9 17h11"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="17" r="2"/>'),
+  'generate-guide': svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M6 16l4-5 3 3 2-2 3 4"/><path d="M6 16h12" stroke-dasharray="2 2"/>'),
+  'generate-mask': svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M8 9h8v7H8z" fill="currentColor" fill-opacity=".25"/><path d="M8 9h8v7H8z"/>'),
+  'image-edit': svg('<path d="M7 3v14h14M3 7h14V21"/><circle cx="12" cy="11" r="2"/>'),
+  enhance: svg('<path d="M12 20V8M7.5 12.5L12 8l4.5 4.5M4 4h16"/><path d="M19 15l.6 1.6 1.6.6-1.6.6L19 19.4l-.6-1.6-1.6-.6 1.6-.6z"/>'),
   connections: svg('<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 01-12 0zM12 17v4"/>'),
   sparkle: svg('<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>'),
   play: svg('<path d="M7 5v14l11-7z" fill="currentColor" stroke="none"/>'),

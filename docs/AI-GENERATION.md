@@ -1,7 +1,8 @@
 # Generating content with AI
 
-Proto3D can write, paint, film and compose from inside the 3D workspace. Four **Generate**
-components (Prompt, Generate Text, Generate Image / Video / Audio) talk to hosted services —
+Proto3D can write, paint, film and compose from inside the 3D workspace. The **Generate**
+components (Prompt, Generate Text, Generate Image / Video / Audio, and the nodes that shape and
+finish them: Settings, Guide, Mask, Image Edit, Enhance) talk to hosted services —
 **OpenRouter** for language models, **fal.ai** and **kie.ai** for media — or to the offline
 **Demo** provider, and their results are ordinary values: text feeds a Display, a device screen,
 a Text template or a board's *add task*; media feeds a Media Grid, a screen or a card cover. This
@@ -10,6 +11,7 @@ cannot promise, and how to extend it.
 
 ```
 components/generate/  prompt.js · generate-text.js · generate-media.js (image / video / audio) · common.js
+                      generate-settings.js · generate-guide.js · generate-mask.js · image-edit.js · enhance.js
 ui/                   connections.js (keys)  model-browser.js  jobs-tray.js
 ai/                   providers/{base,openrouter,fal,kie,demo,index}.js  vault.js  jobs.js  pricing.js  store.js  http.js  ui-hooks.js
 proxy/                cloudflare-worker.js (optional CORS proxy)
@@ -178,7 +180,59 @@ without spending money:
 | `generate-text` | `prompt` text · `context` any\* · `image` media · `run` event | `text` text · `data` data · `when done` event (payload: the text) · `usage` data | provider (OpenRouter / Demo) · model (browser) · fallback prompt · system prompt · temperature · max tokens · JSON mode · auto-run · approve above $ | provider + model chips, status ring (elapsed, tokens), prompt preview, the answer streaming in, Run / Stop, cost line, history strip (8) |
 | `generate-image` | `prompt` text · `reference` media · `run` event | `image` media · `all` data (media[]) · `when done` (payload: the media) · `usage` | provider (fal / kie / Demo) · model · fallback prompt · schema-driven options (size, aspect, steps…) · count · seed · auto-run · approve above $ | queue position → progress bar with the provider's log line → the image; batches as a grid |
 | `generate-video` | same | `video` media … | model options: duration, aspect… | video poster with a play glyph and progress |
-| `generate-audio` | same | `audio` media … | model options: length, voice… | waveform |
+| `generate-audio` | same (no guides / mask) | `audio` media … | model options: length, voice… | waveform |
+| `generate-settings` | — | `settings` data · settings | size preset / custom w × h · steps · guidance · strength · seed · after run (fixed · increment · decrement · random) · count · LoRA URL + scale · style prefix | a settings sheet: label / value rows editable in place, a dice chip that cycles the after-run rule |
+| `generate-guide` | `image` media | `guide` data · guide `{ mode, strength, image, control? }` | mode (image to image · edges · depth · pose · style reference) · strength | the source picture and, for edges, the live Sobel trace that is sent as the control image |
+| `generate-mask` | `image` media (size reference, source for *from image*) | `mask` media `{ kind: image, role: 'mask' }` | source (solid · rectangle · ellipse · from image · paint) · x / y / w / h · channel + threshold (+ key colour) · grow · feather · invert · brush · erase | the reference under a translucent mask; paint mode: press and drag paints, Clear wipes; the mode's numbers edit in place |
+| `image-edit` | `image` · `image B` · `mask` media | `image` media | mode (resize · crop · pad · rotate/flip · adjust · blend · composite · invert · grayscale) + the mode's params | before / after, the mode in small caps, numbers editable in place, ↓ download |
+| `enhance` | `image` media · `run` event | `image` media · `when done` · `usage` | task (upscale · remove background · restore faces) · scale ×2 / ×4 · provider (browser · fal · kie · demo) · model · auto-run · approve above $ | the Generate face with a before / after body |
+
+Generate Image / Video / Audio and Generate Text also take `negative` (text, image / video) and
+`settings` (data · settings); Generate Image / Video take `guides` (data · guide, multi) and
+Generate Image a `mask` (media).
+
+**Settings → spec** (`common.js → applySettings(spec, settings, modelInfo)`, called from every
+`buildSpec`). Only keys the model's schema declares are written: the size preset becomes the fal
+`image_size` name (`square_hd`, `portrait_4_3`, `portrait_16_9`, `landscape_4_3`,
+`landscape_16_9`; a custom size becomes `{ width, height }`), the nearest `aspect_ratio` (or any
+ratio-shaped `size` option, kie's Nano Banana / GPT-4o rows) or the nearest Demo `640×400`-style
+option; steps → `num_inference_steps | steps`, guidance → `guidance_scale | cfg | cfg_scale |
+guidance`, strength → `strength` (and `spec.strength` for guides), seed → `spec.seed` (the
+adapters always send `seed`; a language model gets it only when its schema lists one), count →
+`spec.count` and `num_images`; a LoRA rides as `spec.lora` and fal sends `loras: [{ path, scale
+}]` on rows with `loraField` (FLUX dev, FLUX general); the style prefix is appended to the prompt.
+The Demo painter reads `spec.size`, `spec.seed` and `spec.count` directly. After every finished
+job, `finishJob` calls `advanceSeed` on the Settings nodes feeding the component (a blank seed
+starts from the seed the provider reported): `increment` / `decrement` / a fresh random, written
+straight to the param (not a history entry).
+
+**Guides and masks per provider** (`fal.js → pickEndpoint(spec)` then `buildInput`; the
+components never name an endpoint):
+
+| guide / mask | fal.ai | kie.ai | Demo |
+| --- | --- | --- | --- |
+| image to image | `fal-ai/flux/dev/image-to-image` — `image_url`, `strength` | *not offered by the curated kie models* (a clear `bad-request` before anything is sent) | the painting is tinted with the guide image's average colour by its strength |
+| edges · depth · pose | `fal-ai/flux-general` — `controlnets: [{ path, control_image_url, conditioning_scale }]` (canny / depth / hed XLabs paths; edges send the browser's Sobel trace, the others the picture) | not offered | the edge trace (or the picture) is screened on top |
+| style reference | `fal-ai/flux-pro/v1.1-ultra/redux` — `image_url`, `image_prompt_strength` | not offered | tint, as image to image |
+| mask (inpaint) | `fal-ai/flux-pro/v1/fill` — `image_url` (the reference or the guide image) + `mask_url` | not offered | the painting lands only where the mask is white, over the reference (or a neutral ground) |
+| negative prompt | `negative_prompt` on rows with `negativeField` (flux-general, Kling 1.5, Hunyuan, Wan 2.1); dropped elsewhere | no curated row declares one: dropped | kept on the spec |
+| enhance tasks | `fal-ai/clarity-upscaler` (`upscale_factor`), `fal-ai/aura-sr` (×4), `fal-ai/birefnet` (remove background), `fal-ai/codeformer` (restore faces) — `image_url`, no prompt (`tool: 'enhance'` rows, hidden from the Generate Image browser) | not offered | browser upscale behind a short progress; a checkerboard cut-out; a gentle contrast pass |
+
+Blob-backed images (Demo output, uploads, masks, edge traces as data URLs) cannot be fetched by
+fal, so `run` swaps every `*_url` field that is a `blob:` URL for a base64 **data URL** before the
+request (`inlineBlobs`) — unverified: fal is believed to accept data URIs for `*_url` inputs.
+
+**Unverified endpoints** added by this round (from memory of fal's catalogue; the docs were not
+reachable): `fal-ai/flux-general` (+ the XLabs ControlNet paths), `fal-ai/flux-pro/v1/fill`,
+`fal-ai/flux-pro/v1.1-ultra/redux`, `fal-ai/clarity-upscaler`, `fal-ai/aura-sr`,
+`fal-ai/birefnet`, `fal-ai/codeformer`, the `negative_prompt` field on Kling / Hunyuan / Wan and
+`loras` on FLUX dev / general. Remove `unverified: true` on a row once it has run.
+
+**Image Edit and Enhance (browser)** need no provider: Image Edit computes in Canvas 2D ~150 ms
+of engine time after a change and stores the PNG through `store.putMedia('edit-<hash>')`, where
+the hash covers the sources' `src` / `storeId` and the mode's params — an unchanged edit is
+reused, a reload hydrates the blob URL; the browser Enhance upscale stores `enh-<id>` the same
+way and pulses `when done`.
 
 **Variables in a Prompt.** Every component plugged into `variables` is a variable named after
 its **title**: `{Card title}`, `{Public launch}`. `{1}`, `{2}` pick by position, `{Name.path}`
@@ -190,12 +244,16 @@ variables stay in the text and are counted in the footer.
 another Generate's prompt; `when done` → a board's `add task` (the text becomes a card) or any
 flow start. Media → Media Grid, screens, Display, a board's **`cover`** input (the card named in
 the board's *cover goes to card* param, else the first card, gets a thumbnail), a Generate
-Image's `reference`, a Generate Video's `reference`. All of these are also **drop-to-link** pairs
+Image's `reference`, a Generate Video's `reference`, an Image Edit's `image`, a Guide's or a
+Mask's `image`, an Enhance's `image`. All of these are also **drop-to-link** pairs
 (`pm/relations.js → DROP_LINKS`), so dropping a Generate Image on the board makes the cover link
-without a cable.
+without a cable. Every face with a result has a **↓** chip beside its history strip
+(`common.js → downloadRecord`: text as `.txt`, media through a fetched blob and an anchor); a
+Media Grid's panel downloads every item.
 
 **Media records** are `{ kind, src, title, provider, model, createdAt, cost, w, h, duration?,
-storeId?, hosted? }`: `src` is a blob URL for stored files (Demo output and provider files that
+storeId?, hosted?, role? }` (`role: 'mask'` on a Mask's output, `'control'` on a Guide's edge
+trace; an uploaded file's record also carries `name`, `bytes`, `type`): `src` is a blob URL for stored files (Demo output and provider files that
 could be fetched) or the provider's hosted URL, `hosted` keeps the original, `storeId` is the
 IndexedDB key; `store.hydrate` gives stored records a fresh blob URL after a reload and
 `faces.bitmapFor` falls back to the store when an old blob URL fails.
@@ -206,8 +264,10 @@ IndexedDB key; `store.hydrate` gives stored records a fresh blob URL after a rel
 endpoint id), `label`, `kind`, `price` (+ `perSecond`, `seconds`), `priceText`, `params` (each
 `{ key, label, type: select | number | boolean | text, options?, default, min?, max?, step? }`
 maps 1:1 to a request field), `promptField` when the prompt is not called `prompt`,
-`needsReference` + `referenceField` for image-to-image / voice clone, `recommended` for a badge.
-Remove `unverified` once you have run it. The panel, the browser and the request body follow.
+`needsReference` + `referenceField` for image-to-image / voice clone, `negativeField` when the
+model takes a negative prompt, `loraField` when it takes `loras`, `tool: 'enhance'` + `task` (+
+`scaleField`, `noPrompt`) for an Enhance row, `recommended` for a badge. Remove `unverified` once
+you have run it. The panel, the browser and the request body follow.
 
 **A provider**: one file in `src/ai/providers/` calling `registerProvider({...})` with the
 members in §1 (use `http.request / requestJSON / readSSE / sleep` for fetches with timeouts,
@@ -236,4 +296,11 @@ console errors. The earlier harnesses (shoot3–7) still pass. `shoot9.mjs` cove
 fixture with two `:free` ids and one zero-priced model, the **Free only** toggle (exactly those
 three, badges, count, remembered across a reload), the free default model when a key exists and
 none is chosen, the Showcase text components staying on Demo, and **Switch to OpenRouter (free
-model)**.
+model)**. `shoot-d1.mjs` covers this round on the *Image studio* template: the Settings seed
+advancing after a Demo run, the Guide's edge control image, the Mask's pixels (white inside the
+rectangle, black outside; a painted stroke), Image Edit resize (300 × 200, a store id, kept
+across a reload), the browser Enhance ×2 (600 × 400), the spec carrying mask / guides /
+settings, fal `buildInput` (`negative_prompt` only on rows with `negativeField`, the inpaint /
+controlnet / redux endpoints, the enhance rows), kie's refusal, Iterate, Ctrl+B pass-through on
+a Text node, a file drop and an image paste on a Media node, the download chips and every new
+drop-to-link sentence — with zero console errors — and renders the template's thumbnails.

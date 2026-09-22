@@ -9,6 +9,26 @@ import { compatiblePorts, coerce, equal, makePulse, isPulse } from './types.js';
 /** How long after a change an output / connection / node still counts as "active" (s). */
 export const ACTIVE_WINDOW = 1.5;
 
+/**
+ * Outputs of a bypassed node (`enabled === false`, Ctrl+B): every non-event output takes the value
+ * of the first input of the same type (`any` on either side matches; a multi input gives its first
+ * item), so a disabled Image Edit hands its image on and a disabled Text passes its text — the
+ * graph downstream keeps working while the step is muted. Each input feeds one output at most.
+ */
+export function passThrough(node, inputs) {
+  const out = {};
+  const used = new Set();
+  for (const port of node.outputs) {
+    if (port.type === 'event') continue;
+    const src = node.inputs.find((p) => !used.has(p) && p.type !== 'event' && (p.type === port.type || p.type === 'any' || port.type === 'any') && inputs[p.key] !== undefined);
+    if (!src) continue;
+    used.add(src);
+    const v = inputs[src.key];
+    out[port.key] = src.multi && Array.isArray(v) ? v[0] : v;
+  }
+  return out;
+}
+
 export class Engine {
   constructor(world) {
     this.world = world;
@@ -164,7 +184,7 @@ export class Engine {
           outputs = {};
           this.onError?.(node, e);
         }
-      }
+      } else outputs = passThrough(node, inputs);   // bypassed (Ctrl+B): the first input of each output's type carries straight through
       for (const port of node.outputs) {
         if (port.type === 'event') {
           // returning a value for an event output is shorthand for emit(key, value)

@@ -27,7 +27,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 │ Core        core/component.js  core/registry.js  core/types.js              │
 │             core/engine.js  core/world.js  core/commands.js  core/history.js │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Components  components/<category>/<name>.js  (17 core + 10 project + 5 generate) │
+│ Components  components/<category>/<name>.js  (17 core + 10 project + 10 generate) │
 │ PM layer    pm/model.js (data)  pm/relations.js (links → meaning)  pm/board-ops.js  pm/panel-pm.js │
 │             pm/people.js (the people directory, IndexedDB `people`)                         │
 │ AI layer    ai/providers/* (openrouter, fal, kie, demo)  ai/vault.js  ai/jobs.js  ai/pricing.js  ai/store.js  ai/http.js │
@@ -124,7 +124,7 @@ long).
 ### 4a. Subtypes of `data`
 
 A `data` port may declare a `subtype` — `person | task | tasks | board | milestone | stats |
-layout` (`SUBTYPES`, `subtypeInfo`) — so a cable carries meaning: a Person's `person` output only
+layout | settings | guide` (`SUBTYPES`, `subtypeInfo`) — so a cable carries meaning: a Person's `person` output only
 fits a `people` slot, a board's `tasks` output fits a Timeline's `tasks` slot, never the other way
 round. `compatiblePorts(fromPort, toPort)` is what the world, the engine and the connection use:
 base types as `compatible`; `any` on either side ignores subtypes; two subtypes must match; a
@@ -134,7 +134,8 @@ Timeline's `tasks` and `milestones` slots are loose so a Data node can still fee
 midpoint label and the panel; `mismatchReason(from, to)` explains a refusal ("person is not a
 tasks"). Subtypes have their own hues in both palettes (`theme.subtypes`, `portColorFor(type,
 subtype)`): person coral, task / tasks green-teal, board indigo, milestone gold, stats grey-blue,
-layout lavender; a subtyped port, its cable and its legend swatch all use that colour.
+layout lavender, settings violet-grey, guide sage; a subtyped port, its cable and its legend
+swatch all use that colour.
 
 ### 4b. Multi-input sockets
 
@@ -646,7 +647,9 @@ Navigator's `start` event). *View → Glide to text when editing* (`glideSetting
 Note (text, unless fed), Text (text in source mode, template in template mode), Data (JSON in
 value mode, with a face), Input (the button label), Display (caption), Person (name, role), Prompt
 (the template as multiline plus every variable chip as its name), the Generate faces (the fallback
-prompt while nothing is connected; the model chip as an action), Checklist (item text; a "+" row
+prompt while nothing is connected; the model chip as an action), Settings (steps, guidance,
+strength, seed, count), Guide (mode, strength), Mask (source, the shape fractions, grow, feather,
+invert, brush, erase), Image Edit (mode and the mode's numbers), Checklist (item text; a "+" row
 that adds an item), Kanban board (card titles and column titles; the "+" tile types the new
 card's title), Timeline (its own bars' labels), Milestone (title, date) and the flow shapes
 (their label = title). Body fields (`local`) get the editor and the frame but no canvas marker.
@@ -1121,7 +1124,7 @@ positions read as rows of standing cards in 3D and as a diagram in 2D.
 tab and the **Start panel** over it; the same happens on a reload that lands on an untouched empty
 tab and on **File → New**. The panel is a centred card in the viewport (`#start`, `z-index` 4,
 `pointer-events: none` outside the card), not a modal: the room behind it stays live. It offers
-**Blank project**, the three **starter templates** with a thumbnail, **Open recent** (the closed
+**Blank project**, the four **starter templates** with a thumbnail, **Open recent** (the closed
 projects from `tabs.recent()`, patched into the card when the IndexedDB read resolves), **Open
 file…** and **More examples · Showcase**, plus a **Show this panel on startup** checkbox persisted
 as `localStorage["proto3d.start.v1"]` (`'0'` = off; `startOnLaunch()` / `setStartOnLaunch()`). It
@@ -1140,6 +1143,7 @@ then the Showcase, what *File → Examples* lists).
 | `project-board` | *Website relaunch* board (3 columns, 5 cards) with two People in its `people` slot (swimlanes), a Milestone into the board, a Timeline and a Dashboard fed by the board's `tasks` / `progress`, the people and the milestone — 6 components, 9 cables | drag a card into Done |
 | `ai-pipeline` | a Data source (`{Product.name}`, tagline, audience, colour) feeding two Prompts, Generate Text → Display and Generate Image → Media Grid on the Demo provider, one Run button into both `run` inputs — 8 components, 8 cables | press Run |
 | `device-flow` | Input button and Phone `tap` → Action (count) → Compare (≥ 3) → Gate (NOT) → Display; the count's `done` and Compare's result into a flow decision whose *yes* triggers an Action that writes *Unlocked* on the Laptop and whose *no* feeds a Log; the Phone shows the count — 10 components, 12 cables | press the button three times |
+| `image-studio` | a sample Media → Guide (edges) and Mask (rectangle, feathered) → Generate Image on Demo, fed by a Settings node (landscape 4:3, 24 steps, seed 1234 incrementing) and a Prompt with a `{Product}` Data variable; the render → Image Edit (adjust) → Enhance (browser ×2, auto) → Media Grid, which also takes the render; one Run button — 11 components, 12 cables | press Run |
 
 `main.js → loadExample(id)` builds the scene through `tabs.replaceActive` (into the untouched empty
 tab, else a new one), names the tab after a template, frames `focus`, hides the Start panel and
@@ -1154,7 +1158,7 @@ the rail and panel hidden, `frameAll({ fill: 1.08 })`, downscaled in a canvas) a
 the panel picks the file for the active theme and re-renders on theme change, and a missing file
 falls back to the category icon (`<img onerror>`). Re-render them when a template changes.
 
-**Adding a template**: a file under `src/examples/` built like the three above, an import and a
+**Adding a template**: a file under `src/examples/` built like the four above, an import and a
 row in `templates` in `examples/index.js`, its icon in `TEMPLATE_ICON` (`ui/start-panel.js`), a
 thumbnail pair and a row in this table.
 
@@ -1425,6 +1429,34 @@ world JSON; live job handles stay on the instance (`_job`, `_approval`, `_err`),
 `state.current / history`; `when done` is emitted from `evaluate` on the frame after a job
 finishes so it travels the normal event bus; cards may carry a `cover` media record
 (`pm/model.js → coverRecord`), set through the board's `cover` input.
+
+**Shaping and finishing (round D1).** Five more components in `components/generate/` keep the
+hosted-API rule (no local diffusion; ComfyUI's loaders, latents and samplers collapse into
+primitives): **Settings** (`generate-settings`) outputs one `data · settings` object — size,
+steps, guidance, strength, seed + after-run rule, count, LoRA, style prefix — that every Generate
+node's `settings` input takes; `common.js → applySettings` writes only the keys the model's
+schema knows, and `finishJob → advanceSeed` moves the seed on after each job (a direct param
+write, not a history entry). **Guide** (`generate-guide`) outputs `data · guide` `{ mode,
+strength, image, control }`; for `edges` it computes a Sobel trace of the source bitmap in the
+browser (`sobelEdges`, ≤ 512 px, cached per `src`, registered with `faces.registerBitmap`).
+**Mask** (`generate-mask`) renders a white-on-black image at the reference's size off-screen
+(`renderMask`: shapes, a threshold of the image, or the face painting kept in `state.paint` as a
+≤ 512 px data URL; grow / feather / invert) and outputs a media record with `role: 'mask'`; its
+face is the one place a press-and-drag paints (`face.onPointer` returns `true` on `down` inside
+the preview so the interaction layer captures the drag, `drag` stamps the brush, `up` stores the
+painting). The adapters decide what a guide or a mask means (`fal.js → pickEndpoint`; kie
+refuses; Demo shows it), never the components. **Image Edit** (`image-edit`) is pure Canvas 2D,
+debounced 150 ms of engine time, stored through `ai/store.js` under `edit-<hash of sources +
+params>` so an unchanged edit is reused and a reload hydrates it. **Enhance** (`enhance`) reuses
+`startRun / drawGenerateFace / facePointer` with a `run` hook for its `browser` provider (two
+`drawImage` resamples), fal tool rows (`tool: 'enhance'`, hidden from the image browser), kie
+(refused) and Demo. `passThrough` in `core/engine.js` gives a bypassed node (`enabled === false`,
+Ctrl+B) its first input of each output's type as that output. **File drop**: `main.js` listens
+for `dragover` / `drop` on the document, resolves the block under the pointer with
+`interaction._setPointer` + `pick()` and calls `def.onFileDrop(instance, file, api)` (the Media
+node stores the file and sets `source = 'file'`, `params.file = record` through `api.setParam`,
+one coalesced history entry); an image pasted while a Media node is selected takes the same
+path, a drop on empty space adds a Media block, a `.json` opens as a project.
 
 ## 12. Invariants worth keeping
 

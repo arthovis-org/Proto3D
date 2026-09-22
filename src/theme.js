@@ -18,7 +18,7 @@ export const UNIT_CM = 10;
 const CATEGORY_KEYS = ['media', 'text', 'data', 'input', 'logic', 'action', 'transform', 'layout', 'output', 'project', 'generate', 'devices'];
 const TYPE_KEYS = ['number', 'text', 'boolean', 'data', 'media', 'event', 'any'];
 /** Project subtypes of `data`: their own hues so a person cable never looks like a stats cable. */
-const SUBTYPE_KEYS = ['person', 'task', 'tasks', 'board', 'milestone', 'stats', 'layout'];
+const SUBTYPE_KEYS = ['person', 'task', 'tasks', 'board', 'milestone', 'stats', 'layout', 'settings', 'guide'];
 
 export const palettes = {
   dark: {
@@ -66,7 +66,7 @@ export const palettes = {
       action: 0xe25aa6, transform: 0x7d9cc6, layout: 0xb59cf5, output: 0x9aa7bb, project: 0x2dd4bf, generate: 0xc084fc, devices: 0x6f8bb0,
     },
     portTypes: { number: 0x2dd4bf, text: 0xf5b942, boolean: 0xe25aa6, data: 0x8b7cf6, media: 0xff8a5b, event: 0xf4f6fa, any: 0x9aa7bb },
-    subtypes: { person: 0xff8fa3, task: 0x34c99a, tasks: 0x34c99a, board: 0x6d7cff, milestone: 0xffd36b, stats: 0x7d9cc6, layout: 0xb59cf5 },
+    subtypes: { person: 0xff8fa3, task: 0x34c99a, tasks: 0x34c99a, board: 0x6d7cff, milestone: 0xffd36b, stats: 0x7d9cc6, layout: 0xb59cf5, settings: 0x9d97b8, guide: 0xa7c4a0 },
     states: { hover: 0x9fb3d1, selected: 0x5aa9ff, active: 0x5aa9ff, error: 0xff4d5e, disabled: 0x3a4252 },
   },
   light: {
@@ -118,7 +118,7 @@ export const palettes = {
       action: 0xc2388a, transform: 0x4d6a94, layout: 0x7a5fd0, output: 0x6b7788, project: 0x0f9f8f, generate: 0x8e44d6, devices: 0x556a8a,
     },
     portTypes: { number: 0x0f9f8f, text: 0xc07f0c, boolean: 0xc2388a, data: 0x6a5cd6, media: 0xd9633a, event: 0x3d4a60, any: 0x5f6b7c },
-    subtypes: { person: 0xd6456a, task: 0x13906a, tasks: 0x13906a, board: 0x4655d6, milestone: 0xb88a12, stats: 0x4d6a94, layout: 0x7a5fd0 },
+    subtypes: { person: 0xd6456a, task: 0x13906a, tasks: 0x13906a, board: 0x4655d6, milestone: 0xb88a12, stats: 0x4d6a94, layout: 0x7a5fd0, settings: 0x6f6788, guide: 0x5f8a58 },
     states: { hover: 0x6f8bb0, selected: 0x2b7fe0, active: 0x2b7fe0, error: 0xd93848, disabled: 0xa2abb8 },
   },
 };

@@ -23,8 +23,10 @@ every preset and touchscreens work everywhere (see [Controls](#controls)).
 Generate Text / Image / Video / Audio components that call **OpenRouter** (language models),
 **fal.ai** and **kie.ai** (images, video, audio) or an offline **Demo** provider; keys live
 encrypted in this browser behind a **Connections** page, jobs stream onto the faces with progress,
-cost and a history strip, and results feed every other component (see
-[Generate content with AI](#generate-content-with-ai)).
+cost and a history strip, and results feed every other component. **Settings**, **Guide** and
+**Mask** nodes shape a generation (size / steps / seed rules, image-to-image and edge / depth /
+pose guides, inpainting), **Image Edit** and **Enhance** finish it in the browser or on a model
+(see [Generate content with AI](#generate-content-with-ai)).
 
 Underneath is a **platform**: one component schema, a registry that drives the toolbar / panel /
 engine / serialization, six port types with strict compatibility, an event bus, groups that
@@ -67,7 +69,7 @@ tab with the Start panel over it; **Help → Start panel** brings it back any ti
 
 The Start panel is a card over the live room, not a modal: **Esc**, ×, any pick or anything
 landing in the scene closes it, and *Show this panel on startup* switches it off for good (it
-stays under **Help → Start panel** and the command palette). The three starter templates are
+stays under **Help → Start panel** and the command palette). The four starter templates are
 ordinary example scenes (`src/examples/`) built from registry components; each opens in a tab
 named after it, framed, with a one-line hint bar saying what to try first:
 
@@ -76,6 +78,7 @@ named after it, framed, with a one-line hint bar saying what to try first:
 | **Project board** | a *Website relaunch* Kanban board with two People plugged into its people slot (a swimlane each), a Milestone, a Timeline fed by the board and a Dashboard fed by the board, the people and the milestone | drag a card into **Done** — the dashboard, the timeline and the people update at once |
 | **AI content pipeline** | a Data source (`{Product.name}`, tagline, audience, colour) → two Prompts → Generate Text → Display and Generate Image → Media Grid, all on the offline **Demo** provider, with one **Run** button into both generators | press **Run** (or the Run button on a Generate node); go live under **File → Connections…** |
 | **Interactive device flow** | an Input button and a Phone's tap → an Action that counts → Compare (≥ 3) and Gate (NOT) → a Display; the count's pulse through a decision: *yes* → an Action writes *Unlocked* on the Laptop, *no* → a Log; the Phone shows the count | press the button (or tap the phone) three times |
+| **Image studio** | a sample picture → a **Guide** (edges: a live Sobel trace) and a **Mask** (rectangle, feathered) → **Generate Image** on the offline Demo, driven by a **Settings** node (landscape 4:3, 24 steps, seed 1234 incrementing after each run) and a Prompt with a `{Product}` variable → **Image Edit** (adjust) → **Enhance** (browser ×2, auto) → Media Grid; one Run button | press **Run** — the Demo paints inside the mask along the traced edges, the grade and the ×2 upscale follow; double-click a Settings number to change it, `Ctrl+B` on the Grade to compare |
 
 The **Showcase** stays under **File → Examples** and behind *More examples* on the panel.
 Thumbnails are rendered headless and committed under `assets/templates/`. *All projects →* at
@@ -215,7 +218,7 @@ toDef, toPort, names)` may return a sentence for a cable leaving the component.
 
 | id | Category | Inputs | Outputs | Params (mode first) | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| `media` | Media | — | `media` media | mode image/video/audio · source sample 1–6 / custom URL · url · title | One asset; samples are generated offline (images, animated poster for video, WAV for audio). Face shows it. |
+| `media` | Media | — | `media` media | mode image/video/audio · source sample 1–6 / custom URL / file · url · title | One asset; samples are generated offline (images, animated poster for video, WAV for audio); a file comes from *Choose file…*, a drop on the block or Ctrl+V and is stored in IndexedDB. Face shows it. |
 | `media-grid` | Media | `items` media\* | `layout` data | columns (0 = auto) · gap · fit | Gallery of every connected media; face renders it; layout `{items, cols, rows}` feeds screens. |
 | `text` | Text | `in` any\* | `text` text | mode source/uppercase/lowercase/template/join · text · template (`{value} {name} {0}`) · separator | Strings and string operations. Face shows the result. |
 | `data` | Data | `in` data\* | `data` data · `value` any | mode value/pick/filter/count/merge · JSON · path · key · op · value | JSON source, path pick, filter a list, count, merge. |
@@ -223,7 +226,7 @@ toDef, toPort, names)` may return a sentence for a cable leaving the component.
 | `compare` | Logic | `a` any · `b` any | `result` boolean | op = ≠ < > ≤ ≥ contains · b fallback | a ⋈ b. |
 | `gate` | Logic | `in` boolean\* | `result` boolean | mode AND/OR/NOT/XOR | Combine booleans. |
 | `branch` | Logic | `condition` boolean · `value` any · `trigger` event | `then` any · `else` any · `on true` event · `on false` event | — | if / else: routes a value and fires when the condition flips (or on trigger). |
-| `action` | Action | `trigger` event · `payload` any | `result` any · `done` event | mode pass/toggle/count/latch/delay · payload fallback · delay ms | Do something on an event. |
+| `action` | Action | `trigger` event · `payload` any | `result` any · `index` number · `done` event | mode pass/toggle/count/latch/delay/iterate · payload fallback · delay ms · auto · interval ms | Do something on an event; *iterate* walks a list one item per trigger (`index` = position, `done` at the end). |
 | `transform` | Transform | `a` number · `b` number | `result` number | mode math/map range/clamp/round/invert · op + − × ÷ mod pow min max · ranges | Number processing. |
 | `layout` | Layout | `items` any\* | `list` data | mode row/column/grid/circle · spacing · columns · distance · arrange | Physically arranges the connected components around itself. |
 | `display` | Output | `in` any | — | caption | Face renders any value: text, number, boolean, JSON, media, gallery. |
@@ -344,7 +347,12 @@ tweet is just `text` and a generated poster is just `media`.
 | --- | --- | --- | --- |
 | `prompt` | `variables` any\* · `text` text | `prompt` text | A prompt template. Every component plugged into `variables` becomes a variable named after its title (`{Card title}`, `{Public launch}`); `{1}` picks by position, `{Name.path}` reaches into an object, `{text}` is the text input. The face typesets the template with the resolved values as chips; the panel has a proper editor with insert chips and a resolved preview. |
 | `generate-text` | `prompt` text · `context` any\* · `image` media · `run` event | `text` · `data` · `when done` · `usage` | Asks a language model through **OpenRouter** (hundreds of models, live per-token pricing) or **Demo**. The answer streams onto the face and the `text` output as it arrives; `context` inputs become system context, `image` goes to vision models, **JSON mode** parses the answer into `data`, `when done` pulses with the text (→ a board's `add task` makes a card), `usage` carries tokens and cost. |
-| `generate-image` · `generate-video` · `generate-audio` | `prompt` text · `reference` media · `run` event | `image / video / audio` media · `all` data · `when done` · `usage` | Text (and an optional reference) to media through **fal.ai** (FLUX, Recraft, Ideogram, Kling, MiniMax, Luma, Stable Audio, Kokoro TTS…), **kie.ai** (Nano Banana, FLUX 2, Veo 3, Kling 2.1, Suno…) or **Demo**. Model options are schema-driven per model (size, aspect, duration, voice, steps, seed, count). The face shows queue position, progress with the provider's log line, the result preview and a history strip; Cancel and Retry work on the face, in the panel and in the job tray. |
+| `generate-image` · `generate-video` · `generate-audio` | `prompt` text · `negative` text · `settings` data·settings · `reference` media · `guides` data·guide\* (image, video) · `mask` media (image) · `run` event | `image / video / audio` media · `all` data · `when done` · `usage` | Text (and an optional reference) to media through **fal.ai** (FLUX, Recraft, Ideogram, Kling, MiniMax, Luma, Stable Audio, Kokoro TTS…), **kie.ai** (Nano Banana, FLUX 2, Veo 3, Kling 2.1, Suno…) or **Demo**. Model options are schema-driven per model (size, aspect, duration, voice, steps, seed, count). The face shows queue position, progress with the provider's log line, the result preview and a history strip; Cancel and Retry work on the face, in the panel and in the job tray. |
+| `generate-settings` | — | `settings` data·settings | **Settings** — one sheet for every generator it feeds: size (square, portrait 3:4 / 9:16, landscape 4:3 / 16:9, custom w × h), steps, guidance (cfg), strength (denoise), seed with an **after run** rule (fixed · increment · decrement · random, ComfyUI's *control after generate*), count 1–4, and a Style section (LoRA URL + scale, a style preset appended to prompts). `applySettings` maps it onto the keys the chosen model's schema knows (image_size / aspect_ratio, num_inference_steps, guidance_scale, strength, seed, num_images); a language model takes only the seed. The face is a compact sheet whose numbers edit in place; a dice chip cycles the after-run rule. |
+| `generate-guide` | `image` media | `guide` data·guide | **Guide** — an image that steers a generator: *image to image* (strength = how far to move from it), *edges* (a live Sobel trace computed in the browser, cached per source, sent as the control image), *depth*, *pose* (ControlNet conditions) or *style reference*. fal picks the endpoint (flux/dev image-to-image, flux-general `controlnets`, flux-pro ultra redux); kie says *not offered*; Demo tints its painting with the guide's average colour and draws the edges on top. |
+| `generate-mask` | `image` media | `mask` media (role `mask`) | **Mask** — white where a generator may paint: solid, rectangle, ellipse (fractions), *from image* (luminance / alpha / colour key + threshold) or **paint** — press and drag on the face with a white brush (erase toggle, brush size, Clear); grow / feather / invert finish it. Rendered off-screen at the reference image's size (1024² without one). Into a Generate Image's `mask` = inpainting (fal flux-pro fill; the model chip reads *· inpaint*; Demo paints only inside it) or an Image Edit `mask`. |
+| `image-edit` | `image` media · `image B` media · `mask` media | `image` media | **Image Edit** — resize (fit / keep aspect), crop, pad (fill or transparent = an outpaint canvas), rotate / flip, adjust (brightness, contrast, saturation, blur, sharpen), blend (opacity + mode), composite (B over A through the mask), invert, grayscale. Pure Canvas 2D, computed ~150 ms after a change, stored in IndexedDB under a hash of sources + params so a reload keeps it and an unchanged edit is reused. Before / after face with the numbers editable in place; a ↓ chip downloads the result. Free and offline. |
+| `enhance` | `image` media · `run` event | `image` media · `when done` · `usage` | **Enhance** — upscale ×2 / ×4, remove background, restore faces. Provider **browser** (two high-quality Canvas resamples, free, instant; upscale only), **fal** (Clarity upscaler, AuraSR, BiRefNet, CodeFormer — curated, unverified), **kie** (not offered → a clear error) or **Demo** (a browser upscale behind a short fake progress, a checkerboard cut-out). Same job lifecycle, face and history as the Generate nodes. |
 
 **Connections** (**File → Connections…**, **View → Connections…**, or the *Open Connections* action any
 Generate component shows when it lacks a key) is a settings page with one card per provider:
@@ -367,11 +375,49 @@ per run with *recommended* badges.
 
 **Results are values.** Generated text feeds Display, Text, screens, Kanban `add task` (via
 `when done`), another Prompt or Generate; generated media feeds Media Grid, screens, Display, a
-Generate Video's `reference` and a board's new **`cover`** input (the card named in *cover goes to
-card* — else the first card — shows the picture as a thumbnail; the card editor has a cover row).
-All of these are drop-to-link pairs too. Stored results (Demo output, and provider files fetched
-into the page) live in **IndexedDB** so a reload keeps them; the world JSON holds the media record
-with its `storeId`, never a key.
+Generate Video's `reference`, an Image Edit, a Guide, a Mask, an Enhance and a board's **`cover`**
+input (the card named in *cover goes to card* — else the first card — shows the picture as a
+thumbnail; the card editor has a cover row). All of these are drop-to-link pairs too (*"Settings'
+settings drive Render"*, *"Edges guides Render"*, *"Render paints only inside Mask"*, *"Grade edits
+Render's image"*). Stored results (Demo output, provider files fetched into the page, Image Edit
+and browser Enhance output) live in **IndexedDB** so a reload keeps them; the world JSON holds
+the media record with its `storeId`, never a key.
+
+**Shaping a generation.** Hosted APIs, not local diffusion: ComfyUI's loaders, latents and
+samplers collapse into three primitives. A **Settings** node plugged into any generator's
+`settings` input overrides size, steps, guidance, strength, seed and count where the model's
+schema has the key, lends a LoRA to the fal models that take one and appends a style prefix to the
+prompt; after every finished job it advances its seed by its *after run* rule (that write is
+automatic, not an undo step — the panel says so). A **Guide** on `guides` (image to image, edges,
+depth, pose, style reference) and a **Mask** on `mask` switch the fal endpoint (image-to-image,
+flux-general with `controlnets`, redux, flux-pro fill); kie refuses them in plain words; the
+offline **Demo** shows the effect (tint, edge trace, painting only inside the mask). A `negative`
+input (or the panel's fallback text) becomes `negative_prompt` on the models that accept one —
+the panel says *negative prompt ignored by this model* otherwise, and the field is dropped.
+
+**Files in, files out.** A Media node takes a file three ways: **Choose file…** in its panel,
+a file **dropped on the block** (a document-level drop handler resolves the block under the
+pointer; a drop on empty space adds a Media block for it, a `.json` opens as a project), or
+**Ctrl+V** of an image while the block is selected. Files are stored in IndexedDB and the media
+record with its `storeId` sits in `params.file`, so a reload finds the picture again. Every
+Generate, Enhance and Image Edit face has a small **↓** chip beside the history strip that
+downloads the current result (text as `.txt`, media as its file); a Media Grid's panel has
+**Download all**.
+
+**One image per row: Iterate.** The Action component's **iterate** mode walks a list — an array
+payload, an object's values, or text split on newlines / commas — one item per trigger (or every
+*interval* ms with *auto* on): `result` is the item, `index` its position, `done` pulses when the
+last item went out (the next trigger wraps). Wire an Input button into the Iterate's `trigger`
+and into a Generate Image's `run`, and the Iterate's `result` into a Prompt's `variables`: the
+Prompt reads the current row before the run pulse reaches the generator, so each press paints
+the next row; with *auto* on and a timer-free graph the list runs on its own.
+
+**Bypass.** `Ctrl+B` (or *Edit → Bypass*, with a check mark while the selection is muted)
+toggles `enabled` on the selected blocks in one undoable step. A bypassed block does not evaluate;
+the engine carries its first input of each output's type straight to that output (`any` matches
+anything, a multi input gives its first item), so a muted Image Edit hands the picture on and a
+muted Text passes its text — the graph downstream keeps working while you compare with and
+without a step.
 
 The endpoint shapes for OpenRouter, fal.ai and kie.ai follow their public docs from memory (the
 docs were not reachable while this was built); curated model ids and prices are marked
@@ -727,8 +773,8 @@ board `#6d7cff` / `#4655d6`, milestone `#ffd36b` / `#b88a12`, stats `#7d9cc6` / 
    (the Layout node already does it for its neighbours).
 4. **Editing**: copy / paste across worlds, snapping, comments on the floor, sub-graphs
    (a group as a reusable component).
-5. **Media**: real `<video>` / `<audio>` playback where the browser allows it, drag-and-drop of
-   files onto a Media node, thumbnails in the panel.
+5. **Media**: real `<video>` / `<audio>` playback where the browser allows it, thumbnails in the
+   panel (files already drop, paste and upload onto a Media node).
 6. **Hardening**: instanced ports for thousands of nodes, occlusion-aware LOD, keyboard-only
    navigation, automated contrast checks for both themes.
 7. **Look and feel, next**: user-editable navigation bindings (a preset editor on top of the

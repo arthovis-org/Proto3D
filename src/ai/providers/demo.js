@@ -3,6 +3,10 @@
 // built from the prompt's own words), images and video posters are painted on a canvas from
 // a hash of the prompt, audio is a short generated melody as a WAV blob. Its job is to let the
 // Showcase run without keys and to let people design a flow before they connect a real service.
+// It honours a Settings node (size, seed, count), a Guide (an image-to-image guide tints the
+// painting with the guide image's average colour, an edges guide draws its edge trace on top), a
+// Mask (paint lands only inside the mask, over the reference) and the Enhance tasks (browser
+// upscale behind a short fake progress, a checkerboard cut-out for "remove background").
 import { registerProvider } from './base.js';
 import { sleep } from '../http.js';
 
@@ -71,6 +75,84 @@ function paintImage(prompt, { w = 640, h = 400, video = false, seed } = {}) {
   return c;
 }
 const toBlob = (canvas, type = 'image/png') => new Promise((resolve) => canvas.toBlob((b) => resolve(b), type, 0.92));
+/** Load a media record's image (blob:, data: or same-origin URL); null when it cannot be read. */
+function loadImage(src) {
+  return new Promise((resolve) => { if (!src) { resolve(null); return; } const im = new Image(); if (!/^(blob|data):/.test(src)) im.crossOrigin = 'anonymous'; im.onload = () => resolve(im); im.onerror = () => resolve(null); im.src = src; });
+}
+/** Average colour of an image as [r, g, b] (sampled on a 16 × 16 downscale). */
+function averageColour(im) {
+  const c = document.createElement('canvas'); c.width = c.height = 16; const g = c.getContext('2d');
+  g.drawImage(im, 0, 0, 16, 16);
+  let d; try { d = g.getImageData(0, 0, 16, 16).data; } catch (_) { return null; }
+  let r = 0, gg = 0, b = 0; for (let i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; }
+  const n = d.length / 4; return [r / n, gg / n, b / n];
+}
+/**
+ * Apply the guides and the mask to a painted canvas: an image-to-image guide tints the painting
+ * towards the guide image's average colour (by its strength), an edges guide draws its edge trace on
+ * top, a mask keeps the painting only where the mask is white (over the reference image when
+ * there is one, else over a neutral ground), so the whole flow is visible offline.
+ */
+async function applyGuides(c, spec) {
+  const g = c.getContext('2d'), w = c.width, h = c.height;
+  for (const guide of spec.guides || []) {
+    if (!guide || !guide.image?.src) continue;
+    if (guide.mode === 'image to image' || guide.mode === 'style reference') {
+      const im = await loadImage(guide.image.src); const avg = im && averageColour(im);
+      if (avg) { g.save(); g.globalAlpha = Math.max(0.15, Math.min(0.9, guide.strength ?? 0.6)); g.fillStyle = `rgb(${avg.map(Math.round).join(',')})`; g.fillRect(0, 0, w, h); g.restore(); }
+    } else {
+      const im = await loadImage((guide.control || guide.image).src);
+      if (im) { g.save(); g.globalAlpha = Math.max(0.2, Math.min(1, guide.strength ?? 0.7)); g.globalCompositeOperation = 'screen'; g.drawImage(im, 0, 0, w, h); g.restore(); }
+    }
+  }
+  if (spec.mask?.src) {
+    const mask = await loadImage(spec.mask.src);
+    if (mask) {
+      const out = document.createElement('canvas'); out.width = w; out.height = h; const o = out.getContext('2d');
+      const ref = spec.reference?.src ? await loadImage(spec.reference.src) : null;
+      if (ref) o.drawImage(ref, 0, 0, w, h); else { o.fillStyle = '#2a3140'; o.fillRect(0, 0, w, h); }
+      const cut = document.createElement('canvas'); cut.width = w; cut.height = h; const k = cut.getContext('2d');
+      k.drawImage(c, 0, 0); k.globalCompositeOperation = 'destination-in'; k.drawImage(luminanceToAlpha(mask, w, h), 0, 0);   // white = keep
+      o.drawImage(cut, 0, 0);
+      g.clearRect(0, 0, w, h); g.drawImage(out, 0, 0);
+    }
+  }
+  return c;
+}
+/** A white-on-black mask as an alpha canvas (alpha = luminance), so destination-in keeps only the white part. */
+function luminanceToAlpha(im, w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d');
+  g.drawImage(im, 0, 0, w, h);
+  try { const id = g.getImageData(0, 0, w, h), d = id.data; for (let i = 0; i < d.length; i += 4) d[i + 3] = Math.round((d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) * (d[i + 3] / 255)); g.putImageData(id, 0, 0); } catch (_) { /* tainted: keep everything */ }
+  return c;
+}
+/** Enhance tasks in the browser: upscale (two smoothing steps), a checkerboard cut-out, or a gentle "restored" pass. */
+async function enhanceImage(spec) {
+  const im = await loadImage(spec.reference?.src);
+  if (!im) throw new Error('Enhance needs an image on its input');
+  const scale = spec.task === 'upscale' ? (+spec.scale || 2) : 1;
+  const w = Math.round(im.naturalWidth * scale), h = Math.round(im.naturalHeight * scale);
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d');
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  if (spec.task === 'remove background') {
+    for (let y = 0; y < h; y += 16) for (let x = 0; x < w; x += 16) { g.fillStyle = ((x + y) / 16) % 2 ? '#c8ccd4' : '#eef0f4'; g.fillRect(x, y, 16, 16); }
+    const cut = document.createElement('canvas'); cut.width = w; cut.height = h; const k = cut.getContext('2d');
+    k.drawImage(im, 0, 0, w, h); k.globalCompositeOperation = 'destination-in';
+    const grad = k.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.25, w / 2, h / 2, Math.min(w, h) * 0.5); grad.addColorStop(0, 'rgba(0,0,0,1)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+    k.fillStyle = grad; k.fillRect(0, 0, w, h);
+    g.drawImage(cut, 0, 0);
+  } else if (scale > 1) {
+    const mid = document.createElement('canvas'); mid.width = Math.round(im.naturalWidth * Math.sqrt(scale)); mid.height = Math.round(im.naturalHeight * Math.sqrt(scale));
+    const m = mid.getContext('2d'); m.imageSmoothingQuality = 'high'; m.drawImage(im, 0, 0, mid.width, mid.height);
+    g.drawImage(mid, 0, 0, w, h);
+  } else { g.filter = 'contrast(1.08) saturate(1.05)'; g.drawImage(im, 0, 0, w, h); g.filter = 'none'; }
+  return { canvas: c, w, h };
+}
+/** Bounded custom size for Demo paintings (a Settings node's size or the painter's preset). */
+function demoSize(spec) {
+  if (spec.size?.w && spec.size?.h) { const k = Math.min(1, 1024 / Math.max(spec.size.w, spec.size.h)); return [Math.max(64, Math.round(spec.size.w * k)), Math.max(64, Math.round(spec.size.h * k))]; }
+  return String(spec.options?.size || '640×400').split('×').map((n) => +n || 400);
+}
 
 /** A ~4 s melody as a 16-bit mono WAV blob; notes follow the prompt hash. */
 function makeMelody(prompt, seconds = 4, rate = 22050) {
@@ -135,23 +217,31 @@ export const demo = registerProvider({
     job.update({ stage: 'queued', queuePosition: 1, progress: 0.05, log: 'demo queue' });
     await sleep(fast ? 10 : 400, signal);
     const steps = fast ? 2 : spec.kind === 'image' ? 10 : 18;
-    for (let i = 1; i <= steps; i++) { job.update({ stage: 'generating', queuePosition: null, progress: 0.1 + 0.8 * i / steps, log: i === 1 ? 'generating…' : undefined }); await sleep(fast ? 1 : 90, signal); }
+    for (let i = 1; i <= steps; i++) { job.update({ stage: 'generating', queuePosition: null, progress: 0.1 + 0.8 * i / steps, log: i === 1 ? (spec.task ? `${spec.task}…` : 'generating…') : undefined }); await sleep(fast ? 1 : spec.task ? 40 : 90, signal); }
+    if (spec.task) {   // Enhance
+      const { canvas, w, h } = await enhanceImage(spec);
+      const blob = await toBlob(canvas);
+      job.update({ progress: 0.95, log: 'done', cost: 0 });
+      return { media: [{ kind: 'image', blob, w, h, title: `${spec.reference?.title || 'Image'} · ${spec.task}` }], cost: 0 };
+    }
     const title = words(spec.prompt).slice(0, 3).map(cap).join(' ') || 'Demo';
     const count = spec.kind === 'image' ? Math.max(1, Math.min(4, spec.count || 1)) : 1;
     const media = [];
     if (spec.kind === 'image' || spec.kind === 'video') {
-      const [w, h] = String(spec.options?.size || '640×400').split('×').map((n) => +n || 400);
+      const [w, h] = demoSize(spec);
+      const seed = spec.seed === undefined || spec.seed === null || spec.seed === '' ? Math.floor(Math.random() * 1e9) : +spec.seed;
       for (let i = 0; i < count; i++) {
-        const c = paintImage(spec.prompt, { w, h, video: spec.kind === 'video', seed: (spec.seed ?? 0) + i * 7919 });
+        let c = paintImage(spec.prompt, { w, h, video: spec.kind === 'video', seed: seed + i * 7919 });
+        if (spec.kind === 'image' && (spec.guides?.length || spec.mask)) c = await applyGuides(c, spec);
         const blob = await toBlob(c);
-        media.push({ kind: spec.kind, blob, w, h, title: count > 1 ? `${title} ${i + 1}` : title, duration: spec.kind === 'video' ? +spec.options?.duration || 8 : undefined });
+        media.push({ kind: spec.kind, blob, w, h, title: count > 1 ? `${title} ${i + 1}` : title, duration: spec.kind === 'video' ? +spec.options?.duration || 8 : undefined, seed: seed + i * 7919 });
       }
     } else {
       const seconds = +spec.options?.seconds || 4;
       media.push({ kind: 'audio', blob: makeMelody(spec.prompt, seconds), title, duration: seconds });
     }
     job.update({ progress: 0.95, log: 'done', cost: 0 });
-    return { media, cost: 0 };
+    return { media, cost: 0, seed: media[0]?.seed };
   },
 });
 export default demo;

@@ -3,7 +3,7 @@
 // single source of truth; this module owns the semantics only.
 //
 // Subtypes: a `data` port may declare `subtype: 'person' | 'task' | 'tasks' | 'board' |
-// 'milestone' | 'stats' | 'layout'` so a cable carries meaning, not just JSON. Base types must
+// 'milestone' | 'stats' | 'layout' | 'settings' | 'guide'` so a cable carries meaning, not just JSON. Base types must
 // match as before; when both ports declare a subtype they must be the same; a subtyped input
 // accepts a plain `data` output only when its definition says `loose: true`.
 
@@ -22,7 +22,7 @@ export const typeInfo = {
 };
 
 /** Project subtypes of `data` (legend order). */
-export const SUBTYPES = ['person', 'task', 'tasks', 'board', 'milestone', 'stats', 'layout'];
+export const SUBTYPES = ['person', 'task', 'tasks', 'board', 'milestone', 'stats', 'layout', 'settings', 'guide'];
 export const subtypeInfo = {
   person:    { label: 'person',    description: 'a team member { name, role, colour, capacity, load, tasks }' },
   task:      { label: 'task',      description: 'one card { id, title, assignee, due, priority, column, done }' },
@@ -31,6 +31,8 @@ export const subtypeInfo = {
   milestone: { label: 'milestone', description: '{ title, date, daysLeft, reached }' },
   stats:     { label: 'stats',     description: 'board progress { total, done, doneRatio, overdue, blocked, columns, burndown }' },
   layout:    { label: 'layout',    description: 'an arranged set { items, cols, rows }' },
+  settings:  { label: 'settings',  description: 'generation settings { size, steps, guidance, strength, seed, seedMode, count, lora, stylePrefix }' },
+  guide:     { label: 'guide',     description: 'an image guide { mode, strength, image, control }' },
 };
 
 /**
