@@ -13,7 +13,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 │             ui/tab-strip.js (project tabs + autosave indicator)  ui/version-history.js  ui/confirm.js │
 │             ui/overlays.js  ui/tour.js  ui/help-dialogs.js  ui/stats.js  selection.js  gizmo.js  lod.js │
 │             ui/start-panel.js (first run, File → New, Help → Start panel)  ui/hint-bar.js  ui/nav-hint.js │
-│             ui/home.js (the Home page: projects, tasks, calendar)  ui/project-dialog.js (Create / Edit Project) │
+│             ui/home.js (the Home page: projects, tasks, calendar)  ui/calendar.js  ui/project-dialog.js (Create / Edit Project) │
 │             ui/guides.js (snap guides)  layout.js (Auto-layout)  plan.js (2D mode + snap settings) │
 │             controls/presets.js + controls/navigation.js (camera + bindings, trackpad + touch) │
 │             main.js (boot + render loop)                                     │
@@ -27,7 +27,7 @@ document describes the layers, the invariants each one keeps and how they fit to
 │ Core        core/component.js  core/registry.js  core/types.js              │
 │             core/engine.js  core/world.js  core/commands.js  core/history.js │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Components  components/<category>/<name>.js  (17 core + 10 project + 10 generate) │
+│ Components  components/<category>/<name>.js  (17 core + 11 project + 10 generate) │
 │ PM layer    pm/model.js (data)  pm/relations.js (links → meaning)  pm/board-ops.js  pm/panel-pm.js │
 │             pm/people.js (the people directory, IndexedDB `people`)                         │
 │ AI layer    ai/providers/* (openrouter, fal, kie, demo)  ai/vault.js  ai/jobs.js  ai/pricing.js  ai/store.js  ai/http.js │
@@ -1141,7 +1141,7 @@ then the Showcase, what *File → Examples* lists).
 
 | id | contents | hint |
 | --- | --- | --- |
-| `project-board` | *Website relaunch* board (3 columns, 5 cards) with two People in its `people` slot (swimlanes), a Milestone into the board, a Timeline and a Dashboard fed by the board's `tasks` / `progress`, the people and the milestone — 6 components, 9 cables | drag a card into Done |
+| `project-board` | *Website relaunch* board (3 columns, 5 cards) with two People in its `people` slot (swimlanes), a Milestone into the board, a Timeline, a Calendar and a Dashboard fed by the board's `tasks` / `progress`, the people and the milestone — 7 components, 11 cables | drag a card into Done |
 | `ai-pipeline` | a Data source (`{Product.name}`, tagline, audience, colour) feeding two Prompts, Generate Text → Display and Generate Image → Media Grid on the Demo provider, one Run button into both `run` inputs — 8 components, 8 cables | press Run |
 | `device-flow` | Input button and Phone `tap` → Action (count) → Compare (≥ 3) → Gate (NOT) → Display; the count's `done` and Compare's result into a flow decision whose *yes* triggers an Action that writes *Unlocked* on the Laptop and whose *no* feeds a Log; the Phone shows the count — 10 components, 12 cables | press the button three times |
 | `image-studio` | a sample Media → Guide (edges) and Mask (rectangle, feathered) → Generate Image on Demo, fed by a Settings node (landscape 4:3, 24 steps, seed 1234 incrementing) and a Prompt with a `{Product}` Data variable; the render → Image Edit (adjust) → Enhance (browser ×2, auto) → Media Grid, which also takes the render; one Run button — 11 components, 12 cables | press Run |
@@ -1380,9 +1380,39 @@ status and on directory changes (debounced); untouched empty tabs are not listed
 - *Keys*: while Home is open `main.js`'s single-key and Ctrl+letter handlers return early and
   `interaction.keysSuspended()` (set by `main.js`) makes `Interaction.onKey` skip the navigation
   preset's keys (W / E / R / G…); Alt+H, Ctrl+K, Esc and the tab keys keep working.
-- *Calendar*: a placeholder card; the switcher tab is there so the next round only fills it.
+- *Calendar* (`ui/calendar.js`, `CalendarView`, mounted by Home): Month · Week · Agenda with Today,
+  ‹ ›, ← → and T (a window keydown that runs only while Home shows the calendar). `items()` reads
+  the same scope as Tasks and builds, from every project's `index`, task chips (a due date;
+  `start < due` makes a span), milestone flags (`index.milestones`), project start / due markers
+  (`meta`) and minutes per day (`index.time`, a map `indexDoc` fills from the cards' `timeLogs`;
+  *Show time*). The grids come from `gridDays(view, offset)` shared with the 3D component
+  (`components/project/calendar.js`: Monday-first weeks covering the month, or one week). Month
+  cells render a span as `.cal-span` segments through each day (`s` / `e` on the ends), Week
+  packs spans into lanes above the day columns (`grid-column: a / b`; no hourly grid — tasks are
+  day-granular), Agenda groups the next 30 days plus an *Overdue* block. A chip click →
+  `onOpenTask`, a flag → `onOpenNode` (main.js `openNode`: open the record, select the node,
+  frame), a cell's **+** → `home.newTaskOn(date)` (the Tasks view's New task bar with `nt-due`
+  prefilled; `editTask` op `add` takes `patch.due`). **Drag** is pointer-based on window listeners:
+  a ghost clone follows, the cell under the pointer (`elementFromPoint` → `[data-date]`) gets
+  `.drop`, and the release calls `onWrite({ op: 'update', patch: { due } })` → `editTask`, so the
+  three write paths apply (undoable on the active tab, in place on a background tab, stored doc for
+  a closed project with its toast); with Shift `start` moves by the same delta, and a due before the
+  start collapses the span.
 - *You are …*: an avatar button listing the directory (`role="listbox"`) plus *Add me…* (an
   inline name / email row); picking sets `people.setMe`.
+
+**Calendar component** (`components/project/calendar.js`, id `calendar`, XL face): inputs `tasks`
+(tasks, multi, loose) and `milestones` (milestone, multi, loose); outputs `dueToday` / `thisWeek` /
+`selectedDay` (tasks) and `due` (event, *when a task is due*). `evaluate` flattens the inputs,
+computes today's and the Monday-to-Sunday week's tasks, pulses `due` once per not-done task whose
+due date is today (`state.fired` per `state.firedDate`, so a reload or a second evaluation never
+re-fires) and lists `state.selected`'s tasks. The face draws the grid from `gridDays` with a
+shared `layout(w, h, rows)` used by `render`, `onPointer` (a click on a cell → `state.selected`)
+and `portAnchors` (`tasks` beside the grid, `milestones` beside the weekday row, the outputs
+beside the selected-day list); `offset` is a face number field (`beginFields`). Relationship
+sentences and drop pairs live in `pm/relations.js` (`kanban-board.tasks>calendar.tasks`,
+`milestone.milestone>calendar.milestones`, `calendar.dueToday>display.in` / `*.screen`,
+`calendar.due>flow-terminal.in`).
 
 **Comments and time on cards** (`pm/model.js`, `pm/panel-pm.js`). A card carries `start`,
 `comments: [{ id, who, at, text }]`, `timeLogs: [{ id, who, at, date, minutes, note }]` and

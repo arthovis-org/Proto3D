@@ -75,7 +75,7 @@ named after it, framed, with a one-line hint bar saying what to try first:
 
 | Template | What is in it | Try first |
 | --- | --- | --- |
-| **Project board** | a *Website relaunch* Kanban board with two People plugged into its people slot (a swimlane each), a Milestone, a Timeline fed by the board and a Dashboard fed by the board, the people and the milestone | drag a card into **Done** — the dashboard, the timeline and the people update at once |
+| **Project board** | a *Website relaunch* Kanban board with two People plugged into its people slot (a swimlane each), a Milestone, a Timeline and a Calendar fed by the board, and a Dashboard fed by the board, the people and the milestone | drag a card into **Done** — the dashboard, the timeline and the people update at once |
 | **AI content pipeline** | a Data source (`{Product.name}`, tagline, audience, colour) → two Prompts → Generate Text → Display and Generate Image → Media Grid, all on the offline **Demo** provider, with one **Run** button into both generators | press **Run** (or the Run button on a Generate node); go live under **File → Connections…** |
 | **Interactive device flow** | an Input button and a Phone's tap → an Action that counts → Compare (≥ 3) and Gate (NOT) → a Display; the count's pulse through a decision: *yes* → an Action writes *Unlocked* on the Laptop, *no* → a Log; the Phone shows the count | press the button (or tap the phone) three times |
 | **Image studio** | a sample picture → a **Guide** (edges: a live Sobel trace) and a **Mask** (rectangle, feathered) → **Generate Image** on the offline Demo, driven by a **Settings** node (landscape 4:3, 24 steps, seed 1234 incrementing after each run) and a Prompt with a `{Product}` variable → **Image Edit** (adjust) → **Enhance** (browser ×2, auto) → Media Grid; one Run button | press **Run** — the Demo paints inside the mask along the traced edges, the grade and the ×2 upscale follow; double-click a Settings number to change it, `Ctrl+B` on the Grade to compare |
@@ -243,7 +243,7 @@ glyph and a progress bar (honest fallback for headless and offline use).
 
 ## Project management
 
-The **Project** category (toolbar glyph: three kanban columns; header tint teal-green) adds ten
+The **Project** category (toolbar glyph: three kanban columns; header tint teal-green) adds eleven
 components. They are registry components like every other — typed ports, params, `evaluate`, a
 live face or a custom 3D body — so they compose with Logic, Actions, Text and Devices. The data
 model (`src/pm/model.js`) is plain JSON stored in params / state and saved in the world file:
@@ -262,6 +262,7 @@ and milestones.
 | `milestone` | S · flag on a pole | — | `when reached` event · `milestone` milestone | date | Flag colour follows the state (ahead / soon / reached); `when reached` fires once when today ≥ date. Plug it into a board (header countdown, flags on late cards), a timeline (flag on the rail) or a dashboard. |
 | `sticky-note` | S · tilted square | `text` text | `text` text | text · colour · tilt | Paper-coloured slab with the note on its face. |
 | `checklist` | M · face | — | `progress` number · `when complete` event | items (panel) | Rows with checkboxes; click a row on the 3D face to toggle it (undoable); `when complete` fires when all are done. |
+| `calendar` | XL · face | `tasks` tasks\* · `milestones` milestone\* | `due today` tasks · `this week` tasks · `when a task is due` event · `selected day` tasks | view month / week · offset (months / weeks from now, editable on the face) · colour by priority / project / assignee · show weekends | A month or week grid: weekday header, day numbers, a ring on today, up to three chips per day (done muted, then "+n"), a flag on a milestone's day, and a **selected-day list** at the bottom — click a cell to pick the day. `when a task is due` pulses once per task on the day it comes due (a Flow Terminal or an Action can react); `due today` / `this week` feed a Display or a screen. Drop a board on it to feed it. |
 | `project-dashboard` | L · face | `progress` stats · `tasks` tasks · `milestone` milestone · `people` person\* · `checklists` number\* | `progress` number | caption | Names the board it is plugged into; stat tiles (done %, overdue, blocked, days remaining), done ring, per-column bars (red over WIP), burndown line from the board's history, the milestone, a load bar per connected person and a progress bar per connected Checklist. |
 
 Port types in the table are the `data` **subtypes** where a port has one (`person`, `tasks`,
@@ -547,7 +548,15 @@ member · viewer*), start and due dates — stored with the record and written i
   card's **activity** — created, moved, comments and time logs, a comment box (Ctrl+Enter) and a
   *Log time* row — and **New task** adds a card to any project's board and column. The task name
   opens the project and selects the card.
-- **Calendar** — a placeholder; the next round fills it.
+- **Calendar** — **Month · Week · Agenda** over the same scope (*This project · All · Mine*),
+  with Today, ‹ ›, ← → and **T**. Cards with a due date are chips in their project's colour with
+  a priority stripe (done struck through, overdue tinted); a card with a start and a due is a
+  **span** — a bar across the days in Week view, a thin bar through the cells in Month view;
+  milestones are flags, a project's own start and due small markers, and **Show time** adds the
+  hours logged per day. Click a chip to open the card, a flag to open the milestone, a day's **+**
+  to add a task due that day. **Drag a chip** to another day to reschedule it — open, background
+  and closed projects alike (undoable when the project is the active tab); **Shift+drag** keeps
+  the span length. Agenda lists the next 30 days (and what is overdue).
 
 **New project** (Home, or **File → New project…**) opens the Create Project dialog: name, key,
 description, colour, status, dates, tags (Enter or comma adds), **People** from the browser's

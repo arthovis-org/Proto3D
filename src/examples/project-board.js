@@ -1,5 +1,6 @@
 // examples/project-board.js — starter template: a small Kanban board with two people plugged into
-// its people slot (swimlanes), a milestone, a timeline fed by the board and a project dashboard.
+// its people slot (swimlanes), a milestone, a timeline and a calendar fed by the board, and a
+// project dashboard.
 // Everything is a registry component; the relationships are cables the user can also make by
 // dropping one block onto another.
 import { isoDate, addDays } from '../pm/model.js';
@@ -38,6 +39,7 @@ export default {
     const milestone = add('milestone', [-13.5, null, -11], { title: 'Relaunch day', params: { date: d(12) } });
     const timeline = add('timeline', [18, null, -7.5], { title: 'Relaunch timeline' });
     const dashboard = add('project-dashboard', [16, null, 4.5], { title: 'Relaunch health' });
+    const calendar = add('calendar', [0, null, 14], { title: 'Release calendar' });
 
     people.forEach((p) => connect(p, 'person', board, 'people'));       // two slots → two swimlanes
     connect(milestone, 'milestone', board, 'milestone');
@@ -46,6 +48,8 @@ export default {
     connect(board, 'tasks', timeline, 'tasks');
     connect(board, 'progress', dashboard, 'progress');
     people.forEach((p) => connect(p, 'person', dashboard, 'people'));
-    return { board, people, milestone, timeline, dashboard };
+    connect(board, 'tasks', calendar, 'tasks');
+    connect(milestone, 'milestone', calendar, 'milestones');
+    return { board, people, milestone, timeline, dashboard, calendar };
   },
 };

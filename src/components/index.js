@@ -26,6 +26,7 @@ import './project/milestone.js';
 import './project/sticky-note.js';
 import './project/checklist.js';
 import './project/project-dashboard.js';
+import './project/calendar.js';
 // generate (AI): prompt editor + text / image / video / audio generation, and the round that
 // shapes them: Settings, Guide, Mask, Image Edit (browser), Enhance
 import './generate/prompt.js';

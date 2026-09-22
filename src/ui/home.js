@@ -19,6 +19,7 @@ import { isTyping } from '../interaction.js';
 import { PROJECT_STATUSES, projectStats, indexDoc, isoToday } from '../project-store.js';
 import { fmtDate, PRIORITY_COLOURS, PRIORITIES, activity, loggedMinutes, estimateMinutes, fmtHours, newId, isoDate } from '../pm/model.js';
 import { confirmDialog } from './confirm.js';
+import { CalendarView } from './calendar.js';
 import { timeAgo } from './tab-strip.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -36,11 +37,12 @@ const initialsOf = (name) => String(name || '').split(/[\s._-]+/).filter(Boolean
 const ring = (ratio, size = 30) => { const r = (size - 4) / 2, c = 2 * Math.PI * r; return `<svg class="ring" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-track"/><circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-fill" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${(c * (1 - Math.max(0, Math.min(1, ratio)))).toFixed(1)}"/></svg>`; };
 
 export class Home {
-  constructor({ el, tabs, people, store, onNew = () => {}, onEdit = () => {}, onOpenTask = () => {}, onWrite = async () => null, onBoards = async () => [], onCard = async () => null, activeDoc = null, onChange = () => {}, toast = () => {} }) {
-    Object.assign(this, { el, tabs, people, store, onNew, onEdit, onOpenTask, onWrite, onBoards, onCard, activeDoc, onChange, toast });
+  constructor({ el, tabs, people, store, onNew = () => {}, onEdit = () => {}, onOpenTask = () => {}, onOpenNode = () => {}, onWrite = async () => null, onBoards = async () => [], onCard = async () => null, activeDoc = null, onChange = () => {}, toast = () => {} }) {
+    Object.assign(this, { el, tabs, people, store, onNew, onEdit, onOpenTask, onOpenNode, onWrite, onBoards, onCard, activeDoc, onChange, toast });
+    this.calendar = new CalendarView({ home: this });
     this.view = 'projects';
     this.filters = { q: '', status: 'all', tag: '', member: '', sort: 'opened' };
-    this.tasks = { scope: 'all', q: '', sort: 'due', dir: 1, projectId: null, expanded: null, newOpen: false };
+    this.tasks = { scope: 'all', q: '', sort: 'due', dir: 1, projectId: null, expanded: null, newOpen: false, newDue: '' };
     this.projects = [];            // the store's listing, merged with the open tabs
     this._activeAtOpen = null;
     this.el.hidden = true; this.el.setAttribute('aria-hidden', 'true');
@@ -187,21 +189,22 @@ export class Home {
           <span class="grow"></span><span class="home-count" data-role="count"></span>
           <button type="button" class="primary home-newtask-btn" data-act="newtask" aria-expanded="${this.tasks.newOpen}">${icons.plus}<span>New task</span></button>
         </div>
-        <form class="home-newtask" data-role="newtask" ${this.tasks.newOpen ? '' : 'hidden'}><select data-role="nt-project" aria-label="Project"></select><select data-role="nt-board" aria-label="Board"></select><select data-role="nt-column" aria-label="Column"></select><input type="text" data-role="nt-title" placeholder="Task title" aria-label="Task title" spellcheck="false"><button type="submit" class="primary">Add</button></form>
+        <form class="home-newtask" data-role="newtask" ${this.tasks.newOpen ? '' : 'hidden'}><select data-role="nt-project" aria-label="Project"></select><select data-role="nt-board" aria-label="Board"></select><select data-role="nt-column" aria-label="Column"></select><input type="text" data-role="nt-title" placeholder="Task title" aria-label="Task title" spellcheck="false"><input type="date" data-role="nt-due" aria-label="Due" value="${esc(this.tasks.newDue)}"><button type="submit" class="primary">Add</button></form>
         <div class="home-table-wrap"><table class="home-table"><thead><tr>${COLUMNS.map(([k, l]) => `<th scope="col"><button type="button" data-sort="${k}">${l || BUBBLE}<i class="sort-ic"></i></button></th>`).join('')}</tr></thead><tbody></tbody></table></div>`;
       const q = this.body.querySelector('[data-role="tq"]');
       q.addEventListener('input', () => { this.tasks.q = q.value; this._renderContent(); });
       this.body.querySelector('[data-role="newtask"]').addEventListener('submit', (e) => { e.preventDefault(); this._addTask(); });
       if (this.tasks.newOpen) this._fillNewTask();
-    } else {
-      this.body.innerHTML = `<div class="home-placeholder"><span class="modal-icon">${icons.timeline}</span><div><h2>Calendar comes in the next round</h2><p>Milestones, due dates and people's load by week will show here. Until then the Tasks view sorts by due date.</p></div></div>`;
-    }
+    } else this.calendar.mount(this.body);
   }
   _renderContent() {
     if (!this.isOpen) return;
     if (this.view === 'projects') this._renderProjects();
     else if (this.view === 'tasks') this._renderTasks();
+    else this.calendar.render();
   }
+  /** A day cell's "+" on the calendar: the Tasks view's New task bar with the due date prefilled. */
+  newTaskOn(date) { this.tasks.newOpen = true; this.tasks.newDue = date || ''; this.setView('tasks'); }
   _renderProjects() {
     const grid = this.body.querySelector('.home-grid'); if (!grid) return;
     // the tag and member selects follow the data
@@ -332,9 +335,10 @@ export class Home {
     if (!projectId || !boardUid) return;
     if (!title) { titleEl.focus(); return; }
     const p = this.projects.find((x) => x.id === projectId);
-    const r = await this.onWrite({ projectId, boardUid, op: 'add', column, title, project: p?.name || 'Untitled' });
+    const due = form.querySelector('[data-role="nt-due"]')?.value || '';
+    const r = await this.onWrite({ projectId, boardUid, op: 'add', column, title, patch: due ? { due } : null, project: p?.name || 'Untitled' });
     if (!r) { this.toast('Could not add the task', 1600); return; }
-    titleEl.value = '';
+    titleEl.value = ''; this.tasks.newDue = '';
     this.toast(`Added "${title}" to ${p?.name || 'the project'}${r.mode === 'active' ? ' · Ctrl+Z undoes' : ''}`, 1600);
     this.refresh();
   }

@@ -66,8 +66,8 @@ export const isoToday = () => new Date().toISOString().slice(0, 10);
  * without opening the document.
  */
 export function indexDoc(doc) {
-  const tasks = [], milestones = [], boards = [];
-  const minutes = (c) => (Array.isArray(c.timeLogs) ? c.timeLogs.reduce((a, t) => a + (Number.isFinite(+t?.minutes) ? +t.minutes : 0), 0) : 0);
+  const tasks = [], milestones = [], boards = [], time = {};   // time: minutes logged per ISO day across the project (the Home calendar's "Show time")
+  const minutes = (c) => { let sum = 0; for (const t of Array.isArray(c.timeLogs) ? c.timeLogs : []) { const m = Number.isFinite(+t?.minutes) ? +t.minutes : 0; sum += m; if (t?.date) time[t.date] = (time[t.date] || 0) + m; } return sum; };
   for (const n of doc?.nodes || []) {
     if (!n || !n.type) continue;
     if (n.type === 'kanban-board') {
@@ -79,7 +79,7 @@ export function indexDoc(doc) {
       for (const t of Array.isArray(n.params?.tasks) ? n.params.tasks : []) if (t && t.id) tasks.push({ id: t.id, title: String(t.title || ''), boardUid: n.uid, board: n.title || 'Timeline', column: t.done ? 'Done' : 'Planned', columnId: t.done ? 'done' : 'planned', columnIndex: t.done ? 1 : 0, done: !!t.done, assignee: t.assignee || '', due: t.due || t.end || '', start: t.start || '', priority: t.priority || 'medium', estimate: Number.isFinite(+t.estimate) ? +t.estimate : 1, logged: minutes(t), comments: Array.isArray(t.comments) ? t.comments.length : 0, updatedAt: t.updatedAt || '', kind: 'task' });
     } else if (n.type === 'milestone') milestones.push({ uid: n.uid, title: n.title || 'Milestone', date: n.params?.date || '' });
   }
-  return { tasks, milestones, boards, updatedAt: Date.now() };
+  return { tasks, milestones, boards, time, updatedAt: Date.now() };
 }
 /** Counts for a card: total, done, doneRatio, overdue, the next due date and the people assigned — from `rec.index` (computed on the fly when missing). */
 export function projectStats(rec, today = isoToday()) {

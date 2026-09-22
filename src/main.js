@@ -473,9 +473,18 @@ async function getTask({ projectId, boardUid, taskId }) {
   if (Array.isArray(params.tasks)) return params.tasks.find((t) => t.id === taskId) || null;
   return findCard(normalizeBoard(params.board), taskId)?.card || null;
 }
+/** A milestone flag on the Home calendar: open the project and select the node. */
+async function openNode({ projectId, uid }) {
+  const rec = await projectStore.getProject(projectId);
+  if (!rec) { overlays.toast('That project is no longer in this browser', 1800); return; }
+  const tab = tabs.openRecord(rec); if (!tab) return;
+  home.hide('node');
+  const node = world.nodeByUid(uid);
+  if (node) { selection.set([node]); ws.frameBlocks([node], { fill: 0.6, insetLeft: insetLeft() }); togglePanel(true); }
+}
 const home = new Home({
   el: $('home'), tabs, people, store: projectStore,
-  onNew: () => projectDialog.create(), onEdit: (rec) => projectDialog.edit(rec), onOpenTask: openTask,
+  onNew: () => projectDialog.create(), onEdit: (rec) => projectDialog.edit(rec), onOpenTask: openTask, onOpenNode: openNode,
   onWrite: editTask, onBoards: projectBoards, onCard: getTask, activeDoc: () => currentDoc(),
   onChange: () => { tabStrip?.renderHome(); syncEmptyHint(); },
   toast: (t, ms) => overlays.toast(t, ms),
