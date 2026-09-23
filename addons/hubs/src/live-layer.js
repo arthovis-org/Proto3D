@@ -14,15 +14,19 @@
 // hidden — the face's static preview shows instead — and disposed when the node is gone, resized or
 // out of the budget for a while.
 //
-// Limits: a DOM layer is always drawn over the WebGL scene, so a live frame is never occluded by a
-// nearer block; cross-origin pages cannot be read or styled; nothing renders while `status` is not
-// `live`. Off-contract seams used: window.__proto.ws.{renderer, camera, controls, flyTo,
+// Occlusion: a DOM layer is always painted over the WebGL scene, so a live frame behind a nearer block
+// would show through it. Every ranking pass raycasts five points of each live face against the blocks
+// whose boxes overlap it on screen (occlusion.js); a frame with anything in front of it (even partly)
+// is hidden (visibility: hidden, the iframe stays loaded) after two consecutive passes, and the
+// depth-correct canvas face with its static preview shows instead. The interactive frame stays visible.
+// Cross-origin pages cannot be read or styled; nothing renders while `status` is not `live`. Off-contract seams used: window.__proto.ws.{renderer, camera, controls, flyTo,
 // onCameraSwap}, window.__proto.world.nodes, window.__proto.sizes — see the README's `host.view` proposal.
 import * as THREE from 'three';
 import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
 import { routeLabel } from './nodes.js';
 import { faceLayout } from './sizing.js';
 import * as motion from './motion.js';
+import { createOccluder } from './occlusion.js';
 
 const RANK_EVERY = 0.25;       // seconds between budget re-evaluations
 const HYSTERESIS = 0.8;        // a page already live counts as this much closer
@@ -47,6 +51,8 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
   viewport.appendChild(root);
   const cssScene = new THREE.Scene();
   const entries = new Map();   // node → entry
+  const occluder = createOccluder(THREE);
+  const perf = { lastMs: 0, maxMs: 0, passes: 0 };   // the occlusion pass's cost, for the panel and the tests
   const state = { budget: Math.min(BUDGET_MAX, Math.max(0, +budget || 0)), enabled: enabled !== false, interactive: null, rankAt: -1, liveCount: 0, running: false, raf: 0, last: 0 };
 
   function resize() {
@@ -79,9 +85,10 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     el.addEventListener('pointerdown', (e) => e.stopPropagation());
     const obj = new CSS3DObject(el);
     el.style.pointerEvents = 'none';   // the CSS3DObject constructor sets `auto`; only the interactive one gets it back
+    el.style.visibility = 'visible';
     obj.visible = false;
     cssScene.add(obj);
-    return { node, el, obj, iframe, layout: L, key: sizeKey(node), url: String(node.params.url || ''), loaded: false, live: false, lastLive: performance.now() / 1000, hidden: true };
+    return { node, el, obj, iframe, layout: L, key: sizeKey(node), url: String(node.params.url || ''), loaded: false, live: false, lastLive: performance.now() / 1000, hidden: true, occluded: false, occludedRuns: 0 };
   }
   /** What the element depends on: the page width / device, the face's logical size, the url. */
   const sizeKey = (node) => `${node.params.aspect || 'device'}|${node.params.device}|${node.params.pageWidth}|${node.face?.cw}|${node.face?.ch}|${node.params.url}`;
@@ -132,7 +139,7 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     e.obj.quaternion.copy(_quat);
     e.obj.scale.set(_scl.x / px, _scl.y / px, _scl.z / px);
     e.obj.visible = true;
-    return true;
+    return applyOcclusion(e);
   }
 
   /* ---- the budget ---- */
@@ -157,6 +164,7 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
       if (on) { const e = entryFor(n); if (e) { e.live = true; e.lastLive = now; load(e); live++; } }
       else { const e = entries.get(n); if (e) e.live = false; }
     });
+    occlusionPass(camera);
     for (const [n, e] of [...entries]) {
       if (!world.nodes.includes(n)) dispose(e);
       else if (e.key !== sizeKey(n)) dispose(e);   // resized / retargeted: rebuilt when it is live again
@@ -164,6 +172,28 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     }
     if (state.interactive && !world.nodes.includes(state.interactive)) leave();
     if (live !== state.liveCount) { state.liveCount = live; onChange?.(counts()); }
+  }
+
+  /* ---- occlusion: anything between the camera and a live face hides its frame (the preview shows) ---- */
+  const _fp = new THREE.Vector3(), _fq = new THREE.Quaternion(), _fs = new THREE.Vector3();
+  function occlusionPass(camera) {
+    const t0 = performance.now();
+    const blocks = [...world.nodes, ...world.groups.filter((g) => g.collapsed)];
+    for (const e of entries.values()) {
+      if (!e.live || !e.node.face?.mesh) { e.occludedRuns = 0; e.occluded = false; continue; }
+      const mesh = e.node.face.mesh; mesh.updateWorldMatrix(true, false); mesh.matrixWorld.decompose(_fp, _fq, _fs);
+      const r = occluder.test(e.node, camera, blocks, { facePos: _fp, faceQuat: _fq, w: e.node.face.w * _fs.x, h: e.node.face.h * _fs.y });
+      e.occludedRuns = r.occluded ? e.occludedRuns + 1 : 0;
+      e.occluded = e.occludedRuns >= 2 || (e.occluded && r.occluded);   // two consecutive passes to hide, one clear pass to show
+    }
+    perf.lastMs = performance.now() - t0; perf.maxMs = Math.max(perf.maxMs, perf.lastMs); perf.passes++;
+  }
+  /** Show or hide an element for its occlusion state; the interactive frame is the user's choice and stays visible. */
+  function applyOcclusion(e) {
+    const hide = e.occluded && state.interactive !== e.node;
+    const want = hide ? 'hidden' : 'visible';
+    if (e.el.style.visibility !== want) e.el.style.visibility = want;
+    return !hide;
   }
 
   /* ---- frame loop ---- */
@@ -225,8 +255,8 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     const node = state.interactive; if (!node) return false;
     state.interactive = null;
     const e = entries.get(node);
-    if (e) { e.el.classList.remove('is-interactive'); e.el.style.pointerEvents = 'none'; }
-    state.rankAt = -1;
+    if (e) { e.el.classList.remove('is-interactive'); e.el.style.pointerEvents = 'none'; e.occludedRuns = 0; }
+    state.rankAt = -1;   // re-rank now: the occlusion of the frame the user just left is checked again
     if (!quiet) onChange?.(counts());
     return true;
   }
@@ -238,7 +268,8 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
   /* ---- settings / api ---- */
   function counts() {
     let pages = 0, eligibleCount = 0; for (const n of world.nodes) if (n.typeId === 'hub-page') { pages++; if (eligible(n)) eligibleCount++; }
-    return { pages, eligible: eligibleCount, live: state.liveCount, loaded: entries.size, budget: state.budget, enabled: state.enabled, interactive: state.interactive?.uid || null };
+    let occluded = 0; for (const e of entries.values()) if (e.live && e.occluded) occluded++;
+    return { pages, eligible: eligibleCount, live: state.liveCount, occluded, loaded: entries.size, budget: state.budget, enabled: state.enabled, interactive: state.interactive?.uid || null, occlusionMs: +perf.lastMs.toFixed(2), occlusionMaxMs: +perf.maxMs.toFixed(2) };
   }
   function setBudget(n) { state.budget = Math.max(0, Math.min(BUDGET_MAX, Math.round(+n) || 0)); state.rankAt = -1; onChange?.(counts()); return state.budget; }
   function setEnabled(on) { state.enabled = !!on; if (!on) { leave({ quiet: true }); for (const e of entries.values()) e.live = false; } state.rankAt = -1; onChange?.(counts()); return state.enabled; }
@@ -249,5 +280,5 @@ export function createLiveLayer(host, { budget = 8, enabled = true, onChange = n
     window.removeEventListener('keydown', onKey); ws.renderer.domElement.removeEventListener('pointerdown', onCanvasDown); root.remove();
   }
 
-  return { root, css, scene: cssScene, entries, state, BUDGET_MAX, start, stop, interact, leave, flyToFace, counts, setBudget, setEnabled, reset, destroy, resize, get interactive() { return state.interactive; }, get budget() { return state.budget; }, get enabled() { return state.enabled; } };
+  return { root, css, scene: cssScene, entries, state, perf, occluder, occlusionPass: () => { const cam = ws.camera; cam.updateMatrixWorld(); occlusionPass(cam); for (const e of entries.values()) applyOcclusion(e); return counts(); }, BUDGET_MAX, start, stop, interact, leave, flyToFace, counts, setBudget, setEnabled, reset, destroy, resize, get interactive() { return state.interactive; }, get budget() { return state.budget; }, get enabled() { return state.enabled; } };
 }

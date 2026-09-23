@@ -100,7 +100,7 @@ export function installUI(host, api) {
     if (range) { range.value = String(c.budget); rangeOut.textContent = c.budget >= 40 ? 'All' : String(c.budget); }
     barHeight.sync(api.settings.embedHeight); panelHeight?.sync(api.settings.embedHeight);
     if (liveCheck) liveCheck.checked = !!c.enabled;
-    if (countsEl) countsEl.innerHTML = `<b>${c.pages}</b> pages · <b>${c.live}</b> live frame${c.live === 1 ? '' : 's'} of <b>${c.eligible}</b> eligible · <b>${clients.length}</b> client${clients.length === 1 ? '' : 's'}${c.interactive ? ' · <b>interactive</b>' : ''}`;
+    if (countsEl) countsEl.innerHTML = `<b>${c.pages}</b> pages · <b>${c.live}</b> live frame${c.live === 1 ? '' : 's'} of <b>${c.eligible}</b> eligible${c.occluded ? ` (<b>${c.occluded}</b> behind another block: preview shown)` : ''} · <b>${clients.length}</b> client${clients.length === 1 ? '' : 's'}${c.interactive ? ' · <b>interactive</b>' : ''}`;
     flowbar.hidden = false;
   }
   refresh();

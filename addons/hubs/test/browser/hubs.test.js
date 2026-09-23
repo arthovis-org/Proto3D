@@ -162,6 +162,45 @@ test('hubs page: boots with zero errors, CTL OS demo, CSS3D live layer with stub
     assert.equal(facing.back, false); assert.equal(facing.backEl, 'none'); assert.equal(facing.oblique, true); assert.notEqual(facing.obliqueEl, 'none');
     await page.evaluate(() => window.__addon.api.setBudget(16));
 
+    /* ---- 6c. occlusion: a block between the camera and a live frame hides the frame (the preview shows); moving it away brings the frame back ---- */
+    await page.evaluate(() => window.__addon.api.loadDemo('hub-cal-tenant-law')); await page.waitForTimeout(1500);
+    const occ = await page.evaluate(async () => {
+      const P = window.__proto, api = window.__addon.api, live = api.live, T = P.THREE;
+      const target = P.world.nodes.find((n) => n.typeId === 'hub-page' && n.params.section === 'site');
+      api.interact(target.uid); await new Promise((r) => setTimeout(r, 900)); api.leaveInteract();   // the camera faces the card squarely
+      await new Promise((r) => setTimeout(r, 600));
+      const before = live.occlusionPass();
+      const e = live.entries.get(target);
+      const visBefore = e.el.style.visibility;
+      // a second card standing 40 % of the way from the card to the camera, facing the camera
+      const cam = P.ws.camera.position.clone(), c = target.position.clone();
+      const mid = c.clone().lerp(cam, 0.4);
+      const blocker = P.createInstance('hub-page', { title: 'blocker', params: { title: 'Blocker', status: 'planned', device: 'desktop' } });
+      blocker.rotation.y = Math.atan2(cam.x - mid.x, cam.z - mid.z);
+      P.world.addNode(blocker, [mid.x, mid.y, mid.z]);
+      const passes = []; for (let i = 0; i < 3; i++) { await new Promise((r) => setTimeout(r, 350)); passes.push(live.occlusionPass().occluded); }
+      const hidden = { vis: e.el.style.visibility, occluded: e.occluded, display: e.el.style.display, ms: live.perf.lastMs };
+      blocker.position.x += 80; blocker.updateMatrixWorld(true);
+      await new Promise((r) => setTimeout(r, 350)); live.occlusionPass(); await new Promise((r) => setTimeout(r, 350));
+      const shown = { vis: e.el.style.visibility, occluded: e.occluded };
+      P.world.removeNode(blocker);
+      return { before: before.occluded, visBefore, passes, hidden, shown, liveBefore: before.live };
+    });
+    assert.equal(occ.visBefore, 'visible', 'a clear line of sight: the frame shows');
+    assert.equal(occ.hidden.occluded, true, `a card in front hides the frame (passes: ${occ.passes})`); assert.equal(occ.hidden.vis, 'hidden'); assert.notEqual(occ.hidden.display, 'none', 'the iframe stays loaded');
+    assert.equal(occ.shown.occluded, false, 'blocker moved away: the frame shows again'); assert.equal(occ.shown.vis, 'visible');
+    // performance with the compare demo (89 cards), budget All
+    await page.evaluate(() => { window.__addon.api.loadDemo('hub-compare'); window.__addon.api.setBudget(40); }); await page.waitForTimeout(1500);
+    const perf = await page.evaluate(() => { const live = window.__addon.api.live; const ms = []; for (let i = 0; i < 5; i++) { live.occlusionPass(); ms.push(live.perf.lastMs); } return { ms, live: live.counts().live, pages: live.counts().pages }; });
+    assert.equal(perf.pages, 89); assert.ok(Math.min(...perf.ms) < 12, `occlusion pass with ${perf.live} live frames of ${perf.pages} cards: ${perf.ms.map((m) => m.toFixed(1)).join(' / ')} ms (headless swiftshader)`);
+    console.log(`occlusion pass: ${perf.ms.map((m) => m.toFixed(2)).join(' / ')} ms for ${perf.live} live frames of ${perf.pages} cards`);
+    await page.evaluate(() => window.__addon.api.setBudget(16));
+    // File → New: nothing of the live layer stays visible once the world is gone
+    await page.evaluate(() => window.__proto.newProject()); await page.waitForTimeout(700);
+    const afterNew = await page.evaluate(() => ({ nodes: window.__proto.world.nodes.length, visible: [...document.querySelectorAll('.hub-live')].filter((w) => w.style.display !== 'none' && w.style.visibility !== 'hidden').length, entries: window.__addon.api.live.entries.size }));
+    assert.equal(afterNew.nodes, 0); assert.equal(afterNew.visible, 0, 'no live element visible after File → New'); assert.equal(afterNew.entries, 0);
+    await page.evaluate(() => window.__addon.api.loadDemo('hub-cal-tenant-law')); await page.waitForTimeout(1200);
+
     /* ---- 7. storage: everything the page wrote is under the add-on prefix (the theme passes through) ---- */
     const rawKeys = await page.evaluate(() => { const raw = window.__protoStorageIsolation.raw.localStorage; const ks = []; for (let i = 0; i < raw.length; i++) ks.push(raw.key(i)); return ks; });
     assert.ok(rawKeys.length > 0 && rawKeys.every((k) => k.startsWith('addon.hubs:') || k === 'proto3d.theme'), `raw keys: ${rawKeys.join(', ')}`);
