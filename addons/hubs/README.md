@@ -44,6 +44,10 @@ node addons/hubs/tools/capture-previews.mjs petrock    # one client
 
 **LOD.** The core marks blocks past 110 units as far and lifts their titles; `hub-page` and `hub-blueprint` instances override `setLOD` (`onCreate`) so their faces stay drawn at every distance: a page card is its content.
 
+## Occlusion, in one paragraph
+
+Why the extra work: `CSS3DRenderer` positions real DOM elements with a `matrix3d` over the canvas, so they have no depth against WebGL meshes. The static previews on the canvas faces are the depth-correct fallback; the occlusion test (below) decides when a live frame must yield to them. The rule: **a live frame hides when anything sits between it and the camera; the preview takes over.**
+
 ## The live layer (`src/live-layer.js`)
 
 A `CSS3DRenderer` (three/addons, the same three 0.160 the core loads) draws a DOM layer inside `#viewport` above the WebGL canvas, rendered every frame with the core's current camera (`ws.camera` is a getter; the Navigator's orthographic swap is followed). Every live-eligible `hub-page` gets a `<div class="hub-live">` holding a browser-chrome strip, a screen and an `<iframe loading="lazy" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups">`, scaled by `1 / 120` (`sizes.face.pxPerUnit`) and positioned on the node's face mesh world transform, nudged 0.01 along the face normal. `faceLayout(params, cw, ch)` in `sizing.js` gives both the canvas face and the DOM element the same frame rectangle, so a phone iframe (390 px wide, scaled into the drawn bezel), a tablet (1024) or a desktop page (1280) lands exactly where the face drew its frame, as tall as the frame.
@@ -51,7 +55,8 @@ A `CSS3DRenderer` (three/addons, the same three 0.160 the core loads) draws a DO
 * **Budget.** Only the N biggest on-screen pages (projected area) with `live = true` and `status = live` get an iframe (default 16, "All" = 40; menu / panel, persisted in `host.storage`). The ranking runs 4× a second with hysteresis (a live page counts as 25 % bigger) so frames do not thrash. Others show the canvas card with its preview. An element out of the budget for 20 s is dropped (its iframe unloads); the `src` is set once when a node becomes live, never per frame.
 * **Hidden when** the face turns past ~85° from the camera (cos 0.09 on, 0.05 off: hysteresis; Chromium renders CSS3D planes fine up to there, and the static preview shows beyond), off-screen, under 10 px on screen, the node is hidden (collapsed group), or live frames are off. In the 2D plan the cards lie flat and the layer follows them (top-down, orthographic).
 * **Interaction.** The layer is `pointer-events: none`, so dragging, selecting and the camera work as usual. A click on a page face (core raycast → `face.onPointer`) makes that one element interactive: `pointer-events: auto`, an accent outline, a Done button, wheel events kept from the camera, and the camera flies to face the page at ~70 % of the viewport (the `facingPose` idea from `ui/field-editor.js`). Done, Escape or a pointerdown on the WebGL canvas leave. `window.__addon.api.interact(uid)` does the same for tests.
-* **Limits.** A DOM layer is always drawn over the WebGL scene: a live frame is never occluded by a nearer block (nothing in front of it hides it). Cross-origin pages cannot be read, styled or screenshotted; the add-on never tries. A page whose `status` is not `live` never loads a frame. Iframe text is rendered by the browser under a `matrix3d` transform, so it is crisp only when the face is roughly screen-parallel.
+* **Occlusion.** A DOM layer is always painted over the WebGL scene, so on its own a live frame behind a nearer block (the Timeline, the build board, another card) would show through it. The layer therefore tests, a few times a second, whether anything sits between the camera and each live face: five sample points (the centre and four inset 15 % from the corners) are raycast against every other block whose box overlaps the card on screen (`src/occlusion.js`); if any sample hits another block first, the frame hides (`visibility: hidden`, the iframe stays loaded) after two consecutive passes and shows again after one clear pass, and the canvas face with its static preview, which does respect depth, takes over. A half-covered frame hides too. The frame the user is interacting with stays visible (the camera flew to face it) and is re-checked on exit. The pass raycasts only the live set against pre-filtered blocks; its cost is in the panel counts (`occlusionMs`).
+* **Limits.** Cross-origin pages cannot be read, styled or screenshotted; the add-on never tries. A page whose `status` is not `live` never loads a frame. Iframe text is rendered by the browser under a `matrix3d` transform, so it is crisp only when the face is roughly screen-parallel.
 
 ## Flows (`src/flows.js`)
 
@@ -108,6 +113,7 @@ addons/hubs/
   src/arrange.js      apply a flow as an undoable tweened move
   src/motion.js       the tween
   src/live-layer.js   the CSS3D iframe layer
+  src/occlusion.js    is anything between the camera and a live face? (raycast sample points, screen-rect pre-filter)
   src/examples.js     demo scenes
   src/ui.js           Hubs menu, panel section, flow bar
   src/hubs.css
