@@ -258,5 +258,6 @@ function roundedRectShape(w, h, r) {
   return s;
 }
 function disposeTree(obj) {
-  obj.traverse?.((o) => { o.geometry?.dispose?.(); if (o.material) { o.material.map?.dispose?.(); o.material.dispose?.(); } });
+  // port outline geometries are shared between ports (block3d.js): never disposed here
+  obj.traverse?.((o) => { if (!o.geometry?.userData?.shared) o.geometry?.dispose?.(); if (o.material) { o.material.map?.dispose?.(); o.material.dispose?.(); } });
 }

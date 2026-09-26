@@ -6,6 +6,7 @@
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import * as cmd from './core/commands.js';
 import { snap } from './plan.js';
+import { SCALE_MIN, SCALE_MAX } from './block3d.js';
 
 export class Gizmo {
   constructor({ camera, renderer, scene, controls, world, history, onChange = () => {}, onModeChange = () => {} }) {
@@ -38,8 +39,12 @@ export class Gizmo {
       if (!b) return;
       const minY = b.kind === 'node' ? 0.2 : 0;
       if (b.position.y < minY) b.position.y = minY;
-      const s = Math.min(Math.max(b.scale.x, 0.2), 4);
-      if (this.mode === 'scale') b.scale.setScalar(s);
+      if (this.mode === 'scale') {
+        const c = (v) => Math.min(Math.max(v, SCALE_MIN), SCALE_MAX);
+        // locked (the panel's padlock, on by default): the dragged axis sets all three; unlocked: each axis on its own
+        if (b.scaleLock !== false) { const ax = this.control.axis; b.scale.setScalar(c(ax === 'Y' ? b.scale.y : ax === 'Z' ? b.scale.z : b.scale.x)); }
+        else b.scale.set(c(b.scale.x), c(b.scale.y), c(b.scale.z));
+      }
       this.world?.bumpLayout();
       this.onChange(b);
     });

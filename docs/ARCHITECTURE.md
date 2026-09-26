@@ -1201,7 +1201,7 @@ the header and the mini toolbar's `avoid()` list includes the header.
 
 ```json
 { "app": "proto3d", "version": 2, "name": "…", "savedAt": "…",
-  "nodes": [{ "uid", "type", "title", "params", "state", "enabled", "showPorts?", "position", "rotationY", "scale" }],
+  "nodes": [{ "uid", "type", "title", "params", "state", "enabled", "showPorts?", "position", "rotationY", "scale", "rotationX?", "rotationZ?", "scaleY?", "scaleZ?", "scaleLock?" }],
   "connections": [{ "uid", "from": { "node", "port" }, "to": { "node", "port" } }],
   "groups": [{ "uid", "title", "members": ["uid"], "collapsed" }],
   "wiring": false,

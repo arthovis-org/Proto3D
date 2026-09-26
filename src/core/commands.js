@@ -63,7 +63,7 @@ export function reroute(world, conn, from, to) {
  */
 export function transform(world, nodes, before, after, routes = null) {
   const apply = (snaps, which) => {
-    nodes.forEach((n, i) => { const s = snaps[i]; n.position.fromArray(s.p); n.rotation.y = s.r; n.scale.setScalar(s.s); });
+    nodes.forEach((n, i) => { const s = snaps[i]; n.position.fromArray(s.p); if (Array.isArray(s.r)) n.rotation.set(s.r[0], s.r[1], s.r[2]); else n.rotation.y = s.r; if (Array.isArray(s.s)) n.scale.fromArray(s.s); else n.scale.setScalar(s.s); });
     if (routes) for (const r of routes) { r.node.position.fromArray(r[which]); r.node.conns.forEach((c) => c.routeChanged()); }
     world.bumpLayout(); world.changed('move');
   };
@@ -119,7 +119,8 @@ export function unpinWaypoint(world, conn, index) {
     undo() { conn.route[conn.route.indexOf(own)] = shared; own.conns.delete(conn); shared.conns.add(conn); routeTouched(world, [conn, ...shared.conns]); },
   };
 }
-export const snapshot = (n) => ({ p: n.position.toArray(), r: n.rotation.y, s: n.scale.x });
+/** Position, rotation (x, y, z radians) and scale (x, y, z) of a node; `transform` also reads the older { r: y, s: uniform } shape. */
+export const snapshot = (n) => ({ p: n.position.toArray(), r: [n.rotation.x, n.rotation.y, n.rotation.z], s: n.scale.toArray() });
 
 export function setParam(world, node, key, value) {
   const prev = clone(node.params[key]);
@@ -174,7 +175,7 @@ export function duplicate(world, nodes, createInstance, offset = new THREE.Vecto
   const src = [...new Set(nodes)];
   const copies = src.map((n) => {
     const c = createInstance(n.def, { title: n.title, params: n.params, state: n.state, enabled: n.enabled });
-    c.rotation.y = n.rotation.y; c.scale.copy(n.scale);
+    c.rotation.copy(n.rotation); c.scale.copy(n.scale); c.scaleLock = n.scaleLock;
     return c;
   });
   const positions = src.map((n) => n.position.clone().add(offset).toArray());

@@ -6,7 +6,7 @@
 import { registry } from './core/registry.js';
 import { createInstance } from './instance.js';
 import { Group3D } from './groups.js';
-import { bumpUidCounter } from './block3d.js';
+import { bumpUidCounter, applyTransformDoc } from './block3d.js';
 import { isWiringOn, setWiring } from './wiring.js';
 import { RouteNode } from './routing.js';
 
@@ -88,7 +88,7 @@ export function importCommand(world, doc, { place = 'beside', label } = {}) {
     const def = registry.get(n.type);
     if (!def) { skipped.push(n.type); continue; }
     const inst = createInstance(def, { title: n.title, params: n.params, state: n.state, enabled: n.enabled, showPorts: n.showPorts });
-    inst.rotation.y = n.rotationY || 0; inst.scale.setScalar(n.scale || 1);
+    applyTransformDoc(inst, n);
     byUid.set(n.uid, inst);
     entries.push({ inst, pos: [...(n.position || [0, 1.6, 0])] });
   }
@@ -139,8 +139,7 @@ export function loadWorld(world, doc, { camera, controls } = {}) {
     const def = registry.get(n.type);
     if (!def) { skipped.push(n.type); continue; }
     const inst = createInstance(def, { uid: n.uid, title: n.title, params: n.params, state: n.state, enabled: n.enabled, showPorts: n.showPorts });
-    inst.rotation.y = n.rotationY || 0;
-    inst.scale.setScalar(n.scale || 1);
+    applyTransformDoc(inst, n);
     world.addNode(inst, n.position || [0, 1.6, 0]);
     byUid.set(inst.uid, inst);
     const m = /^b([0-9a-z]+)/.exec(inst.uid); if (m) maxSeq = Math.max(maxSeq, parseInt(m[1].slice(0, -3) || '0', 36) || 0);

@@ -13,6 +13,7 @@ import { nav } from './controls/navigation.js';
 import { attachScrub } from './ui/scrub.js';
 import { PRESET_IDS } from './controls/presets.js';
 import { UI_SCALES, fmtScale } from './ui/ui-prefs.js';
+import { SCALE_MIN, SCALE_MAX } from './block3d.js';
 
 const RAD = 180 / Math.PI;
 
@@ -55,6 +56,32 @@ export class Panel {
     r.appendChild(i);
     const upd = () => { if (document.activeElement !== i) { const v = get(); i.value = typeof v === 'number' ? (+v.toFixed(3)).toString() : ''; } }; upd(); this.live.push(upd);
     return i;
+  }
+  /**
+   * A vector row: the label on its own line, then X · Y · Z fields side by side (Blender's transform
+   * panel), each scrubbable like the other number fields. `get(i)` / `set(i, v)` take the axis index;
+   * `tool` is an element placed at the right end of the label line (the scale lock).
+   */
+  _vec3(parent, label, get, set, { step = 0.1, min, max, tool = null, attr } = {}) {
+    const box = this._h('div', 'vec3');
+    const head = this._h('div', 'vec3-head'); head.appendChild(this._h('span', 'vec3-label', label)); if (tool) head.appendChild(tool);
+    const row = this._h('div', 'vec3-row');
+    const inputs = ['x', 'y', 'z'].map((ax, i) => {
+      const cell = this._h('label', `vec3-cell ax-${ax}`);
+      cell.appendChild(this._h('span', 'vec3-ax', ax.toUpperCase()));
+      const inp = this._h('input'); inp.type = 'number'; inp.step = step;
+      if (min !== undefined) inp.min = min; if (max !== undefined) inp.max = max;
+      if (attr) inp.dataset.param = `${attr}.${ax}`;
+      inp.setAttribute('aria-label', `${label} ${ax.toUpperCase()}`);
+      inp.addEventListener('input', () => { const v = parseFloat(inp.value); if (Number.isFinite(v)) set(i, v); });
+      attachScrub(inp, { step, min, max, get: () => get(i), set: (v) => set(i, v) });
+      cell.appendChild(inp); row.appendChild(cell);
+      return inp;
+    });
+    box.append(head, row); parent.appendChild(box);
+    const upd = () => inputs.forEach((inp, i) => { if (document.activeElement !== inp) { const v = get(i); inp.value = Number.isFinite(v) ? (+v.toFixed(3)).toString() : ''; } });
+    upd(); this.live.push(upd);
+    return inputs;
   }
   _text(parent, label, get, set, attr) {
     const r = this._row(parent, label);
@@ -232,20 +259,43 @@ export class Panel {
   _transformSection(nodes) {
     const t = this._section('Transform');
     const single = nodes.length === 1;
+    const AX = ['x', 'y', 'z'];
     const centroid = (axis) => nodes.reduce((a, n) => a + n.position[axis], 0) / nodes.length;
-    const moveAxis = (axis, v) => {
+    const moveAxis = (i, v) => {
+      const axis = AX[i];
       const before = nodes.map(cmd.snapshot);
       const delta = v - centroid(axis);
       nodes.forEach((n) => { n.position[axis] += delta; if (axis === 'y') n.position.y = Math.max(n.kind === 'device' ? 0 : 0.2, n.position.y); });
       this.world.bumpLayout();
       this.history.executeCoalesced(`move:${axis}`, cmd.transform(this.world, nodes, before, nodes.map(cmd.snapshot)));
     };
-    ['x', 'y', 'z'].forEach((axis) => this._num(t, `${single ? 'position' : 'centre'} ${axis}`, () => centroid(axis), (v) => moveAxis(axis, v), { step: 0.5 }));
+    this._vec3(t, single ? 'Position' : 'Centre', (i) => centroid(AX[i]), moveAxis, { step: 0.5, attr: 'position' });
     if (single) {
       const b = nodes[0];
-      this._num(t, 'rotation y°', () => b.rotation.y * RAD, (v) => { const before = [cmd.snapshot(b)]; b.rotation.y = v / RAD; this.history.executeCoalesced('rot', cmd.transform(this.world, [b], before, [cmd.snapshot(b)])); }, { step: 5 });
-      if (this.plan?.isOn() && Math.abs(b.rotation.y) > 1e-3) t.appendChild(this._h('div', 'panel-note', 'The 2D view lays every card square so it reads upright; this rotation shows in 3D.'));
-      this._num(t, 'scale', () => b.scale.x, (v) => { const before = [cmd.snapshot(b)]; b.scale.setScalar(Math.min(Math.max(v, 0.2), 4)); this.history.executeCoalesced('scale', cmd.transform(this.world, [b], before, [cmd.snapshot(b)])); }, { step: 0.1, min: 0.2, max: 4 });
+      const write = (key, fn) => { const before = [cmd.snapshot(b)]; fn(); this.world.bumpLayout(); this.history.executeCoalesced(key, cmd.transform(this.world, [b], before, [cmd.snapshot(b)])); };
+      this._vec3(t, 'Rotation °', (i) => b.rotation[AX[i]] * RAD, (i, v) => write(`rot:${AX[i]}`, () => { b.rotation[AX[i]] = v / RAD; }), { step: 5, attr: 'rotation' });
+      if (this.plan?.isOn() && (Math.abs(b.rotation.x) + Math.abs(b.rotation.y) + Math.abs(b.rotation.z)) > 1e-3) t.appendChild(this._h('div', 'panel-note', 'The 2D view lays every card square so it reads upright; this rotation shows in 3D.'));
+      // scale: the padlock links the three axes (on by default) — a change on one scales the others by the same factor
+      const lock = this._h('button', 'vec3-lock'); lock.type = 'button'; lock.id = 'btn-scale-lock';
+      const syncLock = () => {
+        const on = b.scaleLock !== false;
+        lock.innerHTML = on ? icons.lock : icons.unlock;
+        lock.classList.toggle('on', on); lock.setAttribute('aria-pressed', String(on));
+        lock.title = on ? 'Uniform scale: X, Y and Z change together · click to scale each axis on its own' : 'Each axis scales on its own · click to link X, Y and Z';
+        lock.setAttribute('aria-label', 'Uniform scale');
+      };
+      lock.addEventListener('click', () => { b.scaleLock = b.scaleLock === false; syncLock(); this.world.changed('param'); });
+      syncLock(); this.live.push(syncLock);
+      const clampS = (v) => Math.min(Math.max(v, SCALE_MIN), SCALE_MAX);
+      this._vec3(t, 'Scale', (i) => b.scale[AX[i]], (i, v) => write('scale', () => {
+        v = clampS(v);
+        if (b.scaleLock === false) { b.scale[AX[i]] = v; return; }
+        const old = b.scale[AX[i]], k = old > 1e-6 ? v / old : 1;
+        // keep the proportions; if one axis would leave the range, the whole set stops at it
+        const lo = Math.max(...AX.map((a) => SCALE_MIN / b.scale[a])), hi = Math.min(...AX.map((a) => SCALE_MAX / b.scale[a]));
+        const kk = Math.min(Math.max(k, lo), hi);
+        AX.forEach((a) => { b.scale[a] = clampS(b.scale[a] * kk); });
+      }), { step: 0.1, min: SCALE_MIN, max: SCALE_MAX, tool: lock, attr: 'scale' });
     }
     if (this.gizmo.enabled) this._buttons(t, 'gizmo', [['translate', 'Move', 'W'], ['rotate', 'Rotate', 'E'], ['scale', 'Scale', 'R']], () => this.gizmo.mode, (v) => this.gizmo.setMode(v));
     return t;

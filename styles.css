@@ -267,6 +267,27 @@ details.sec[open] > summary::before { transform: rotate(45deg); }
 #field-editor input.fe-input[inputmode="decimal"] { cursor: ew-resize; }
 #field-editor input.fe-input.scrubbing { box-shadow: 0 0 0 0.12em var(--fe-accent), inset 0 -0.15em 0 var(--fe-accent), 0 0.6em 1.6em rgba(0, 0, 0, 0.28); }
 .row input[type="range"] { padding: 0; height: 20px; accent-color: var(--accent); background: none; }
+/* Vector rows (panel.js _vec3): the label on its own line, X · Y · Z side by side, axis letters in Blender's red / green / blue */
+.vec3 { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 4px; }
+.vec3-head { display: flex; align-items: center; justify-content: space-between; min-height: 22px; }
+.vec3-label { color: var(--dim); }
+.vec3-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.vec3-cell { position: relative; display: flex; align-items: center; min-width: 0; border-radius: 7px; background: var(--field); }
+.vec3-cell:hover { background: var(--field-hover); }
+.vec3-ax { flex: none; width: 18px; padding-left: 7px; font-size: 10.5px; font-weight: 700; }
+.vec3-cell.ax-x .vec3-ax { color: #ff5c6c; }
+.vec3-cell.ax-y .vec3-ax { color: #34c99a; }
+.vec3-cell.ax-z .vec3-ax { color: #5aa9ff; }
+.vec3-cell input { flex: 1; min-width: 0; width: 100%; padding: 5px 6px 5px 3px; background: none; border: 1px solid transparent; border-radius: 7px; font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; cursor: ew-resize; }
+.vec3-cell input::-webkit-outer-spin-button, .vec3-cell input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.vec3-cell input:focus { cursor: text; }
+.vec3-cell input:focus-visible { outline: none; }   /* the cell draws the ring */
+.vec3-cell:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+.vec3-cell input.scrubbing { background: var(--accent-soft); box-shadow: inset 0 -2px 0 var(--accent); }
+.vec3-lock { display: grid; place-items: center; width: 24px; height: 22px; padding: 0; background: none; color: var(--dim); border-radius: 6px; }
+.vec3-lock svg { width: 14px; height: 14px; }
+.vec3-lock:hover { background: var(--field-hover); color: var(--text); }
+.vec3-lock.on { color: var(--accent); background: var(--accent-soft); }
 .row .val { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .btn-group { display: flex; gap: 4px; }
 .btn-group button { padding: 5px 2px; font-size: 11px; border-radius: 7px; flex: 1; min-width: 0; }

@@ -129,7 +129,7 @@ test('main.js: window.__proto exposes every member the host uses', () => {
   has('src/main.js', 'wiring: { isOn: isWiringOn, set: setWiring, toggle: toggleWiring }', 'window.__proto.wiring shape (host.ui.wiring)');
   assert.ok(/[\s{,]plan: \{ isOn: isPlanOn, set: setPlanView,/.test(block), seam('window.__proto.plan.{isOn,set} (host.ui.plan)'));
   matches('src/core/commands.js', /export function transform\(world, nodes, before, after(, routes = null)?\)/, 'cmd.transform(world, nodes, before, after[, routes]) (host.layout.apply)');
-  has('src/core/commands.js', 'export const snapshot = (n) => ({ p: n.position.toArray(), r: n.rotation.y, s: n.scale.x });', 'cmd.snapshot shape');
+  has('src/core/commands.js', 'export const snapshot = (n) => ({ p: n.position.toArray(), r: [n.rotation.x, n.rotation.y, n.rotation.z], s: n.scale.toArray() });', 'cmd.snapshot shape');
   matches('src/core/commands.js', /export function setParam\(world, node, key, value\)/, 'cmd.setParam');
   matches('src/core/history.js', /\n  execute\(cmd\) \{/, 'history.execute(cmd)');
   matches('src/core/world.js', /nodeByUid\(uid\)/, 'world.nodeByUid');

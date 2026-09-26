@@ -784,6 +784,12 @@ their content adapts: the rail shows icons only, icons over labels or icons besi
 widens, the Add list goes to two or three columns, the panel's label column grows with it. A small
 window squeezes the regions before the viewport drops under 320 px.
 
+**Transform** in the properties panel reads like Blender's: *Position*, *Rotation °* and *Scale*
+each on one line with **X · Y · Z** side by side (axis letters in red / green / blue, every field
+scrubbable). The **padlock** next to Scale links the axes (on by default): changing one scales the
+others by the same factor, and the gizmo's scale handles follow it; unlocked, each axis scales on
+its own. Rotation and scale are kept on all three axes in documents, undo and duplicates.
+
 **Dates** are picked in one themed **date picker** (`ui/date-picker.js`) everywhere a date is
 edited — the panel, a face field, Home's tables, the project dialog: a month grid (today ringed,
 weekends tinted), a month / year chooser behind the title, quick picks (*Today · Tomorrow · Next

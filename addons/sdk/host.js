@@ -315,7 +315,7 @@ export function createHost(proto, manifest, core) {
         if (!n || !pos) continue;
         const { x, y, z } = readPosition(pos);
         if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
-        nodes.push(n); after.push({ p: [x, Number.isFinite(y) ? y : n.position.y, z], r: n.rotation.y, s: n.scale.x });
+        nodes.push(n); after.push({ ...p.cmd.snapshot(n), p: [x, Number.isFinite(y) ? y : n.position.y, z] });   // rotation and scale as they are (every axis)
       }
       if (!nodes.length) return 0;
       const before = nodes.map((n) => p.cmd.snapshot(n));

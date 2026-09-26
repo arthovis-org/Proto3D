@@ -34,7 +34,7 @@ import * as THREE from 'three';
 import {
   palette, states, categories, sizes, materials, makeLabel, refreshLabel, setLabelText, makeShadowBlob, onThemeChange, portColorFor,
 } from './theme.js';
-import { panelGeometry } from './geometry.js';
+import { panelGeometry, roundedRectShape } from './geometry.js';
 import { portsVisibleFor, onWiringChange } from './wiring.js';
 import { isPlanOn, onPlanChange } from './plan.js';
 import { defaultParams, clone } from './core/component.js';
@@ -42,7 +42,32 @@ import { formatValue } from './core/types.js';
 import { clear as clearFace, roundRect } from './faces.js';
 import { createSurface, baseFaceScale, fitTier } from './face-canvas.js';
 
-const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _rx = new THREE.Matrix4().makeRotationX(-Math.PI / 2), _qId = new THREE.Quaternion();
+const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _rx = new THREE.Matrix4().makeRotationX(-Math.PI / 2), _qId = new THREE.Quaternion(), _sPlan = new THREE.Vector3();
+/**
+ * A block's rotation and scale in a document. `rotationY` and `scale` (the x factor) are always
+ * written, so an older reader still gets the turn and a uniform size; `rotationX` / `rotationZ`,
+ * `scaleY` / `scaleZ` only when they differ from 0 / the x factor, and `scaleLock: false` when the
+ * axes are unlinked.
+ */
+export function serializeTransform(b) {
+  const r = b.rotation, s = b.scale, o = { rotationY: +r.y.toFixed(4), scale: +s.x.toFixed(3) };
+  if (Math.abs(r.x) > 1e-4) o.rotationX = +r.x.toFixed(4);
+  if (Math.abs(r.z) > 1e-4) o.rotationZ = +r.z.toFixed(4);
+  if (Math.abs(s.y - s.x) > 1e-4) o.scaleY = +s.y.toFixed(3);
+  if (Math.abs(s.z - s.x) > 1e-4) o.scaleZ = +s.z.toFixed(3);
+  if (b.scaleLock === false) o.scaleLock = false;
+  return o;
+}
+/** Read `serializeTransform`'s fields (and the older rotationY / scale-only shape) onto a block. */
+export function applyTransformDoc(b, n) {
+  const f = (v, d) => (Number.isFinite(+v) ? +v : d);
+  const s = f(n.scale, 1);
+  b.rotation.set(f(n.rotationX, 0), f(n.rotationY, 0), f(n.rotationZ, 0));
+  b.scale.set(s, f(n.scaleY, s), f(n.scaleZ, s));
+  b.scaleLock = n.scaleLock !== false;
+}
+/** Scale factors a block may take on each axis (the gizmo and the panel clamp to these). */
+export const SCALE_MIN = 0.2, SCALE_MAX = 4;
 let nextUid = 1;
 export const genUid = () => `b${(nextUid++).toString(36)}${Date.now().toString(36).slice(-3)}`;
 /** Keep uids unique after a load. */
@@ -61,15 +86,72 @@ function makePinGeometry() {
   return g;
 }
 const pinGeo = makePinGeometry();
-const SLOT = sizes.port.slot;
-const fillGeo = new THREE.BoxGeometry(SLOT.fillW, SLOT.fillH, SLOT.d + 0.02);
-/** Multi-input rectangle for `n` slots (height = pad + slot height × n); `margin` grows it for the outline shell. */
-export function makeSlotGeometry(n, margin = 0) {
-  const h = SLOT.pad + SLOT.h * Math.max(1, n);
-  const g = panelGeometry(SLOT.w + margin, h + margin, SLOT.d + margin, { radius: SLOT.radius + margin / 2, bevel: 0.012, curveSegments: 6 });
-  g.type = 'SlotGeometry'; g.userData.slots = Math.max(1, n); g.userData.height = h;
+/*
+ * Outlines of the flat pins (event chevrons, multi-input slots) are **frames**: a band of constant
+ * width wrapped around the pin's edge, as deep as the pin, with the pin's own silhouette as its hole.
+ * The pin sits in it like a socket in a bezel, so the rim is equally wide on every side and its
+ * lines follow the pin's from any angle. (A larger copy of the pin drawn from behind — the inverted
+ * hull the spheres use — shows its back and side walls unevenly when seen at an angle, and scaling it
+ * up made the rim thicker along the long side.) Frames are shared and cached per size: never dispose one.
+ */
+const PIN_PTS = (() => { const { w, h } = sizes.port.pin; return [[-w / 2, -h / 2], [w * 0.08, -h / 2], [w / 2, 0], [w * 0.08, h / 2], [-w / 2, h / 2]]; })();   // counter-clockwise, as makePinGeometry draws it
+/** A convex counter-clockwise polygon with every edge pushed out by `m` (corners mitred). */
+export function offsetPolygon(P, m) {
+  const n = P.length, lines = P.map((p, i) => {
+    const q = P[(i + 1) % n], dx = q[0] - p[0], dy = q[1] - p[1], L = Math.hypot(dx, dy);
+    return { x: p[0] + (dy / L) * m, y: p[1] + (-dx / L) * m, dx, dy };   // (dy, −dx) / L is the outward normal of a CCW edge
+  });
+  return lines.map((b, i) => {   // vertex i = where offset edge i−1 meets offset edge i
+    const a = lines[(i + n - 1) % n];
+    const t = ((b.x - a.x) * b.dy - (b.y - a.y) * b.dx) / (a.dx * b.dy - a.dy * b.dx);
+    return [a.x + a.dx * t, a.y + a.dy * t];
+  });
+}
+const polyShape = (pts, S = THREE.Shape) => { const s = new S(); pts.forEach(([x, y], i) => (i ? s.lineTo(x, y) : s.moveTo(x, y))); s.closePath(); return s; };
+/** Extrude `outer` with `hole` cut out, `depth` deep, centred on z = 0. */
+function frameGeometry(outer, hole, depth, curveSegments = 10) {
+  outer.holes.push(hole);
+  const g = new THREE.ExtrudeGeometry(outer, { depth, bevelEnabled: false, curveSegments });
+  g.translate(0, 0, -depth / 2);
+  g.computeVertexNormals();
+  g.userData.shared = true;
   return g;
 }
+const FRAME_DEPTH = 0.006;   // the frame stands this much proud of the pin, front and back, so no seam shows
+const pinOutlines = new Map();
+/** The frame around an event pin, `m` wide. */
+export function pinOutlineGeometry(m) {
+  const key = m.toFixed(4);
+  if (!pinOutlines.has(key)) pinOutlines.set(key, frameGeometry(polyShape(offsetPolygon(PIN_PTS, m)), polyShape(PIN_PTS, THREE.Path), sizes.port.pin.d + FRAME_DEPTH));
+  return pinOutlines.get(key);
+}
+const SLOT = sizes.port.slot;
+const fillGeo = new THREE.BoxGeometry(SLOT.fillW, SLOT.fillH, SLOT.d + 0.02);
+/** Multi-input rectangle for `n` slots (height = pad + slot height × n). Shared and cached per size: never dispose one. */
+const slotGeos = new Map();
+export function makeSlotGeometry(n) {
+  n = Math.max(1, n);
+  if (slotGeos.has(n)) return slotGeos.get(n);
+  const h = SLOT.pad + SLOT.h * n;
+  const g = panelGeometry(SLOT.w, h, SLOT.d, { radius: SLOT.radius, bevel: 0.012, curveSegments: 6 });
+  g.type = 'SlotGeometry'; g.userData.slots = n; g.userData.height = h; g.userData.shared = true;
+  slotGeos.set(n, g);
+  return g;
+}
+const slotFrames = new Map();
+/** The frame around an `n`-slot rectangle, `margin` wider and taller in total (margin / 2 on each side). */
+export function slotOutlineGeometry(n, margin) {
+  n = Math.max(1, n);
+  const key = `${n}|${margin.toFixed(4)}`;
+  if (!slotFrames.has(key)) {
+    const h = SLOT.pad + SLOT.h * n;
+    slotFrames.set(key, frameGeometry(roundedRectShape(SLOT.w + margin, h + margin, SLOT.radius + margin / 2), roundedRectShape(SLOT.w, h, SLOT.radius), SLOT.d + FRAME_DEPTH));
+  }
+  return slotFrames.get(key);
+}
+/** Outline widths per state: slot frames grow by a total margin (units); chevron frames are this wide on each side. Spheres keep scaling (a sphere's rim stays even). */
+const SLOT_RIM = { base: SLOT.margin, hover: SLOT.margin * 1.6, glow: SLOT.margin * 1.4, reject: SLOT.margin * 2.2 };
+const PIN_RIM = { base: 0.028, hover: 0.028, glow: 0.04, reject: 0.065 };
 let portSeq = 1;
 /** 'chevron' for events, 'slot' for multi inputs (a rectangle with one slot per cable), 'sphere' for every other value. */
 export const portShapeFor = (type, multi = false, dir = 'in') => (type === 'event' ? 'chevron' : multi && dir === 'in' ? 'slot' : 'sphere');
@@ -155,11 +237,22 @@ export function createPort(owner, { key, label, type = 'any', subtype = null, lo
   const geo = shape === 'chevron' ? pinGeo : shape === 'slot' ? makeSlotGeometry(1) : ballGeo;
   const mesh = new THREE.Mesh(geo, materials.port(type, color0));
   mesh.position.x = sign * sizes.port.stem;
-  const shell = new THREE.Mesh(shape === 'slot' ? makeSlotGeometry(1, SLOT.margin) : geo, materials.portShell(type, color0));
+  const shell = new THREE.Mesh(shape === 'slot' ? slotOutlineGeometry(1, SLOT_RIM.base) : shape === 'chevron' ? pinOutlineGeometry(PIN_RIM.base) : geo, materials.portShell(type, color0));
+  if (shape !== 'sphere') { shell.material.side = THREE.FrontSide; shell.material.needsUpdate = true; }   // a frame is a solid band around the pin (see frameGeometry); spheres keep the back-face hull
   shell.position.copy(mesh.position);
   shell.renderOrder = 1;
   group.add(stem, mesh, shell);
   const baseScale = (multi && shape !== 'slot' ? 1.15 : 1) * (optional ? sizes.port.optionalScale : 1);
+  /**
+   * Size the outline shell for a state ('base' | 'hover' | 'glow' | 'reject'). Slots and chevrons swap
+   * to a shell grown by a constant width (an even rim on every side and in depth); spheres scale.
+   * `s` is the pin's own scale (the shell follows it).
+   */
+  const shellLevel = (level, s = 1) => {
+    if (shape === 'slot') { shell.geometry = slotOutlineGeometry(port.slots, SLOT_RIM[level]); shell.scale.setScalar(1); return; }
+    if (shape === 'chevron') { shell.geometry = pinOutlineGeometry(PIN_RIM[level]); shell.scale.setScalar(s); return; }
+    shell.scale.setScalar(level === 'glow' ? port.baseScale * (sizes.port.shellScale + 0.1) : level === 'reject' ? port.baseScale * (sizes.port.shellScale + 0.3) : s * sizes.port.shellScale);
+  };
   const port = {
     kind: 'port',
     id: portSeq++, owner, key, label: label || key, name: label || key, type, subtype, loose, dir, multi, optional, shape, group, mesh, shell, stem,
@@ -210,8 +303,8 @@ export function createPort(owner, { key, label, type = 'any', subtype = null, lo
       if (port.emphasis !== 'glow') return;
       const k = 0.5 + 0.5 * Math.sin(t * 6 + port.pulsePhase);
       shell.material.opacity = 0.45 + 0.5 * k;
-      if (shape === 'slot') shell.scale.setScalar(1 + 0.1 * k);
-      else shell.scale.setScalar(port.baseScale * (sizes.port.shellScale + 0.22 * k));
+      // spheres breathe in size; slots and chevrons keep their even rim and breathe in opacity only
+      if (shape === 'sphere') shell.scale.setScalar(port.baseScale * (sizes.port.shellScale + 0.22 * k));
       mesh.material.emissiveIntensity = 0.7 + 0.6 * k;
     },
     /**
@@ -226,10 +319,7 @@ export function createPort(owner, { key, label, type = 'any', subtype = null, lo
       const slots = Math.max(1, port.links + spare);
       if (slots !== port.slots) {
         port.slots = slots;
-        if (shape === 'slot') {
-          mesh.geometry.dispose(); mesh.geometry = makeSlotGeometry(slots);
-          shell.geometry.dispose(); shell.geometry = makeSlotGeometry(slots, SLOT.margin);
-        }
+        if (shape === 'slot') { mesh.geometry = makeSlotGeometry(slots); shell.geometry = slotOutlineGeometry(slots, SLOT_RIM.base); }   // shared, cached geometries: never disposed
         const cy = -(slots - 1) * SLOT.h / 2;
         mesh.position.y = cy; shell.position.y = cy; stem.position.y = cy;
       }
@@ -253,7 +343,7 @@ export function createPort(owner, { key, label, type = 'any', subtype = null, lo
       if (shape === 'slot') { port._applySlotLook(); return; }
       const s = port.baseScale * (port.hovered ? sizes.port.hoverScale : 1);
       mesh.scale.setScalar(s);
-      shell.scale.setScalar(s * sizes.port.shellScale);
+      shellLevel('base', s);
       m.opacity = 1; sm.opacity = 0.95;
       stem.material.opacity = 1;
       const fills = port.fills;
@@ -277,7 +367,7 @@ export function createPort(owner, { key, label, type = 'any', subtype = null, lo
         case 'glow':
           shell.visible = true; sm.color.setHex(c); sm.opacity = 0.7;
           m.color.setHex(c); m.emissive.setHex(c); m.emissiveIntensity = 0.9;
-          shell.scale.setScalar(port.baseScale * (sizes.port.shellScale + 0.1));
+          shellLevel('glow', s);
           break;
         case 'dim':
           m.opacity = 0.35; sm.opacity = 0.3; stem.material.opacity = 0.5;
@@ -285,7 +375,7 @@ export function createPort(owner, { key, label, type = 'any', subtype = null, lo
           break;
         case 'reject':
           shell.visible = true; sm.color.setHex(states.error); sm.opacity = 1;
-          shell.scale.setScalar(port.baseScale * (sizes.port.shellScale + 0.3));
+          shellLevel('reject', s);
           m.color.setHex(states.error); m.emissive.setHex(states.error); m.emissiveIntensity = 0.8;
           break;
         default: break;
@@ -296,7 +386,7 @@ export function createPort(owner, { key, label, type = 'any', subtype = null, lo
       const c = port.color;
       const m = mesh.material, sm = shell.material;
       mesh.scale.setScalar(1);
-      shell.scale.setScalar(port.hovered ? SLOT.hoverScale : 1);
+      shellLevel(port.emphasis === 'reject' ? 'reject' : port.hovered ? 'hover' : port.emphasis === 'glow' ? 'glow' : 'base');
       m.opacity = 1; stem.material.opacity = 1;
       if (port.disabled) {
         m.color.setHex(states.disabled); m.emissive.setHex(states.disabled); m.emissiveIntensity = 0.05;
@@ -312,7 +402,7 @@ export function createPort(owner, { key, label, type = 'any', subtype = null, lo
       switch (port.emphasis) {
         case 'glow': sm.opacity = 0.7; m.emissive.setHex(c); m.emissiveIntensity = 0.5; break;
         case 'dim': m.opacity = 0.35; sm.opacity = 0.3; stem.material.opacity = 0.5; port.fills.forEach((f) => { f.material.opacity = 0.35; }); break;
-        case 'reject': sm.color.setHex(states.error); sm.opacity = 1; shell.scale.setScalar(1.15); m.emissive.setHex(states.error); m.emissiveIntensity = 0.6; break;
+        case 'reject': sm.color.setHex(states.error); sm.opacity = 1; m.emissive.setHex(states.error); m.emissiveIntensity = 0.6; break;
         default: break;
       }
     },
@@ -371,6 +461,7 @@ export class Block3D extends THREE.Group {
     this.showPorts = o.showPorts === true || o.showPorts === false ? o.showPorts : null;   // per-component override of the global wiring flag
     this.wiringLabels = new Set();   // port names: hidden with the ports
     this.planFlat = isPlanOn();      // lying flat for the 2D editing mode (plan.js)
+    this.scaleLock = true;           // the panel's lock: scale axes move together (serializeTransform)
     this._offTheme = onThemeChange(() => this.refreshTheme());
     this._offWiring = onWiringChange(() => this.applyWiring());
     this._offPlan = onPlanChange(() => this.applyPlan());
@@ -394,7 +485,8 @@ export class Block3D extends THREE.Group {
    */
   updateMatrix() {
     if (this.planFlat && Number.isFinite(this.depth)) {
-      this.matrix.compose(this.position, _qId, this.scale);
+      // the scale is applied after the card is laid flat, so its local y (the card's height) now runs along world z: swap y / z
+      this.matrix.compose(this.position, _qId, _sPlan.set(this.scale.x, this.scale.z, this.scale.y));
       const P = this.planPivot();
       _m1.makeTranslation(0, P.lift, 0).multiply(_rx).multiply(_m2.makeTranslation(-P.x, -P.y, -P.z));
       this.matrix.multiply(_m1);
@@ -715,22 +807,22 @@ export class Block3D extends THREE.Group {
   }
   /** World-space AABB used by connection routing (rotation ignored on purpose: cheap and stable). Flat in the plan: the card's height runs along z. */
   getAABB(box = new THREE.Box3()) {
-    const s = this.scale.x || 1;
-    const hw = this.width / 2 * s, hh = this.height / 2 * s, hd = Math.max(this.depth / 2, 0.4) * s;
+    const sx = this.scale.x || 1, sy = this.scale.y || 1, sz = this.scale.z || 1;
+    const hw = this.width / 2 * sx, hh = this.height / 2 * sy, hd = Math.max(this.depth / 2, 0.4) * sz;
     if (this.planFlat) {
       const P = this.planPivot();
-      const cy = this.position.y + (P.lift - P.z) * s;   // the body's centre plane after the rotation
+      const cy = this.position.y + (P.lift - P.z) * sz;   // the body's centre plane after the rotation (depth is scaled by z, see updateMatrix)
       box.min.set(this.position.x - hw, cy - hd, this.position.z - hh);
       box.max.set(this.position.x + hw, cy + hd, this.position.z + hh);
       return box;
     }
-    const cy = this.position.y + (this.kind === 'device' ? hh : 0) + (this.bodyOffsetY || 0) * s;
+    const cy = this.position.y + (this.kind === 'device' ? hh : 0) + (this.bodyOffsetY || 0) * sy;
     box.min.set(this.position.x - hw, cy - hh, this.position.z - hd);
     box.max.set(this.position.x + hw, cy + hh, this.position.z + hd);
     return box;
   }
   /** Ground-plane footprint (w × d) for group frames, ghosts and free-slot search; the flat card in the plan. */
-  footprint() { const s = this.scale.x || 1; return { w: this.width * s, d: this.planFlat ? this.height * s : Math.max(this.depth, this.kind === 'device' ? 2.6 : 0.5) * s }; }
+  footprint() { const S = this.scale; return { w: this.width * (S.x || 1), d: this.planFlat ? this.height * (S.y || 1) : Math.max(this.depth, this.kind === 'device' ? 2.6 : 0.5) * (S.z || 1) }; }
 
   serialize() {
     let state = {};
@@ -739,7 +831,7 @@ export class Block3D extends THREE.Group {
       uid: this.uid, type: this.typeId, title: this.title, params: clone(this.params), state, enabled: this.enabled,
       ...(this.showPorts === null ? {} : { showPorts: this.showPorts }),
       position: [+this.position.x.toFixed(3), +this.position.y.toFixed(3), +this.position.z.toFixed(3)],
-      rotationY: +this.rotation.y.toFixed(4), scale: +this.scale.x.toFixed(3),
+      ...serializeTransform(this),
     };
   }
 
@@ -750,7 +842,7 @@ export class Block3D extends THREE.Group {
     this.def.onDestroy?.(this);
     this.traverse((obj) => {
       if (obj === this) return;
-      if (obj.geometry === pinGeo || obj.geometry === ballGeo || obj.geometry === stemGeo || obj.geometry === fillGeo) { obj.material?.dispose?.(); return; }  // shared geometries
+      if (obj.geometry === pinGeo || obj.geometry === ballGeo || obj.geometry === stemGeo || obj.geometry === fillGeo || obj.geometry?.userData?.shared) { obj.material?.dispose?.(); return; }  // shared geometries
       obj.geometry?.dispose?.();
       if (obj.material) {
         obj.material.map?.dispose?.();

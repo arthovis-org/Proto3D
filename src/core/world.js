@@ -130,7 +130,7 @@ export class World {
   /** Cheap per-frame move detection: bumps layoutVersion when any node moved. */
   detectMoves() {
     let h = 0;
-    for (const n of this.nodes) h += n.position.x * 1.31 + n.position.y * 7.17 + n.position.z * 13.3 + n.scale.x * 0.7 + n.rotation.y * 3.1 + (n.visible ? 0 : 99);
+    for (const n of this.nodes) h += n.position.x * 1.31 + n.position.y * 7.17 + n.position.z * 13.3 + n.scale.x * 0.7 + n.scale.y * 0.53 + n.scale.z * 0.41 + n.rotation.y * 3.1 + n.rotation.x * 2.3 + n.rotation.z * 1.9 + (n.visible ? 0 : 99);
     if (Math.abs(h - this._posHash) > 1e-6) { this._posHash = h; this.bumpLayout(); return true; }
     return false;
   }

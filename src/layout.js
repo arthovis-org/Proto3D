@@ -19,7 +19,7 @@
 export const LAYOUT = { gapX: 4, gapZ: 2.2, groupPad: 1.6, gridGap: 2.4, animate: 0.25 };
 
 /** A block's footprint for the layout: the card seen from above (width × height). */
-export function layoutSize(n) { const s = n.scale.x || 1; return { w: n.width * s, d: n.height * s }; }
+export function layoutSize(n) { return { w: n.width * (n.scale.x || 1), d: n.height * (n.scale.y || 1) }; }
 
 /* ---------- the layered algorithm on abstract items ---------- */
 /**

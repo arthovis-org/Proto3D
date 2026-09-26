@@ -87,6 +87,8 @@ export const icons = {
   settings: svg('<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'),
   chevronLeft: svg('<path d="M15 6l-6 6 6 6"/>'),
   chevronDown: svg('<path d="M6 9l6 6 6-6"/>'),
+  lock: svg('<rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8 10.5V7.5a4 4 0 018 0v3"/>'),
+  unlock: svg('<rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8 10.5V7.5a4 4 0 017.6-1.7"/>'),
   chevron: svg('<path d="M9 6l6 6-6 6"/>'),
   help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 015 0c0 1.8-2.5 2-2.5 4M12 17.5v.01"/>'),
   menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),

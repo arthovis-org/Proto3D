@@ -144,7 +144,7 @@ export function summarizeDiff(prev, next) {
     if ((o.title || '') !== (n.title || '')) out.renamed++;
     if (JSON.stringify(o.params || {}) !== JSON.stringify(n.params || {}) || JSON.stringify(o.state ?? null) !== JSON.stringify(n.state ?? null) || !!o.enabled !== !!n.enabled) out.params++;
     const p = o.position || [], q = n.position || [];
-    if (p.some((v, i) => Math.abs(v - (q[i] ?? 0)) > 0.01) || Math.abs((o.rotationY || 0) - (n.rotationY || 0)) > 1e-3 || Math.abs((o.scale || 1) - (n.scale || 1)) > 1e-3) out.moved++;
+    if (p.some((v, i) => Math.abs(v - (q[i] ?? 0)) > 0.01) || Math.abs((o.rotationY || 0) - (n.rotationY || 0)) > 1e-3 || Math.abs((o.scale || 1) - (n.scale || 1)) > 1e-3 || ['rotationX', 'rotationZ', 'scaleY', 'scaleZ'].some((k) => Math.abs((o[k] ?? 0) - (n[k] ?? 0)) > 1e-3)) out.moved++;
   }
   for (const uid of a.keys()) if (!b.has(uid)) out.removed++;
   const ca = new Set((prev?.connections || []).map(connKey)), cb = new Set((next?.connections || []).map(connKey));
