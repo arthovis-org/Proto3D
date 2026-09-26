@@ -22,7 +22,7 @@
 // pose is restored when edit mode ends, unless the camera was moved meanwhile (`glideSetting`,
 // View → Glide to text when editing, persisted). Kinds: text and multiline are a textarea that
 // grows with its content, number nudges with the arrow keys, select is a themed list under the
-// field (flat, it is a menu), date a date input; a checkbox toggles at once and an action runs its
+// field (flat, it is a menu), date a date input with the themed month picker under it (ui/date-picker.js); a checkbox toggles at once and an action runs its
 // handler (the model chip opens the model browser). Enter commits (Shift+Enter is a newline in
 // multiline), Esc cancels, blur commits. A commit goes through the param command (undoable, the
 // panel follows) and the face redraws; while the editor is open the block leaves that text out
@@ -31,6 +31,7 @@ import * as THREE from 'three';
 import * as cmd from '../core/commands.js';
 import { palette, typography, sizes, onThemeChange } from '../theme.js';
 import { attachScrub } from './scrub.js';
+import { openDatePicker } from './date-picker.js';
 
 const PAD = 0.35;                                  // editor padding as a fraction of the font size (face px), drawn outward from the field rect
 const LABEL_PX = 92;                               // face px per unit of a 3D label's `size` (theme.js makeLabel: 96 px glyphs on a 1.3 line)
@@ -244,6 +245,7 @@ export class FieldEditor {
       const v = cur.input.value || '';
       if (kind === 'multiline' || v.length > 40 || v.includes('\n')) { try { cur.input.setSelectionRange(v.length, v.length); } catch (_) { /* date inputs */ } }   // prose: the caret at the end, ready to continue
       else if (kind !== 'date') cur.input.select();                                                                                                            // a short value: retype it
+      if (kind === 'date') requestAnimationFrame(() => { if (this.cur === cur) openDatePicker(cur.input); });   // the themed month grid opens with it (ui/date-picker.js); typing still works
     }
     return true;
   }

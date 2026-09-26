@@ -13,6 +13,7 @@
 //   narrow: below `collapseBelow` px the titles fold into one ☰ button whose menu lists them as submenus
 //   tools:  an optional element (icon toggles) appended at the right end of the bar, after a flexible gap
 import { icons } from '../icons.js';
+import { uiScale, uiPrefs } from './ui-prefs.js';
 
 const OPEN_DELAY = 90;   // ms before a hovered item opens its submenu
 
@@ -28,6 +29,7 @@ export class MenuBar {
     window.addEventListener('keydown', (e) => this._onKey(e), true);
     window.addEventListener('blur', () => this.close());
     window.addEventListener('resize', () => { if (this.isOpen) this.close(); this._syncCollapse(); });
+    uiPrefs.onChange(() => { if (this.isOpen) this.close(); this._syncCollapse(); });
     this._syncCollapse();
   }
 
@@ -54,7 +56,7 @@ export class MenuBar {
     const grow = document.createElement('span'); grow.className = 'mnu-grow'; this.el.appendChild(grow);
     if (this.tools) this.el.appendChild(this.tools);
   }
-  _syncCollapse() { this.el.classList.toggle('collapsed', window.innerWidth < this.collapseBelow); }
+  _syncCollapse() { this.el.classList.toggle('collapsed', window.innerWidth / uiScale() < this.collapseBelow); }
   get isOpen() { return this.openId !== null; }
   get collapsed() { return this.el.classList.contains('collapsed'); }
 
@@ -66,12 +68,14 @@ export class MenuBar {
     this._closeLevels(0);
     this.openId = id;
     for (const [k, b] of this.titles) { const on = k === id; b.classList.toggle('on', on); b.setAttribute('aria-expanded', String(on)); }
-    const anchor = this.titles.get(id).getBoundingClientRect();
+    // menus are drawn at the UI scale (ui-prefs.js): place them in its units — screen px / scale
+    const s = uiScale(), W = window.innerWidth / s, H = window.innerHeight / s;
+    const a = this.titles.get(id).getBoundingClientRect(), anchor = { left: a.left / s, bottom: a.bottom / s };
     const el = this._menuEl(typeof items === 'function' ? items() : items, 0);
     document.body.appendChild(el);
-    el.style.left = `${Math.max(4, Math.min(anchor.left, window.innerWidth - el.offsetWidth - 4))}px`;
+    el.style.left = `${Math.max(4, Math.min(anchor.left, W - el.offsetWidth - 4))}px`;
     el.style.top = `${anchor.bottom + 2}px`;
-    el.style.maxHeight = `${window.innerHeight - anchor.bottom - 12}px`;
+    el.style.maxHeight = `${H - anchor.bottom - 12}px`;
     this.levels = [{ el, parent: null }];
     if (focusFirst) this._focusIndex(el, 0, 1); else el.focus({ preventScroll: true });
     this.onOpenChange(true);
@@ -133,12 +137,13 @@ export class MenuBar {
     const items = typeof it.items === 'function' ? it.items() : it.items;
     const el = this._menuEl(items, depth + 1);
     document.body.appendChild(el);
-    const r = button.getBoundingClientRect();
+    const s = uiScale(), W = window.innerWidth / s, H = window.innerHeight / s;
+    const b = button.getBoundingClientRect(), r = { left: b.left / s, right: b.right / s, top: b.top / s };
     let left = r.right - 2, top = r.top - 6;
-    if (left + el.offsetWidth > window.innerWidth - 4) left = Math.max(4, r.left - el.offsetWidth + 2);
-    const maxH = window.innerHeight - 8;
+    if (left + el.offsetWidth > W - 4) left = Math.max(4, r.left - el.offsetWidth + 2);
+    const maxH = H - 8;
     el.style.maxHeight = `${maxH}px`;
-    if (top + el.offsetHeight > window.innerHeight - 4) top = Math.max(4, window.innerHeight - el.offsetHeight - 4);
+    if (top + el.offsetHeight > H - 4) top = Math.max(4, H - el.offsetHeight - 4);
     el.style.left = `${left}px`; el.style.top = `${top}px`;
     button.classList.add('open'); button.setAttribute('aria-expanded', 'true');
     this.levels.push({ el, parent: button });

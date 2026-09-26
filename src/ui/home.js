@@ -21,6 +21,7 @@ import { fmtDate, PRIORITY_COLOURS, PRIORITIES, activity, loggedMinutes, estimat
 import { confirmDialog } from './confirm.js';
 import { CalendarView } from './calendar.js';
 import { timeAgo } from './tab-strip.js';
+import { uiScale } from './ui-prefs.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const VIEWS = [['projects', 'Projects'], ['tasks', 'Tasks'], ['calendar', 'Calendar']];
@@ -417,8 +418,8 @@ export class Home {
     m.innerHTML = [['open', icons.file, p.open ? 'Switch to tab' : 'Open'], ['edit', icons.edit, 'Edit…'], ['duplicate', icons.copy, 'Duplicate'], ['archive', icons.history, archived ? 'Unarchive' : 'Archive'], ['delete', icons.trash, 'Delete…', 'danger']]
       .map(([a, ic, l, cls]) => `<button type="button" role="menuitem" class="${cls || ''}" data-act="menu:${a}">${ic}<span>${l}</span></button>`).join('');
     this.el.appendChild(m);
-    const r = anchor.getBoundingClientRect(), host = this.el.getBoundingClientRect();
-    m.style.top = `${r.bottom - host.top + 4}px`; m.style.left = `${Math.min(r.right - host.left - m.offsetWidth, host.width - m.offsetWidth - 8)}px`;
+    const s = uiScale(), r = anchor.getBoundingClientRect(), host = this.el.getBoundingClientRect();   // Home is drawn at the UI scale: screen px / scale
+    m.style.top = `${(r.bottom - host.top) / s + 4}px`; m.style.left = `${Math.min((r.right - host.left) / s - m.offsetWidth, host.width / s - m.offsetWidth - 8)}px`;
     anchor.setAttribute('aria-expanded', 'true');
     this._menuEl = m; this._menuAnchor = anchor;
     m.querySelector('button')?.focus();

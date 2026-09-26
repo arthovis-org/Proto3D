@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import * as cmd from '../core/commands.js';
 import { icons } from '../icons.js';
 import { shortcutText } from './menubar.js';
+import { uiScale } from './ui-prefs.js';
 
 const _box = new THREE.Box3(), _tmp = new THREE.Box3(), _v = new THREE.Vector3();
 const GAP = 10;      // px between the selection box and the toolbar
@@ -165,7 +166,7 @@ export class MiniToolbar {
     const sig = this._signature(items);
     if (sig !== this.sig) { this.sig = sig; this._build(items); }
     if (this.el.hidden) { this.el.hidden = false; this.el.classList.remove('show'); this._pendingShow = 2; }
-    const w = this.el.offsetWidth, h = this.el.offsetHeight;
+    const s = uiScale(), w = this.el.offsetWidth * s, h = this.el.offsetHeight * s;   // drawn at the UI scale: its size on screen
     // above the selection, clamped; below it when there is no room above
     let x = Math.min(Math.max(rect.cx - w / 2, vp.left + MARGIN), vp.right - w - MARGIN);
     let y = rect.top - GAP - h;
@@ -181,7 +182,7 @@ export class MiniToolbar {
         else x = Math.max(vp.left + MARGIN, a.left - GAP - w);
       }
     }
-    this.el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    this.el.style.transform = `translate(${(x / s).toFixed(1)}px, ${(y / s).toFixed(1)}px)`;
     this.el.dataset.placement = this.flipped ? 'below' : 'above';
     if (this._pendingShow > 0 && --this._pendingShow === 0) this.el.classList.add('show');   // a frame later, so the fade runs
     this.visible = true;

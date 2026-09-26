@@ -12,6 +12,7 @@ import { icons } from './icons.js';
 import { nav } from './controls/navigation.js';
 import { attachScrub } from './ui/scrub.js';
 import { PRESET_IDS } from './controls/presets.js';
+import { UI_SCALES, fmtScale } from './ui/ui-prefs.js';
 
 const RAD = 180 / Math.PI;
 
@@ -178,6 +179,13 @@ export class Panel {
     this._header('workspace', 'Workspace', 'nothing selected');
     const s = this._section('Workspace');
     this._select(s, 'theme', ['dark', 'light'], () => getTheme(), (v) => setTheme(v));
+    if (this.ui) {
+      const P = this.ui.prefs;
+      const opts = [...new Set([...UI_SCALES, P.scale])].sort((a, b) => a - b);
+      const sel = this._select(s, 'UI scale', opts, () => P.scale, (v) => P.setScale(+v), 'uiScale');
+      sel.querySelectorAll('option').forEach((o) => { o.textContent = fmtScale(+o.value); });
+      this._action(s, 'Preferences…', () => this.ui.openPreferences());
+    }
     if (this.wiring) {
       this._check(s, 'wiring (P)', () => this.wiring.isOn(), (v) => this.wiring.set(v), 'wiring');
       s.appendChild(this._h('div', 'panel-note', 'Wiring off hides every port and cable. Drop a component onto another to link them; a block can still show its own ports (eye icon in its header).'));
@@ -236,6 +244,7 @@ export class Panel {
     if (single) {
       const b = nodes[0];
       this._num(t, 'rotation y°', () => b.rotation.y * RAD, (v) => { const before = [cmd.snapshot(b)]; b.rotation.y = v / RAD; this.history.executeCoalesced('rot', cmd.transform(this.world, [b], before, [cmd.snapshot(b)])); }, { step: 5 });
+      if (this.plan?.isOn() && Math.abs(b.rotation.y) > 1e-3) t.appendChild(this._h('div', 'panel-note', 'The 2D view lays every card square so it reads upright; this rotation shows in 3D.'));
       this._num(t, 'scale', () => b.scale.x, (v) => { const before = [cmd.snapshot(b)]; b.scale.setScalar(Math.min(Math.max(v, 0.2), 4)); this.history.executeCoalesced('scale', cmd.transform(this.world, [b], before, [cmd.snapshot(b)])); }, { step: 0.1, min: 0.2, max: 4 });
     }
     if (this.gizmo.enabled) this._buttons(t, 'gizmo', [['translate', 'Move', 'W'], ['rotate', 'Rotate', 'E'], ['scale', 'Scale', 'R']], () => this.gizmo.mode, (v) => this.gizmo.setMode(v));

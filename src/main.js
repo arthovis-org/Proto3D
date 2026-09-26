@@ -34,7 +34,9 @@ import { TabStrip, timeAgo } from './ui/tab-strip.js';
 import { VersionHistory } from './ui/version-history.js';
 import { confirmDialog, promptDialog, isDialogOpen } from './ui/confirm.js';
 import { MenuBar, shortcutText } from './ui/menubar.js';
-import { ShortcutsSheet, AboutDialog, REPO_URL } from './ui/help-dialogs.js';
+import { ShortcutsSheet, AboutDialog, PreferencesDialog, REPO_URL } from './ui/help-dialogs.js';
+import { uiPrefs, attachResizer, UI_SCALES, fmtScale as fmtUiScale } from './ui/ui-prefs.js';
+import { installDatePicker } from './ui/date-picker.js';
 import { StatsOverlay } from './ui/stats.js';
 import { MiniToolbar } from './ui/mini-toolbar.js';
 import { ViewportHeader } from './ui/viewport-header.js';
@@ -77,6 +79,7 @@ import { ModelBrowser } from './ui/model-browser.js';
 import { JobsTray } from './ui/jobs-tray.js';
 
 const $ = (id) => document.getElementById(id);
+installDatePicker();   // every date input (panel, Home, dialogs, face fields) opens the themed month picker
 const container = $('viewport');
 const ws = createWorkspace(container);
 const world = new World(ws.scene);
@@ -98,7 +101,7 @@ world.overlays = overlays;    // components may toast ("Assigned to Maya")
 const interaction = new Interaction({
   camera: ws.camera, renderer: ws.renderer, controls: ws.controls, world, selection, history, gizmo, createInstance, overlays, guides,
   onHoverConnection: (c) => { hoveredConnection = c; connLabel.hidden = !c; },
-  onFocus: (blocks) => ws.frameBlocks(blocks, { insetLeft: leftBar?.isOpen ? 300 : 0 }),
+  onFocus: (blocks) => ws.frameBlocks(blocks, { insetLeft: insetLeft() }),
   onFrameAll: () => frameAll(),
   onGizmoMode: (mode) => { if (!gizmo.enabled) setGizmo(true); gizmo.setMode(mode); syncToolbar(); },
   onTogglePanel: () => togglePanel(),
@@ -109,7 +112,7 @@ const fieldEditor = new FieldEditor({ ws, world, history, selection, interaction
 interaction.fieldEditor = fieldEditor;
 // the Navigator may swap the camera (orthographic view): everyone who holds a camera follows
 ws.onCameraSwap((cam) => { interaction.camera = cam; overlays.camera = cam; gizmo.control.camera = cam; });
-function frameAll(opts = {}) { return ws.frameBlocks([...world.nodes.filter((n) => n.visible), ...world.groups.filter((g) => g.collapsed)], { insetLeft: leftBar?.isOpen ? 300 : 0, ...opts }); }
+function frameAll(opts = {}) { return ws.frameBlocks([...world.nodes.filter((n) => n.visible), ...world.groups.filter((g) => g.collapsed)], { insetLeft: insetLeft(), ...opts }); }
 
 /* ---- Properties panel ---- */
 const panel = new Panel({
@@ -119,7 +122,11 @@ const panel = new Panel({
   plan: { isOn: isPlanOn, set: (v) => setPlanView(v), snap, setSnapOption: (k, v) => setSnapOption(k, v), toggleSnap: () => toggleSnap(), GRID_SIZES, SNAP_KINDS, ROTATION_STEPS, SCALE_STEPS, fmtDeg, fmtScale },
   cables: { cables, setOption: (k, v) => setCableOption(k, v), CABLE_STYLES, THICKNESSES },
   onGizmoToggle: () => syncToolbar(),
+  ui: { prefs: uiPrefs, openPreferences: () => preferences.open() },
 });
+// Blender-style region edges: the panel resizes from its left edge, the Help drawer at its foot from its top edge (ui/ui-prefs.js)
+attachResizer(document.body, { region: 'panel', edge: 'left', measure: () => $('panel').offsetWidth }).id = 'panel-rz';
+attachResizer($('help'), { region: 'help', edge: 'top', measure: () => $('help').offsetHeight });
 
 /* ---- Selection readout ---- */
 const selectionEl = $('selection');
@@ -145,7 +152,7 @@ const leftBar = new LeftToolbar({ el: $('left-bar'), ws, world, interaction, onA
 /* ---- Projects: tabs (tabs.js), autosave into IndexedDB, version history, save / open / import / export ---- */
 // the 2D editing mode is a view setting: a document written while it is on carries the remembered 3D camera
 const cameraPose = () => (isPlanOn() && ws.planSaved ? { position: ws.planSaved.position, target: ws.planSaved.target } : null);
-const insetLeft = () => (leftBar?.isOpen ? 300 : 0);
+const insetLeft = () => (leftBar?.isOpen ? uiPrefs.screenSize('fly') : 0);   // the open Add list covers this much of the viewport (screen px)
 const dateStamp = () => new Date().toISOString().slice(0, 10);
 const v3 = (a) => new THREE.Vector3().fromArray(a);
 const arr = (v) => v.toArray().map((x) => +x.toFixed(2));
@@ -482,7 +489,7 @@ world.onChange(() => { if (start.isOpen && world.nodes.length) start.hide('added
 /* ---- AI generation: Connections page, model browser, job tray; the components reach them through ui-hooks ---- */
 const connections = new Connections({ onChange: () => { syncToolbar(); panel.refresh(); } });
 const modelBrowser = new ModelBrowser();
-const jobsTray = new JobsTray({ el: $('jobs-tray'), onFocus: (uid) => { const n = world.nodeByUid(uid); if (n) { selection.set([n]); ws.frameBlocks([n], { fill: 0.6, insetLeft: leftBar?.isOpen ? 300 : 0 }); togglePanel(true); } } });
+const jobsTray = new JobsTray({ el: $('jobs-tray'), onFocus: (uid) => { const n = world.nodeByUid(uid); if (n) { selection.set([n]); ws.frameBlocks([n], { fill: 0.6, insetLeft: insetLeft() }); togglePanel(true); } } });
 setUIHooks({
   openConnections: (id) => { connections.open(id || null); return true; },
   openModelBrowser: (o) => { modelBrowser.open(o); return true; },
@@ -491,10 +498,11 @@ setUIHooks({
 });
 const shortcutsSheet = new ShortcutsSheet({ controls: ws.controls });
 const aboutDialog = new AboutDialog();
+const preferences = new PreferencesDialog({ prefs: uiPrefs, getTheme, setTheme: (v) => { setTheme(v); syncToolbar(); panel.refresh(); } });
 const versions = new VersionHistory({ tabs, toast: (t, ms) => overlays.toast(t, ms) });
 const stats = new StatsOverlay({ el: $('stats'), ws, world });
 let palette = null;   // the command palette, built after the menu bar (it reads the menu model)
-const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen || !!palette?.isOpen || isDialogOpen() || projectDialog.isOpen;
+const anyModalOpen = () => connections.isOpen || modelBrowser.isOpen || shortcutsSheet.isOpen || aboutDialog.isOpen || preferences.isOpen || !!palette?.isOpen || isDialogOpen() || projectDialog.isOpen;
 // with an OpenRouter key present, fetch its model list once so estimates and the panel price are live
 vault.ready.then(() => { if (providerStatus('openrouter') === 'connected') providerRegistry.get('openrouter').listModels({ key: vault.keyFor('openrouter'), proxy: vault.proxyFor('openrouter') }).then(() => panel.refresh()).catch(() => {}); });
 
@@ -676,6 +684,7 @@ function setGizmo(on) {
 function togglePanel(force) {
   const hide = force === undefined ? !document.body.classList.contains('panel-hidden') : !force;
   document.body.classList.toggle('panel-hidden', hide);
+  uiPrefs.apply();   // the rail may take back the room a shown panel needed
   syncToolbar();
   ws.resize();
 }
@@ -708,6 +717,7 @@ window.addEventListener('keydown', (e) => {
     else if (k === 'c' && !e.shiftKey && selectedNodes().length && !window.getSelection()?.toString()) { e.preventDefault(); copySelection(); }
     else if (k === 'x' && !e.shiftKey && selectedNodes().length) { e.preventDefault(); cutSelection(); }
     else if (k === 'b' && !e.shiftKey && selectedNodes().length) { e.preventDefault(); toggleBypass(); }
+    else if (e.key === ',' && !e.shiftKey) { e.preventDefault(); preferences.open(); }
     return;
   }
   if (e.shiftKey && e.key === '?') { e.preventDefault(); shortcutsSheet.toggle(); return; }
@@ -797,6 +807,8 @@ const menubar = new MenuBar({
       { label: 'Collapse / expand group', shortcut: 'C', disabled: !(selection.groups.length || selection.nodes.some((n) => n.group)), run: () => interaction.toggleCollapseSelection() },
       { sep: true },
       { label: fieldEditor.editBlock ? 'Done editing' : 'Edit content', shortcut: fieldEditor.editBlock ? 'Esc' : 'Enter', hint: fieldEditor.editBlock ? `leave edit mode on ${fieldEditor.editBlock.title}` : 'edit the text on the selected block where it is drawn · double-click does too', disabled: !fieldEditor.editBlock && !(selection.nodes.length === 1 && fieldEditor.editable(selection.nodes[0])), run: () => fieldEditor.toggleEdit(fieldEditor.editBlock || selection.nodes[0]) },
+      { sep: true },
+      { label: 'Preferences…', icon: icons.settings, shortcut: sc('Ctrl+,'), hint: `UI scale ${fmtUiScale(uiPrefs.scale)} · theme · toolbar sizes`, run: () => preferences.open() },
     ] },
     { id: 'view', label: 'View', items: () => [
       { label: 'Light theme', shortcut: 'T', checked: getTheme() === 'light', run: () => toggleTheme() },
@@ -854,6 +866,13 @@ const menubar = new MenuBar({
       { sep: true },
       { label: 'Properties panel', shortcut: 'N', checked: !document.body.classList.contains('panel-hidden'), run: () => togglePanel() },
       { label: 'Add toolbar', checked: !document.body.classList.contains('rail-hidden'), run: toggleRail },
+      { label: 'UI scale', hint: fmtUiScale(uiPrefs.scale), items: () => [
+        ...UI_SCALES.map((v) => ({ label: fmtUiScale(v), radio: true, checked: Math.abs(uiPrefs.scale - v) < 1e-6, run: () => uiPrefs.setScale(v) })),
+        ...(UI_SCALES.some((v) => Math.abs(uiPrefs.scale - v) < 1e-6) ? [] : [{ label: fmtUiScale(uiPrefs.scale), radio: true, checked: true, hint: 'set in Preferences', run: () => {} }]),
+        { sep: true },
+        { label: 'Reset toolbar and panel sizes', hint: 'drag their edges to resize · double-click an edge resets it', run: () => uiPrefs.resetLayout() },
+        { label: 'Preferences…', shortcut: sc('Ctrl+,'), run: () => preferences.open() },
+      ] },
       { label: 'Performance stats', shortcut: 'I', checked: stats.on, run: () => stats.toggle() },
       { sep: true },
       { label: 'Frame selection', shortcut: 'F', disabled: !selection.size, run: () => interaction.focusSelection() },
@@ -998,6 +1017,7 @@ frame();
 
 // Exposed for debugging / automated tests
 window.__proto = {
+  uiPrefs, preferences,
   ws, world, engine, history, selection, interaction, gizmo, panel, leftBar, menubar, miniBar, vpHeader, fieldEditor, glideSetting, palette, stats, chips, shortcutsSheet, aboutDialog, project, clipboard, registry, tabs, tabStrip, versions, projectStore, examples, templates, start, hintBar, navHint, THREE, overlays, tour, nav, icons, sizes, setTheme, getTheme,
   home, projectDialog, people, createProject, projectSettings, editTask, getTask, projectBoards,
   setGizmo, togglePanel, frameAll, loadExample, addComponent, createInstance, cmd, guides,

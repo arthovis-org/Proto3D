@@ -262,7 +262,7 @@ and milestones.
 | `milestone` | S · flag on a pole | — | `when reached` event · `milestone` milestone | date | Flag colour follows the state (ahead / soon / reached); `when reached` fires once when today ≥ date. Plug it into a board (header countdown, flags on late cards), a timeline (flag on the rail) or a dashboard. |
 | `sticky-note` | S · tilted square | `text` text | `text` text | text · colour · tilt | Paper-coloured slab with the note on its face. |
 | `checklist` | M · face | — | `progress` number · `when complete` event | items (panel) | Rows with checkboxes; click a row on the 3D face to toggle it (undoable); `when complete` fires when all are done. |
-| `calendar` | XL · face | `tasks` tasks\* · `milestones` milestone\* | `due today` tasks · `this week` tasks · `when a task is due` event · `selected day` tasks | view month / week · offset (months / weeks from now, editable on the face) · colour by priority / project / assignee · show weekends | A month or week grid: weekday header, day numbers, a ring on today, up to three chips per day (done muted, then "+n"), a flag on a milestone's day, and a **selected-day list** at the bottom — click a cell to pick the day. `when a task is due` pulses once per task on the day it comes due (a Flow Terminal or an Action can react); `due today` / `this week` feed a Display or a screen. Drop a board on it to feed it. |
+| `calendar` | XL · face | `tasks` tasks\* · `milestones` milestone\* | `due today` tasks · `this week` tasks · `when a task is due` event · `selected day` tasks | view day / week / month · offset (days / weeks / months from now) · colour by priority / project / assignee · show weekends | A **Day · Week · Month** switch and **‹ Today ›** in the face header; click the **title** to jump to any date with the date picker (switching views keeps the day in view). Month: day numbers, today as an accent disc, chips per day (done muted, then "+n more"), thin bars through the days a card with a start date spans, a flag on a milestone's day. Week: seven tall columns, spans as bars across the days they cover, two-line chips. Day: a strip of the week's days (dots for what is due) over the day's agenda — milestones, due, in progress and, on today, overdue. A **side column** lists the selected day (click a cell to pick it, click its number or *Open ›* to open it in Day view) or, in Day view, the next seven days. Hiding weekends gives five columns. `when a task is due` pulses once per task on the day it comes due (a Flow Terminal or an Action can react); `due today` / `this week` feed a Display or a screen. Drop a board on it to feed it. |
 | `project-dashboard` | L · face | `progress` stats · `tasks` tasks · `milestone` milestone · `people` person\* · `checklists` number\* | `progress` number | caption | Names the board it is plugged into; stat tiles (done %, overdue, blocked, days remaining), done ring, per-column bars (red over WIP), burndown line from the board's history, the milestone, a load bar per connected person and a progress bar per connected Checklist. |
 
 Port types in the table are the `data` **subtypes** where a port has one (`person`, `tasks`,
@@ -477,7 +477,7 @@ Everything else is the same in every preset:
 | File | menu bar **File** → New file (`Alt+N`, a new tab) · Open… (`Ctrl+O`) · Open recent (thumbnails, last opened) · Save (`Ctrl+S`, downloads JSON) · Save as… · Rename file… · Version history… · Close tab (`Alt+W`) · Import… (merge a JSON file) · Export (selection as JSON, screenshot PNG) · Examples · Connections…; autosave into the browser 1.5 s after every change |
 | Tabs | one tab per open project under the menu bar · click / `Ctrl+Tab` (`Alt+]` where the browser keeps it) switch · `+` new · drag to reorder · middle-click or × closes (a dirty tab asks Save / Discard / Cancel) · double-click renames · dot = unsaved changes · the indicator at the right end shows Saved · just now / Saving… / Unsaved changes and offers Save now, Download JSON, Version history |
 | Edit | menu bar **Edit** → Undo / Redo · Cut / Copy / Paste (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`, also between tabs) · Duplicate · Delete · Select all · Deselect · Auto-layout (`L`) · Group / Ungroup · Collapse |
-| View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · Cables ▸ (style, corner rounding, thickness, bundling, waypoints) · 2D editing mode (`2`) · Snap ▸ (`M`, grid size, objects, ports, rotation, scale) · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail |
+| View | menu bar **View** → theme (`T`) · grid · wiring (`P`) · ports on the selection · flow animation · Cables ▸ (style, corner rounding, thickness, bundling, waypoints) · 2D editing mode (`2`) · Snap ▸ (`M`, grid size, objects, ports, rotation, scale) · gizmo (`G`) and its mode · properties panel (`N`) · Add toolbar · UI scale ▸ (80–200 %, reset toolbar sizes) · performance stats (`I`) · frame selection / all · reset view · orthographic · navigation preset · level of detail · **Edit → Preferences…** (`Ctrl+,`) |
 | Help | menu bar **Help** → Start panel · tour · keyboard shortcuts (`Shift+?`) · help & legend (`H`) · documentation · About |
 
 Shortcuts are ignored while typing in a panel field.
@@ -533,8 +533,10 @@ member · viewer*), start and due dates — stored with the record and written i
   card's **activity** — created, moved, comments and time logs, a comment box (Ctrl+Enter) and a
   *Log time* row — and **New task** adds a card to any project's board and column. The task name
   opens the project and selects the card.
-- **Calendar** — **Month · Week · Agenda** over the same scope (*This project · All · Mine*),
-  with Today, ‹ ›, ← → and **T**. Cards with a due date are chips in their project's colour with
+- **Calendar** — **Day · Week · Month · Agenda** over the same scope (*This project · All · Mine*),
+  with Today, ‹ ›, ← → and **T**; the title opens the date picker to jump to any date, and
+  switching views keeps the day in view. Day shows the week as a strip of days (click one to go
+  there, drop a chip on one to move the card) over that day's milestones, due and in-progress cards. Cards with a due date are chips in their project's colour with
   a priority stripe (done struck through, overdue tinted); a card with a start and a due is a
   **span** — a bar across the days in Week view, a thin bar through the cells in Month view;
   milestones are flags, a project's own start and due small markers, and **Show time** adds the
@@ -586,7 +588,8 @@ you are dragging. Thickness is a setting too.
 
 3D shows the system; 2D is faster for wiring. Press **`2`** (or the menu bar toggle) and the camera
 flies (0.35 s) to a top-down orthographic plan framing the scene or the selection. Every block lies
-flat as a card showing its live face, title and pins — inputs on the left, outputs on the right —
+flat as a card showing its live face, title and pins — inputs on the left, outputs on the right,
+square to the page and upright even when it is turned in 3D (the rotation is kept and shows again in 3D) —
 so wiring works exactly as in 3D: drag from a pin, drop a block onto another, pick up a cable end
 to re-route or disconnect. Cables become flat splines running under the cards (flat Manhattan runs
 in the Orthogonal style; waypoints and bundles work here too); the value chips,
@@ -771,6 +774,21 @@ palette. The HTML shell (menu bar, left rail, flyout, panel, tooltips, toasts, c
 menus) uses the same type stack, 8-pt spacing, 10–12 px radii, subtle borders, 18 px stroke icons,
 hover states and focus rings; the menu bar's right end groups the quick toggles *Undo/Redo |
 2D | Theme · Frame all | Help · Properties*, and the viewport header holds *Wiring (with the cable settings) · Snap · Gizmo*.
+
+**Interface preferences** (*Edit → Preferences…*, `Ctrl+,`; also *View → UI scale* and the
+workspace panel) are kept in this browser (`ui/ui-prefs.js`). **UI scale** (80–200 %) zooms the
+menus, toolbars, panel, dialogs and HUDs; the 3D view and the overlays pinned to it keep their own
+pixels. The **Add toolbar, its list, the properties panel and the Help drawer resize from their
+edges**, Blender style (drag; double-click an edge resets it; arrow keys nudge a focused edge), and
+their content adapts: the rail shows icons only, icons over labels or icons beside labels as it
+widens, the Add list goes to two or three columns, the panel's label column grows with it. A small
+window squeezes the regions before the viewport drops under 320 px.
+
+**Dates** are picked in one themed **date picker** (`ui/date-picker.js`) everywhere a date is
+edited — the panel, a face field, Home's tables, the project dialog: a month grid (today ringed,
+weekends tinted), a month / year chooser behind the title, quick picks (*Today · Tomorrow · Next
+Monday · In a week · In a month*), Clear, and the keyboard (arrows, PageUp / PageDown, Home / End,
+`T`, Enter, Esc). Typing into the date field still works.
 
 **States** are derived by the engine, never hard-coded: `disabled` (unchecked *enabled*) >
 `error` (invalid link attached or `evaluate` threw) > `active` (an output changed / pulsed within

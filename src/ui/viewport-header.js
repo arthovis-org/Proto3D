@@ -7,6 +7,7 @@
 // snap.onChange and cables.onChange). Presentation only: no state of its own but the open popover.
 import { icons } from '../icons.js';
 import { attachScrub } from './scrub.js';
+import { uiScale } from './ui-prefs.js';
 
 const MODES = [['translate', 'Move', 'W', 'move'], ['rotate', 'Rotate', 'E', 'rotate'], ['scale', 'Scale', 'R', 'scale']];
 const MARGIN = 8;
@@ -96,7 +97,7 @@ export class ViewportHeader {
     let dx = 0;
     if (pr.right > vp.right - MARGIN) dx = vp.right - MARGIN - pr.right;
     if (pr.left + dx < vp.left + MARGIN) dx = vp.left + MARGIN - pr.left;
-    this.pop.style.left = `${g.offsetLeft + dx}px`;
+    this.pop.style.left = `${g.offsetLeft + dx / uiScale()}px`;   // dx is screen px; the header is drawn at the UI scale
   }
 
   _title(p, text) { p.appendChild(h('div', 'vph-title', text)); }

@@ -2,13 +2,16 @@
 // category (+ search). Clicking a category or the search field opens a flyout listing components
 // (icon, label, one-line description). Click adds at the camera target; drag into the scene
 // drops where the ray hits the floor, with a ghost footprint while dragging. Categories and
-// components come from the registry so new definitions appear automatically.
+// components come from the registry so new definitions appear automatically. Both the rail and
+// the flyout resize from their right edge; the rail shows icons only, icons over labels or icons
+// beside labels as it widens, and the flyout's list turns into two columns when there is room.
 import * as THREE from 'three';
 import { slabGeometry } from '../geometry.js';
 import { registry } from '../core/registry.js';
 import { icons } from '../icons.js';
 import { nodeDimensions } from '../node3d.js';
 import { sizes, states } from '../theme.js';
+import { attachResizer } from './ui-prefs.js';
 
 export class LeftToolbar {
   /**
@@ -49,6 +52,9 @@ export class LeftToolbar {
     this.search.addEventListener('input', () => { this.query = this.search.value; this.activeCategory = null; this._renderList(); this._syncRail(); });
     this.search.addEventListener('keydown', (e) => { if (e.key === 'Escape') { this.close(); e.stopPropagation(); } if (e.key === 'Enter') { const first = this.list.querySelector('.comp'); if (first) this.onAdd(registry.get(first.dataset.type), null); } });
     fly.querySelector('.fly-close').addEventListener('click', () => this.close());
+    // Blender-style region edges: the rail and its list each resize from their right edge (ui/ui-prefs.js)
+    attachResizer(this.el, { region: 'rail', edge: 'right', measure: () => rail.offsetWidth });   // on the bar, not the scrolling rail
+    attachResizer(fly, { region: 'fly', edge: 'right', measure: () => fly.offsetWidth });
     this._syncRail();
   }
   _railButton(id, title, svg, onClick) {

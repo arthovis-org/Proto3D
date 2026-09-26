@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { Connection3D } from '../connection3d.js';
 import { isWiringOn, setWiring } from '../wiring.js';
 import { nav } from '../controls/navigation.js';
+import { uiScale } from './ui-prefs.js';
 
 export const TOUR_KEY = 'proto3d.tour.v1';
 export function tourSeen(key = TOUR_KEY) { try { return localStorage.getItem(key) === 'done'; } catch (_) { return true; } }
@@ -182,8 +183,8 @@ export class Tour {
     this._placeCard(rect);
   }
   _placeCard(rect) {
-    const W = window.innerWidth, H = window.innerHeight;
-    const cw = this.card.offsetWidth || 320, ch = this.card.offsetHeight || 140;
+    const W = window.innerWidth, H = window.innerHeight, s = uiScale();   // the card is drawn at the UI scale (ui-prefs.js)
+    const cw = (this.card.offsetWidth || 320) * s, ch = (this.card.offsetHeight || 140) * s;
     let x, y;
     if (!rect) { x = (W - cw) / 2; y = (H - ch) / 2; }
     else {
@@ -191,6 +192,6 @@ export class Tour {
       if (x + cw > W - 12) x = Math.max(12, rect.left - cw - 18);
       if (y + ch > H - 12) y = Math.max(12, H - ch - 12);
     }
-    this.card.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px)`;
+    this.card.style.transform = `translate(${(x / s).toFixed(1)}px, ${(y / s).toFixed(1)}px)`;
   }
 }

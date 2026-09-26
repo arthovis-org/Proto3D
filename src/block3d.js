@@ -28,7 +28,8 @@
 // puts that pivot at the block's origin, `lift` above it — so the same card, canvas and pins face
 // straight up at (x, position.y + lift, z), inputs still on the left and outputs on the right, and
 // nothing is re-rendered. `updateMatrix` appends it, so every child, raycast and `worldToLocal`
-// agrees; `position` stays the single source of truth and is what a document saves.
+// agrees; `position` stays the single source of truth and is what a document saves. The block's
+// own rotation is left out while flat, so a card turned in 3D still reads square and upright.
 import * as THREE from 'three';
 import {
   palette, states, categories, sizes, materials, makeLabel, refreshLabel, setLabelText, makeShadowBlob, onThemeChange, portColorFor,
@@ -41,7 +42,7 @@ import { formatValue } from './core/types.js';
 import { clear as clearFace, roundRect } from './faces.js';
 import { createSurface, baseFaceScale, fitTier } from './face-canvas.js';
 
-const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _rx = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _rx = new THREE.Matrix4().makeRotationX(-Math.PI / 2), _qId = new THREE.Quaternion();
 let nextUid = 1;
 export const genUid = () => `b${(nextUid++).toString(36)}${Date.now().toString(36).slice(-3)}`;
 /** Keep uids unique after a load. */
@@ -385,14 +386,22 @@ export class Block3D extends THREE.Group {
     this.updateMatrixWorld(true);
     this.world?.bumpLayout();
   }
-  /** The local matrix with the plan rotation appended while flat (the pivot may move when a card grows, so it is composed here). */
+  /**
+   * The local matrix with the plan rotation appended while flat (the pivot may move when a card grows, so it is composed here).
+   * The plan drops the block's own rotation: every card lies square to the page with its text upright, the way a
+   * floor plan reads, and its footprint matches `getAABB` (which ignores rotation too). The rotation is kept on
+   * `this.rotation` untouched, so 3D shows it again and a document still saves it.
+   */
   updateMatrix() {
-    super.updateMatrix();
     if (this.planFlat && Number.isFinite(this.depth)) {
+      this.matrix.compose(this.position, _qId, this.scale);
       const P = this.planPivot();
       _m1.makeTranslation(0, P.lift, 0).multiply(_rx).multiply(_m2.makeTranslation(-P.x, -P.y, -P.z));
       this.matrix.multiply(_m1);
+      this.matrixWorldNeedsUpdate = true;
+      return;
     }
+    super.updateMatrix();
   }
 
   /** Whether this block shows its pins, labels and captions (its override, else the global wiring flag). */
